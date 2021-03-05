@@ -6,15 +6,27 @@ else {
 }
 
 process hisat2Index {
-    input:
-    path 'genome.fa' from params.genomeFastaFile
- 
-    output:
-    path 'hisat2_index*' into hisat2_index_channel
+     input:
+     	path genomeDir from params.genomeDir
+     	val genomeFileOrIndexPrefix from params.genomeFileOrIndexPrefix
+     	val(createIndex) from params.createIndex
 
-    """
-    hisat2-build genome.fa hisat2_index
-    """
+    output:
+	path 'genomeIndex*.ht2' into hisat2_index_file_ch
+        val 'genomeIndex' into hisat2_index_ch
+
+    script: 
+    if( createIndex )
+      """
+      hisat2-build $genomeDir/$genomeFileOrIndexPrefix genomeIndex
+      """
+    else
+      """
+      TMP=$genomeDir/$genomeFileOrIndexPrefix
+      FILES=\$TMP*
+     for f in \$FILES; do cp "\$f" "genomeIndex\${f#\$TMP}" ; done
+   
+      """
 }
 
 process fastqc {
@@ -114,7 +126,7 @@ process trimmomatic {
   input:
 	tuple val(sampleName), path(readsFn) from fastqc_check_samples_ch
         path('mateAEncoding') from fastqc_check_encoding_ch
-
+        path adaptorsFile from params.trimmomaticAdaptorsFile
   output:
 	val(sampleName) into trimmomatic_samples_ch
         path 'mateAEncoding' into trimmomatic_encoding_ch
@@ -125,13 +137,13 @@ process trimmomatic {
     if( params.isPaired )
         """
          mateAEncoding=\$(<mateAEncoding)
-         java org.usadellab.trimmomatic.TrimmomaticPE -trimlog trimLog.txt $readsFn -\$mateAEncoding -baseout sample ILLUMINACLIP:/usr/local/etc/All_adaptors-PE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
+         java org.usadellab.trimmomatic.TrimmomaticPE -trimlog trimLog.txt $readsFn -\$mateAEncoding -baseout sample ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         """
     else 
 	"""
         touch sample_2p
         mateAEncoding=\$(<mateAEncoding)
-        java org.usadellab.trimmomatic.TrimmomaticSE -trimlog trimLog.txt -$mateAEncoding $readsFn sample ILLUMINACLIP:/usr/local/etc/All_adaptors-SE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
+        java org.usadellab.trimmomatic.TrimmomaticSE -trimlog trimLog.txt -$mateAEncoding $readsFn sample ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         """
 }
 
@@ -139,10 +151,13 @@ process trimmomatic {
 process hisat2 {
   input:
 	val(sampleName) from trimmomatic_samples_ch
+// TODO: pass initial file for the case where it is a BAM
         path 'mateAEncoding' from trimmomatic_encoding_ch
         path 'sample_1p' from trimmomatic_1p_ch
         path 'sample_2p' from trimmomatic_2p_ch
-        path 'hisat2_index' from hisat2_index_channel
+        val hisat2_index from hisat2_index_ch
+        path 'genomeIndex.*.ht2' from hisat2_index_file_ch
+        val(hisat2Threads) from params.hisat2Threads
 
 //  output:
 //	tuple val(sampleName), path(readsFn), path('mateAEncoding') from fastqc_check_ch
@@ -151,13 +166,14 @@ process hisat2 {
     if( params.isPaired )
         """
         mateAEncoding=\$(<mateAEncoding)
-        echo hisat2 --no-spliced-alignment -k 1 -p TODO TODO --\$mateAEncoding -x hisat2_index -1 sample_1p -2 sample_2p
+        hisat2 --no-spliced-alignment -k 1 -p $hisat2Threads -q --\$mateAEncoding -x $hisat2_index -1 sample_1p -2 sample_2p
         """
 
     else 
 	"""
+
         mateAEncoding=\$(<mateAEncoding)
-        echo hisat2 --no-spliced-alignment -k 1 -p TODO TODO --\$mateAEncoding -x hisat2_index -U sample_1p
+        hisat2 --no-spliced-alignment -k 1 -p $hisat2Threads -q --\$mateAEncoding -x $hisat2_index -U sample_1p
         """
 }
 
