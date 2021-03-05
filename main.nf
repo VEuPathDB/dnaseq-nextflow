@@ -5,12 +5,25 @@ else {
    samples_ch = Channel.fromPath(['data/fastq_paired_haploid/**/*.fastq', 'data/fastq_paired_haploid/**/*.fastq.gz']).map { file -> tuple(file.baseName, [file]) }
 }
 
+process hisat2Index {
+    input:
+    path 'genome.fa' from params.genomeFastaFile
+ 
+    output:
+    path 'hisat2_index*' into hisat2_index_channel
+
+    """
+    hisat2-build genome.fa hisat2_index
+    """
+}
+
 process fastqc {
   input:
 	tuple val(sampleName), path(readsFn) from samples_ch
 
   output:
-	tuple path('fastqc_output', type:'dir'), val(sampleName), path(readsFn) into fastqc_ch
+	tuple val(sampleName), path(readsFn) into fastqc_samples_ch
+        path('fastqc_output', type:'dir') into fastqc_dir_ch
 
    script:
 	"""
@@ -21,10 +34,12 @@ process fastqc {
 
 process fastqc_check {
   input:
-	tuple path('fastqc_output'), val(sampleName), path(readsFn) from fastqc_ch
+	tuple val(sampleName), path(readsFn) from fastqc_samples_ch
+        path 'fastqc_output' from fastqc_dir_ch
 
   output:
-	tuple val(sampleName), path(readsFn), path('mateAEncoding') into fastqc_check_ch
+	tuple val(sampleName), path(readsFn) into fastqc_check_samples_ch
+        path 'mateAEncoding' into fastqc_check_encoding_ch
 
   script:
 
@@ -92,8 +107,59 @@ process fastqc_check {
             return $phred;
         }
        '''
-
-
 }
 
-fastqc_check_ch.view();
+
+process trimmomatic {
+  input:
+	tuple val(sampleName), path(readsFn) from fastqc_check_samples_ch
+        path('mateAEncoding') from fastqc_check_encoding_ch
+
+  output:
+	val(sampleName) into trimmomatic_samples_ch
+        path 'mateAEncoding' into trimmomatic_encoding_ch
+        path 'sample_1P' into trimmomatic_1p_ch
+        path 'sample_2P' into trimmomatic_2p_ch
+
+  script:
+    if( params.isPaired )
+        """
+         mateAEncoding=\$(<mateAEncoding)
+         java org.usadellab.trimmomatic.TrimmomaticPE -trimlog trimLog.txt $readsFn -\$mateAEncoding -baseout sample ILLUMINACLIP:/usr/local/etc/All_adaptors-PE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
+        """
+    else 
+	"""
+        touch sample_2p
+        mateAEncoding=\$(<mateAEncoding)
+        java org.usadellab.trimmomatic.TrimmomaticSE -trimlog trimLog.txt -$mateAEncoding $readsFn sample ILLUMINACLIP:/usr/local/etc/All_adaptors-SE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
+        """
+}
+
+
+process hisat2 {
+  input:
+	val(sampleName) from trimmomatic_samples_ch
+        path 'mateAEncoding' from trimmomatic_encoding_ch
+        path 'sample_1p' from trimmomatic_1p_ch
+        path 'sample_2p' from trimmomatic_2p_ch
+        path 'hisat2_index' from hisat2_index_channel
+
+//  output:
+//	tuple val(sampleName), path(readsFn), path('mateAEncoding') from fastqc_check_ch
+
+  script:
+    if( params.isPaired )
+        """
+        mateAEncoding=\$(<mateAEncoding)
+        echo hisat2 --no-spliced-alignment -k 1 -p TODO TODO --\$mateAEncoding -x hisat2_index -1 sample_1p -2 sample_2p
+        """
+
+    else 
+	"""
+        mateAEncoding=\$(<mateAEncoding)
+        echo hisat2 --no-spliced-alignment -k 1 -p TODO TODO --\$mateAEncoding -x hisat2_index -U sample_1p
+        """
+}
+
+
+//fastqc_check_ch.view();

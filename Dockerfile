@@ -3,8 +3,9 @@ FROM ubuntu:20.04
 # set environment variables
 ENV hisat2_version 2.1.0
 ENV trimmomatic_version 0.39
-ENV trimmomatic_jarfile /usr/local/Trimmomatic-${trimmomatic_version}/trimmomatic-${trimmomatic_version}.jar
 ENV fastqc_version 0.11.9
+
+ENV CLASSPATH /usr/local/Trimmomatic-${trimmomatic_version}/trimmomatic-${trimmomatic_version}.jar
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -13,7 +14,10 @@ RUN apt-get update -y && apt-get install -y \
     wget \
     unzip \
     build-essential \
-    default-jre 
+    default-jre \
+    python3 \
+    python 
+
 
 # download software
 WORKDIR /usr/local/
@@ -30,7 +34,10 @@ RUN unzip Trimmomatic-${trimmomatic_version}.zip
 WORKDIR /usr/local/hisat2-${hisat2_version}
 RUN make
 RUN ln -s /usr/local/hisat2-${hisat2_version}/hisat2 /usr/local/bin/hisat2
+RUN ln -s /usr/local/hisat2-${hisat2_version}/hisat2-build /usr/local/bin/hisat2-build
 
 # install fastqc
 RUN chmod gu+rx /usr/local/FastQC/fastqc
 RUN ln -s /usr/local/FastQC/fastqc /usr/local/bin/fastqc
+
+COPY ./data/trimmomatic_adaptors/* /usr/local/etc/
