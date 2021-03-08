@@ -1,22 +1,28 @@
-if(params.isPaired) {
-   samples_ch = Channel.fromFilePairs(['data/fastq_paired_haploid/**/*_{1,2}.fastq','data/fastq_paired_haploid/**/*_{1,2}.fastq.gz'])
+if(params.fromBAM) {
+    samples_ch = Channel.fromPath([params.inputDir + '/**/*.bam']).map { file -> tuple(file.baseName, [file]) }
+}
+else if(params.isPaired) {
+   samples_ch = Channel.fromFilePairs([params.inputDir + '/**/*_{1,2}.fastq', params.inputDir + '/**/*_{1,2}.fastq.gz'])
 }
 else {
-   samples_ch = Channel.fromPath(['data/fastq_paired_haploid/**/*.fastq', 'data/fastq_paired_haploid/**/*.fastq.gz']).map { file -> tuple(file.baseName, [file]) }
+    samples_ch = Channel.fromPath([params.inputDir + '/**/*.fastq', params.inputDir + '/**/*.fastq.gz']).map { file -> tuple(file.baseName, [file]) }
 }
 
 process hisat2Index {
      input:
      	path genomeDir from params.genomeDir
      	val genomeFileOrIndexPrefix from params.genomeFileOrIndexPrefix
-     	val(createIndex) from params.createIndex
 
     output:
 	path 'genomeIndex*.ht2' into hisat2_index_file_ch
         val 'genomeIndex' into hisat2_index_ch
 
     script: 
-    if( createIndex )
+    if(params.fromBAM)
+      """
+      touch genomeIndex.1.ht2
+      """
+    else if( params.createIndex )
       """
       hisat2-build $genomeDir/$genomeFileOrIndexPrefix genomeIndex
       """
@@ -31,30 +37,41 @@ process hisat2Index {
 
 process fastqc {
   input:
-	tuple val(sampleName), path(readsFn) from samples_ch
+	tuple val(sampleName), path(sampleFile) from samples_ch
 
   output:
-	tuple val(sampleName), path(readsFn) into fastqc_samples_ch
+	tuple val(sampleName), path(sampleFile) into fastqc_samples_ch
         path('fastqc_output', type:'dir') into fastqc_dir_ch
 
    script:
+    if(params.fromBAM)
 	"""
         mkdir fastqc_output   
-        fastqc -o fastqc_output --extract $readsFn
+        """
+
+        else 
+	"""
+        mkdir fastqc_output   
+        fastqc -o fastqc_output --extract $sampleFile
         """
 }
 
 process fastqc_check {
   input:
-	tuple val(sampleName), path(readsFn) from fastqc_samples_ch
+	tuple val(sampleName), path(sampleFile) from fastqc_samples_ch
         path 'fastqc_output' from fastqc_dir_ch
 
   output:
-	tuple val(sampleName), path(readsFn) into fastqc_check_samples_ch
+	tuple val(sampleName), path(sampleFile) into fastqc_check_samples_ch
         path 'mateAEncoding' into fastqc_check_encoding_ch
 
   script:
+    if(params.fromBAM)
+         '''
+           touch mateAEncoding
+         '''
 
+        else 
        '''
         #!/usr/bin/perl
         use strict;
@@ -124,56 +141,65 @@ process fastqc_check {
 
 process trimmomatic {
   input:
-	tuple val(sampleName), path(readsFn) from fastqc_check_samples_ch
+	tuple val(sampleName), path(sampleFile) from fastqc_check_samples_ch
         path('mateAEncoding') from fastqc_check_encoding_ch
         path adaptorsFile from params.trimmomaticAdaptorsFile
+
   output:
-	val(sampleName) into trimmomatic_samples_ch
+	tuple val(sampleName), path(sampleFile) into trimmomatic_samples_ch
         path 'mateAEncoding' into trimmomatic_encoding_ch
         path 'sample_1P' into trimmomatic_1p_ch
         path 'sample_2P' into trimmomatic_2p_ch
 
   script:
-    if( params.isPaired )
+    if(params.fromBAM)
+        """
+        touch sample_1P
+        touch sample_2P
+        """
+    else if( params.isPaired )
         """
          mateAEncoding=\$(<mateAEncoding)
-         java org.usadellab.trimmomatic.TrimmomaticPE -trimlog trimLog.txt $readsFn -\$mateAEncoding -baseout sample ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
+         java org.usadellab.trimmomatic.TrimmomaticPE -trimlog trimLog.txt $sampleFile -\$mateAEncoding -baseout sample ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         """
     else 
 	"""
         touch sample_2p
         mateAEncoding=\$(<mateAEncoding)
-        java org.usadellab.trimmomatic.TrimmomaticSE -trimlog trimLog.txt -$mateAEncoding $readsFn sample ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
+        java org.usadellab.trimmomatic.TrimmomaticSE -trimlog trimLog.txt -$mateAEncoding $sampleFile sample ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         """
 }
 
 
 process hisat2 {
   input:
-	val(sampleName) from trimmomatic_samples_ch
-// TODO: pass initial file for the case where it is a BAM
+	tuple val(sampleName), path(sampleFile) from trimmomatic_samples_ch
         path 'mateAEncoding' from trimmomatic_encoding_ch
         path 'sample_1p' from trimmomatic_1p_ch
         path 'sample_2p' from trimmomatic_2p_ch
         val hisat2_index from hisat2_index_ch
         path 'genomeIndex.*.ht2' from hisat2_index_file_ch
-        val(hisat2Threads) from params.hisat2Threads
 
-//  output:
-//	tuple val(sampleName), path(readsFn), path('mateAEncoding') from fastqc_check_ch
+    output:
+     tuple val(sampleName), path('result_sorted.bam') into hisat2_samples_ch
 
   script:
-    if( params.isPaired )
+    if(params.fromBAM)
+        """
+        samtools view -bS $sampleFile | samtools sort - > result_sorted.bam
+        """
+
+    else if( params.isPaired )
         """
         mateAEncoding=\$(<mateAEncoding)
-        hisat2 --no-spliced-alignment -k 1 -p $hisat2Threads -q --\$mateAEncoding -x $hisat2_index -1 sample_1p -2 sample_2p
+        hisat2 --no-spliced-alignment -k 1 -p $params.hisat2Threads -q --\$mateAEncoding -x $hisat2_index -1 sample_1p -2 sample_2p  | samtools view -bS - | samtools sort - > result_sorted.bam
+
         """
 
     else 
 	"""
-
         mateAEncoding=\$(<mateAEncoding)
-        hisat2 --no-spliced-alignment -k 1 -p $hisat2Threads -q --\$mateAEncoding -x $hisat2_index -U sample_1p
+        hisat2 --no-spliced-alignment -k 1 -p $params.hisat2Threads -q --\$mateAEncoding -x $hisat2_index -U sample_1p | samtools view -bS - | samtools sort - > result_sorted.bam
         """
 }
 
