@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 USER root
 
 # Install dependencies
-RUN apt-get update && apt-get install -y build-essential wget unzip default-jre python3 python && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y build-essential wget unzip default-jre python3 python tabix && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
 
 # download software
 WORKDIR /usr/local/
