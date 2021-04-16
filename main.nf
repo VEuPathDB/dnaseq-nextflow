@@ -74,75 +74,14 @@ process fastqc_check {
 
   script:
     if(params.fromBAM)
-         '''
-           touch mateAEncoding
-         '''
+       """
+       touch mateAEncoding
+       """
 
-        else 
-       '''
-        #!/usr/bin/perl
-        use strict;
-        my @dataFiles = glob("fastqc_output/*/fastqc_data.txt");
-
-        my %results;
-        foreach(@dataFiles) {
-          my $encoding = phred($_);
-          $results{$encoding}++;
-        }
-
-        my @encodings = keys %results;
-        if(scalar @encodings != 1) {
-          die "Could not determine mateA encoding";
-        }
-
-        open(OUT, ">mateAEncoding") or die "Could not open mateAEncoding for writing: $!";
-        print OUT $encodings[0] . "\\n";
-        close OUT;
-
-        sub phred {                                                                                                                                                          
-            (my $fastqcFile) = @_;
-            my %encoding = (
-            "sanger" => "phred33",
-            "illumina 1.3" => "phred64",
-            "illumina 1.4" => "phred64",
-            "illumina 1.5" => "phred64",
-            "illumina 1.6" => "phred64",
-            "illumina 1.7" => "phred64",
-            "illumina 1.8" => "phred33",
-            "illumina 1.9" => "phred33",
-            "illumina 2"   => "phred33",
-            "illumina 3"   => "phred33",
-            "solexa" => "phred64"
-            );
-            my $phred;
-            open (FH, $fastqcFile) or die "Cannot open $fastqcFile to determine phred encoding: $!";
-            while (<FH>) {
-                my $line = $_;
-                if ($line =~ /encoding/i) {
-                    foreach my $format (keys %encoding) {
-                        if ($line =~ /$format/i) {
-                            if (! defined $phred) {
-                                $phred = $encoding{$format};
-                            } elsif ($phred ne $encoding{$format}) {
-                                $phred = "Error: more than one encoding type";
-                            }
-                        }
-                    }
-                    if (! defined $phred) {
-                        $phred = "Error: format not recognized on encoding line";
-                    }
-                }
-            }
-            if (! defined $phred) {
-                $phred = "Error: encoding line not found in file";
-            }
-            close(FH);
-            if ($phred =~ /error/i) {
-                die "ERROR: Could not determine phred encoding: $phred";
-            }
-            return $phred;
-        }
-       '''
+    else 
+       """
+       fastqc_check.pl fastqc_output mateAEncoding
+       """
 }
 
 
@@ -251,9 +190,9 @@ process gatk {
         path('picard.bai') from picard_result_bai_ch
 
     output:
-	val(sampleName) into gatk_samples_ch
-        path('result_sorted_gatk.bam') into gatk_result_bam_ch
-        path('result_sorted_gatk.bai') into gatk_result_bai_ch
+	val(sampleName) into (gatk_samples_ch, genome_coverage_samples_ch)
+        path('result_sorted_gatk.bam') into (gatk_result_bam_ch, genome_coverage_bam_ch)
+        path('result_sorted_gatk.bai') into (gatk_result_bai_ch, genome_coverage_bai_ch)
 
     script:
         def jarPath = gatkJar.name == 'NA' ? "/usr/GenomeAnalysisTK.jar" : gatkJar.name
@@ -326,19 +265,39 @@ process bcftools {
     
     script:
 	"""
-        bcftools consensus -f genome.fa varscan.snps.vcf.gz > cons.fa
+        bcftools consensus -I -f genome.fa varscan.snps.vcf.gz > cons.fa
+        gzip cons.fa
 	"""
 }
 
-// TODO Replace 
+process bedtools {
+    input:
+	val(sampleName) from genome_coverage_samples_ch
+        path('result_sorted_gatk.bam') from genome_coverage_bam_ch
+        path('result_sorted_gatk.bai') from genome_coverage_bai_ch
+        path 'genome.fa.fai' from genome_index_ch
 
-//$cmd = "parseVarscanToConsensus.pl --file $workingDir/$out.varscan.cons --strain $strain --referenceFasta $fastaFile --fastaOutput $workingDir/$out.consensus.fa --indelOutput $workingDir/$out.insertions.gff --percentCutoff $consPercentCutoff >& parseToConsensus.stderr";
+    output:
+	path('coverage.bed') into bedgraph_ch
+	val(sampleName) into bedgraph_samples_ch
 
-// TODO: do we need this?
-//$cmd = "parseVarscanToCoverage.pl --file $workingDir/$out.varscan.cons --outputFile $workingDir/$out.coverage.txt --percentCutoff $consPercentCutoff >& parseToConsensus.stderr";
+    script:
+	"""
+        bedtools genomecov -bg -ibam result_sorted_gatk.bam -g genome.fa.fai >coverage.bed
+	"""
+}
 
-//system("gzip $workingDir/$out.varscan.cons"); ##compress to make smaller
-
-// make bw file here
 
 
+
+process bedGraphToBigWig {
+    input:
+	val(sampleName) from bedgraph_samples_ch
+        path 'genome.fa.fai' from genome_index_ch
+	path('coverage.bed') from bedgraph_ch
+
+    script:
+	"""
+        bedGraphToBigWig coverage.bed genome.fa.fai coverage.bw
+	"""
+}
