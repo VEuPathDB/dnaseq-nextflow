@@ -1,0 +1,12 @@
+Starting with the bam file containing all reads mapped against the chr 1 reference:
+
+Extract only reads where both the read and it's mate are aligned:
+samtools collate -u -O SRR538819.bam | samtools fastq -F 12 -1 SRR538819_chr1_1.fq -2 SRR538819_chr1_2.fq -0 /dev/null -s /dev/null -n
+
+New fastq files contain 109833 reads.
+
+Map these back to the chr 1 reference to check that these are what we want:
+hisat2 -p 6 -k 1 --no-spliced-alignment -x ../genome_haploid_index/premade_index -1 SRR538819_chr1_1.fq.gz -2 SRR538819_chr1_2.fq.gz 2> SRR538819_chr1.log | samtools view -bS | samtools sort -T SRR538819 > SRR538819_chr1.bam
+samtools index SRR538819_chr1.bam
+
+Log shows 100% of reads mapped.
