@@ -340,7 +340,8 @@ process bedGraphToBigWig {
     
     script:
 	    """
-        bedGraphToBigWig coverage.bed genome.fa.fai coverage.bw
+        LC_COLLATE=C sort -k1,1 -k2,2n coverage.bed > sorted.coverage.bed
+        bedGraphToBigWig sorted.coverage.bed genome.fa.fai coverage.bw
 	    """
 }
 
