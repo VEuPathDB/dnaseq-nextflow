@@ -473,8 +473,10 @@ process makeDensityBigwigs {
 
     script:
         """
-        bedGraphToBigWig snpDensity.bed genome.fa.fai snpDensity.bw
-        bedGraphToBigWig indelDensity.bed genome.fa.fai indelDensity.bw
+        LC_COLLATE=C sort -k1,1 -k2,2n snpDensity.bed > sorted.snpDensity.bed
+        LC_COLLATE=C sort -k1,1 -k2,2n indelDensity.bed > sorted.indelDensity.bed
+        bedGraphToBigWig sorted.snpDensity.bed genome.fa.fai snpDensity.bw
+        bedGraphToBigWig sorted.indelDensity.bed genome.fa.fai indelDensity.bw
         """
 }
 
@@ -518,7 +520,8 @@ if(params.ploidy != 1) {
 
         script:
             """
-            bedGraphToBigWig heterozygousDensity.bed genome.fa.fai heterozygousDensity.bw
+            LC_COLLATE=C sort -k1,1 -k2,2n heterozygousDensity.bed > sorted.heterozygousDensity.bed
+            bedGraphToBigWig sorted.heterozygousDensity.bed genome.fa.fai heterozygousDensity.bw
             """
     }
 }
