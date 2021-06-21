@@ -5,7 +5,7 @@ else if(params.isPaired) {
    samples_qch = Channel.fromFilePairs([params.inputDir + '/**/*_{1,2}.fastq', params.inputDir + '/**/*_{1,2}.fastq.gz', params.inputDir + '/**/*_{1,2}.fq.gz'])
 }
 else {
-    samples_qch = Channel.fromPath([params.inputDir + '/**/*.fastq', params.inputDir + '/**/*.fastq.gz']).map { file -> tuple(file.baseName, [file]) }
+    samples_qch = Channel.fromPath([params.inputDir + '/**/*.fastq', params.inputDir + '/**/*.fastq.gz', params.inputDir + '/**/*.fq.gz']).map { file -> tuple(file.baseName, [file]) }
 }
 
 samples_qch.into { samples_to_fastqc_qch; samples_to_fastqc_check_qch; samples_to_trimmomatic_qch; samples_to_hisat2_qch }
@@ -90,10 +90,10 @@ process fastqc_check {
 process trimmomatic {
   input:
 	tuple val(sampleName), path(sampleFile), path('mateAEncoding') from samples_to_trimmomatic_qch.join(encoding_to_trimmomatic_qch)
-        path adaptorsFile from params.trimmomaticAdaptorsFile
+    path adaptorsFile from params.trimmomaticAdaptorsFile
 
   output:
-        tuple val(sampleName), path('sample_1P'), path('sample_2P') into trimmomatic_qch
+    tuple val(sampleName), path('sample_1P'), path('sample_2P') into trimmomatic_qch
 
   script:
     if(params.fromBAM)
@@ -108,9 +108,9 @@ process trimmomatic {
         """
     else 
 	    """
-        touch sample_2p
+        touch sample_2P
         mateAEncoding=\$(<mateAEncoding)
-        java org.usadellab.trimmomatic.TrimmomaticSE -trimlog trimLog.txt -\$mateAEncoding $sampleFile sample ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
+        java org.usadellab.trimmomatic.TrimmomaticSE -trimlog trimLog.txt $sampleFile -\$mateAEncoding sample_1P ILLUMINACLIP:$adaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         """
 }
 
@@ -297,13 +297,17 @@ process makeMergedVarscanIndex {
 }
 
 
-//TODO where is the output of this step going??
+//TODO JB I have published this - please check
 process bcftoolsConsensus {
+    publishDir "$params.outputDir", saveAs: { filename -> "consensus.fa.gz" }
+
     input:
         tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') from varscan_concat_to_consensus_qch
         path 'genome.fa' from genome_fasta_path_ch
         path 'genome.fa.fai' from genome_index_path_ch
 
+    output:
+        path('cons.fa.gz')
     
     script:
 	    """
@@ -438,7 +442,6 @@ process normaliseCoverage {
 
     script:
         """
-        # TODO fix this script for single end reads
         # NOTE final processing requires querying the DB so can stay in ReFlow
         normaliseCoverageCNV.pl --bedFile windowedCoverage.bed --summaryMetrics summaryMetrics.txt
         """
