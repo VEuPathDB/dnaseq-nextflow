@@ -255,7 +255,7 @@ process makeCombinedVarscanIndex {
 	tuple val(sampleName), path('varscan.concat.vcf') from varscan_concat_vcf_qch
     output:
 	tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') into varscan_concat_to_consensus_qch
-        path('varscan.concat.vcf.gz') into varscan_vcf_to_merge_qch
+        path('varscan.concat.vcf.gz') into (varscan_vcf_to_count_qch, varscan_vcf_to_merge_qch)
         path('varscan.concat.vcf.gz.tbi') into varscan_vcftbi_to_merge_qch
 
     script:
@@ -268,6 +268,7 @@ process makeCombinedVarscanIndex {
 
 process mergeVcfs {
   input:
+    val 'vcfCount' from varscan_vcf_to_count_qch.collect().size()
     path('*.vcf.gz') from varscan_vcf_to_merge_qch.collect()
     path('*.vcf.gz.tbi') from varscan_vcftbi_to_merge_qch.collect()
 
@@ -275,9 +276,17 @@ process mergeVcfs {
 	path('result.vcf.gz') into merged_vcf_ch
     
     script:
-        """
-        bcftools merge -o result.vcf.gz -O z *.vcf.gz     
-        """
+        if (vcfCount > 1)
+            """
+            echo $vcfCount
+            bcftools merge -o result.vcf.gz -O z *.vcf.gz
+            """
+
+        else
+            """
+            echo $vcfCount
+            mv .vcf.gz result.vcf.gz
+            """
 }
 
 
