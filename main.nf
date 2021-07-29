@@ -117,12 +117,12 @@ process trimmomatic {
 
 process hisat2 {
     input:
-	tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path('sample_1p'), path('sample_2p') from samples_to_hisat2_qch.join(encoding_to_hisat2_qch).join(trimmomatic_qch)
+	    tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path('sample_1p'), path('sample_2p') from samples_to_hisat2_qch.join(encoding_to_hisat2_qch).join(trimmomatic_qch)
         val hisat2_index from hisat2_index_value_ch
         path 'genomeIndex.*.ht2' from hisat2_index_path_ch
 
     output:
-        tuple val(sampleName), path('result_sorted.bam') into (hisat2_to_picard_qch, hisat2_to_sortForCounting_qch, hisat_to_bedtoolsWindowed_qch)
+        tuple val(sampleName), path('result_sorted.bam') into hisat2_to_picard_qch
     
     script:
     if(params.fromBAM)
@@ -154,39 +154,41 @@ process picard {
 
 
      output:
-        tuple val(sampleName), path('genome.dict'), path('picard.bam'), path('picard.bai') into picard_to_gatk_qch
-        path('summaryMetrics.txt') into picard_to_normaliseCoverage_qch
+        tuple val(sampleName), path('genome.dict'), path('picard_reordered.bam'), path('picard_reordered.bai') into picard_to_gatk_qch
+        tuple val(sampleName), path('summaryMetrics.txt') into picard_to_normaliseCoverage_qch
 
     script:
         def jarPath = picardJar.name == 'NA' ? "/usr/picard/picard.jar" : picardJar.name
         """
         # TODO Mapping stats and Downsample 
         java -jar $jarPath AddOrReplaceReadGroups I=result_sorted.bam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
-        java -jar $jarPath BuildBamIndex I=picard.bam
+        #java -jar $jarPath BuildBamIndex I=picard.bam
         java -jar $jarPath CreateSequenceDictionary R=genome.fa UR=genome.fa
-        java -jar $jarPath CollectAlignmentSummaryMetrics R=genome.fa I=result_sorted.bam O=summaryMetrics.txt
+        java -jar $jarPath ReorderSam I=picard.bam O=picard_reordered.bam SD=genome.dict
+        java -jar $jarPath BuildBamIndex I=picard_reordered.bam
+        java -jar $jarPath CollectAlignmentSummaryMetrics R=genome.fa I=picard_reordered.bam O=summaryMetrics.txt
         """
 }
 
 
 process gatk {
-    publishDir "$params.outputDir", pattern: "*.bam", saveAs: { filename -> "${sampleName}.bam" }
-    publishDir "$params.outputDir", pattern: "*.bai", saveAs: { filename -> "${sampleName}.bam.bai" }
+    publishDir "$params.outputDir", pattern: "*.bam", mode: "copy", saveAs: { filename -> "${sampleName}.bam" }
+    publishDir "$params.outputDir", pattern: "*.bai", mode: "copy", saveAs: { filename -> "${sampleName}.bam.bai" }
 
     input:
         path gatkJar from gatk_jar_path_ch
         path 'genome.fa' from genome_fasta_path_ch
         path 'genome.fa.fai' from genome_index_path_ch
-        tuple val(sampleName), path('genome.dict'), path('picard.bam'), path('picard.bai') from picard_to_gatk_qch
+        tuple val(sampleName), path('genome.dict'), path('picard_reordered.bam'), path('picard_reordered.bai') from picard_to_gatk_qch
 
     output:
-        tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai') into (gatk_bam_to_mpileup_qch, gatk_bam_to_varscan_qch, gatk_bam_to_genomecov_qch)
+        tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai') into (gatk_bam_to_mpileup_qch, gatk_bam_to_varscan_qch, gatk_bam_to_genomecov_qch, gatk_to_sortForCounting_qch, gatk_to_bedtoolsWindowed_qch)
 
     script:
         def jarPath = gatkJar.name == 'NA' ? "/usr/GenomeAnalysisTK.jar" : gatkJar.name
         """
-        java -jar $jarPath -I picard.bam -R genome.fa -T RealignerTargetCreator -o forIndelRealigner.intervals 2>realaligner.err
-        java -jar $jarPath -I picard.bam -R genome.fa -T IndelRealigner -targetIntervals forIndelRealigner.intervals -o result_sorted_gatk.bam 2>indelRealigner.err
+        java -jar $jarPath -I picard_reordered.bam -R genome.fa -T RealignerTargetCreator -o forIndelRealigner.intervals 2>realaligner.err
+        java -jar $jarPath -I picard_reordered.bam -R genome.fa -T IndelRealigner -targetIntervals forIndelRealigner.intervals -o result_sorted_gatk.bam 2>indelRealigner.err
         """
 }
 
@@ -209,7 +211,7 @@ process mpileup {
 
 
 process varscan {
-    publishDir "$params.outputDir", pattern: "varscan.cons.gz", saveAs: { filename -> "${sampleName}.varscan.cons.gz" }
+    publishDir "$params.outputDir", pattern: "varscan.cons.gz", mode: "copy", saveAs: { filename -> "${sampleName}.varscan.cons.gz" }
 
     input:
         tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai'), path('result.pileup') from gatk_bam_to_varscan_qch.join(mpileup_qch)
@@ -252,9 +254,10 @@ process concatSnpsAndIndels {
 
 process makeCombinedVarscanIndex {
     input:
-	tuple val(sampleName), path('varscan.concat.vcf') from varscan_concat_vcf_qch
+	    tuple val(sampleName), path('varscan.concat.vcf') from varscan_concat_vcf_qch
+
     output:
-	tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') into varscan_concat_to_consensus_qch
+	    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') into varscan_concat_to_consensus_qch
         path('varscan.concat.vcf.gz') into (varscan_vcf_to_count_qch, varscan_vcf_to_merge_qch)
         path('varscan.concat.vcf.gz.tbi') into varscan_vcftbi_to_merge_qch
 
@@ -267,13 +270,13 @@ process makeCombinedVarscanIndex {
 
 
 process mergeVcfs {
-  input:
-    val 'vcfCount' from varscan_vcf_to_count_qch.collect().size()
-    path('*.vcf.gz') from varscan_vcf_to_merge_qch.collect()
-    path('*.vcf.gz.tbi') from varscan_vcftbi_to_merge_qch.collect()
+    input:
+        val 'vcfCount' from varscan_vcf_to_count_qch.collect().size()
+        path('*.vcf.gz') from varscan_vcf_to_merge_qch.collect()
+        path('*.vcf.gz.tbi') from varscan_vcftbi_to_merge_qch.collect()
 
     output:
-	path('result.vcf.gz') into merged_vcf_ch
+	    path('result.vcf.gz') into merged_vcf_ch
     
     script:
         if (vcfCount > 1)
@@ -291,13 +294,13 @@ process mergeVcfs {
 
 
 process makeMergedVarscanIndex {
-    publishDir "$params.outputDir"
+    publishDir "$params.outputDir", mode: "copy"
 
     input:
-	path('result.vcf.gz') from merged_vcf_ch
+	    path('result.vcf.gz') from merged_vcf_ch
 
     output:
-	tuple path('result.vcf.gz'), path('result.vcf.gz.tbi')
+	    tuple path('result.vcf.gz'), path('result.vcf.gz.tbi')
 
     script:
 	    """
@@ -308,7 +311,7 @@ process makeMergedVarscanIndex {
 
 //TODO JB I have published this - please check
 process bcftoolsConsensus {
-    publishDir "$params.outputDir", saveAs: { filename -> "consensus.fa.gz" }
+    publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "consensus.fa.gz" }
 
     input:
         tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') from varscan_concat_to_consensus_qch
@@ -342,7 +345,7 @@ process genomecov {
 
 
 process bedGraphToBigWig {
-    publishDir "$params.outputDir", saveAs: { filename -> "${sampleName}.bw" }
+    publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}.bw" }
 
     input:
         path 'genome.fa.fai' from genome_index_path_ch
@@ -362,20 +365,20 @@ process bedGraphToBigWig {
 //CNV processes
 process sortForCounting {
     input:
-        tuple val(sampleName), path('result_sorted.bam') from hisat2_to_sortForCounting_qch
+        tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') from gatk_to_sortForCounting_qch
 
     output:
         tuple val(sampleName), path('result_sortByName.bam') into htseq_path_qch
 
     script:
         """
-        samtools sort -n result_sorted.bam > result_sortByName.bam
+        samtools sort -n result_sorted_gatk.bam > result_sortByName.bam
         """
 }
 
 
 process htseqCount {
-    publishDir "$params.outputDir/CNVs", saveAs: { filename -> "${sampleName}.counts" }
+    publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.counts" }
 
     input:
         tuple val(sampleName), path('result_sortByName.bam') from htseq_path_qch
@@ -392,7 +395,7 @@ process htseqCount {
 
 
 process calculateTPM {
-    publishDir "$params.outputDir/CNVs", saveAs: { filename -> "${sampleName}.tpm" }
+    publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.tpm" }
 
     input:
         tuple val(sampleName), path('counts.txt') from count_to_tpm_qch
@@ -427,24 +430,23 @@ process makeWindowFile {
 process bedtoolsWindowed {
     input:
         tuple path('windows.bed'), path('genome.txt') from window_to_bedtoolsWindowed_qch
-        tuple val(sampleName), path('result_sorted.bam') from hisat_to_bedtoolsWindowed_qch
+        tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') from gatk_to_bedtoolsWindowed_qch
 
     output:
         tuple val(sampleName), path('windowedCoverage.bed') into process_normaliseCoverage_qch
 
     script:
         """
-        bedtools coverage -counts -sorted -g genome.txt -a windows.bed -b result_sorted.bam > windowedCoverage.bed
+        bedtools coverage -counts -sorted -g genome.txt -a windows.bed -b result_sorted_gatk.bam > windowedCoverage.bed
         """
 }
 
 
 process normaliseCoverage {
-    publishDir "$params.outputDir/CNVs", saveAs: { filename -> "${sampleName}.bed" }
+    publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
     input:
-        tuple val(sampleName), path('windowedCoverage.bed') from process_normaliseCoverage_qch
-        path('summaryMetrics.txt') from picard_to_normaliseCoverage_qch
+        tuple val(sampleName), path('windowedCoverage.bed'), path('summaryMetrics.txt') from process_normaliseCoverage_qch.join(picard_to_normaliseCoverage_qch)
    
     output:
         path('normalisedCoverage.bed')
@@ -474,7 +476,7 @@ process makeSnpDensity {
 
 
 process makeDensityBigwigs {
-    publishDir "$params.outputDir/CNVs", saveAs: { filename -> "${sampleName}_${filename}" }
+    publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
     input:
         tuple val(sampleName), path('snpDensity.bed'), path('indelDensity.bed') from process_snpDensity_qch
@@ -521,7 +523,7 @@ if(params.ploidy != 1) {
     }
 
     process makeHeterozygousDensityBigwig {
-        publishDir "$params.outputDir/CNVs", saveAs: { filename -> "${sampleName}_LOH.bw" }
+        publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
 
         input:
             tuple val(sampleName), path('heterozygousDensity.bed') from process_heterozygousDensity_qch
