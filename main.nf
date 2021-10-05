@@ -16,6 +16,8 @@ varscan_jar_path_ch = file(params.varscanJar);
 
 
 process hisat2Index {
+     container = 'veupathdb/shortreadaligner'
+
      input:
      	path 'genome.fa' from params.genomeFastaFile
     
@@ -47,6 +49,8 @@ process hisat2Index {
 
 
 process fastqc {
+  container = 'biocontainers/fastqc:v0.11.9_cv7'
+
   input:
 	tuple val(sampleName), path(sampleFile) from samples_to_fastqc_qch
 
@@ -68,6 +72,8 @@ process fastqc {
 
 
 process fastqc_check {
+  container = 'veupathdb/shortreadaligner'
+
   input:
 	tuple val(sampleName), path(sampleFile), path('fastqc_output') from samples_to_fastqc_check_qch.join(fastqc_dir_qch)
 
@@ -88,6 +94,8 @@ process fastqc_check {
 
 
 process trimmomatic {
+  container = 'veupathdb/shortreadaligner'
+
   input:
 	tuple val(sampleName), path(sampleFile), path('mateAEncoding') from samples_to_trimmomatic_qch.join(encoding_to_trimmomatic_qch)
     path adaptorsFile from params.trimmomaticAdaptorsFile
@@ -116,13 +124,15 @@ process trimmomatic {
 
 
 process hisat2 {
+    container = 'veupathdb/shortreadaligner'
+
     input:
 	    tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path('sample_1p'), path('sample_2p') from samples_to_hisat2_qch.join(encoding_to_hisat2_qch).join(trimmomatic_qch)
         val hisat2_index from hisat2_index_value_ch
         path 'genomeIndex.*.ht2' from hisat2_index_path_ch
 
     output:
-        tuple val(sampleName), path('result_sorted.bam') into hisat2_to_picard_qch
+        tuple val(sampleName), path('result_sorted.bam') into hisat2_to_subsample_qch
     
     script:
     if(params.fromBAM)
@@ -145,12 +155,41 @@ process hisat2 {
 }
 
 
+
+process subsample {
+    container = 'veupathdb/shortreadaligner'
+    input:
+       tuple val(sampleName), path('result_sorted.bam') from hisat2_to_subsample_qch
+
+    output:
+        tuple val(sampleName), path('result_sorted_ds.bam') into subsample_to_picard_qch
+
+    script:
+        """
+        samtools index result_sorted.bam
+
+        # number of mapped reads is col 3 from idxstats
+        frac=\$( samtools idxstats result_sorted.bam | awk 'BEGIN {total=0} {total += \$3} END {frac=$params.maxNumberOfReads/total;  if (frac > 1) {print 1} else {print frac}}' )
+
+        # this will subsample fraction of mapped reads
+        if awk "BEGIN {exit !(\$frac >= 1)}"
+        then
+          ln -s result_sorted.bam result_sorted_ds.bam
+
+        else
+          samtools view -b -s \$frac result_sorted.bam > result_sorted_ds.bam
+        fi
+        """
+}
+
 process picard {
+     container = 'broadinstitute/picard:2.25.0'
+
      input:
         path 'genome.fa' from genome_fasta_path_ch
         path 'genome.fa.fai' from genome_index_path_ch
         path picardJar from picard_jar_path_ch
-        tuple val(sampleName), path('result_sorted.bam') from hisat2_to_picard_qch
+        tuple val(sampleName), path('result_sorted_ds.bam') from subsample_to_picard_qch
 
 
      output:
@@ -160,9 +199,8 @@ process picard {
     script:
         def jarPath = picardJar.name == 'NA' ? "/usr/picard/picard.jar" : picardJar.name
         """
-        # TODO Mapping stats and Downsample 
-        java -jar $jarPath AddOrReplaceReadGroups I=result_sorted.bam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
-        #java -jar $jarPath BuildBamIndex I=picard.bam
+        java -jar $jarPath AddOrReplaceReadGroups I=result_sorted_ds.bam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
+
         java -jar $jarPath CreateSequenceDictionary R=genome.fa UR=genome.fa
         java -jar $jarPath ReorderSam I=picard.bam O=picard_reordered.bam SD=genome.dict
         java -jar $jarPath BuildBamIndex I=picard_reordered.bam
@@ -172,6 +210,8 @@ process picard {
 
 
 process gatk {
+    container = 'broadinstitute/gatk3:3.8-1'
+
     publishDir "$params.outputDir", pattern: "*.bam", mode: "copy", saveAs: { filename -> "${sampleName}.bam" }
     publishDir "$params.outputDir", pattern: "*.bai", mode: "copy", saveAs: { filename -> "${sampleName}.bam.bai" }
 
@@ -194,6 +234,8 @@ process gatk {
 
 
 process mpileup {
+    container = 'veupathdb/shortreadaligner'
+
     input:
         tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') from gatk_bam_to_mpileup_qch
         path 'genome.fa' from genome_fasta_path_ch
@@ -211,6 +253,8 @@ process mpileup {
 
 
 process varscan {
+    container = 'veupathdb/dnaseqanalysis'
+
     publishDir "$params.outputDir", pattern: "varscan.cons.gz", mode: "copy", saveAs: { filename -> "${sampleName}.varscan.cons.gz" }
 
     input:
@@ -239,6 +283,8 @@ process varscan {
 
 
 process concatSnpsAndIndels {
+    container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+
     input:
         tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi') from varscan_to_concat_qch
 
@@ -253,6 +299,8 @@ process concatSnpsAndIndels {
 
 
 process makeCombinedVarscanIndex {
+    container = 'veupathdb/dnaseqanalysis'
+
     input:
 	    tuple val(sampleName), path('varscan.concat.vcf') from varscan_concat_vcf_qch
 
@@ -270,6 +318,8 @@ process makeCombinedVarscanIndex {
 
 
 process mergeVcfs {
+    container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+
     input:
         val 'vcfCount' from varscan_vcf_to_count_qch.collect().size()
         path('*.vcf.gz') from varscan_vcf_to_merge_qch.collect()
@@ -294,6 +344,8 @@ process mergeVcfs {
 
 
 process makeMergedVarscanIndex {
+    container = 'veupathdb/dnaseqanalysis'
+
     publishDir "$params.outputDir", mode: "copy"
 
     input:
@@ -311,6 +363,8 @@ process makeMergedVarscanIndex {
 
 //TODO JB I have published this - please check
 process bcftoolsConsensus {
+    container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+
     publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "consensus.fa.gz" }
 
     input:
@@ -330,6 +384,8 @@ process bcftoolsConsensus {
 
 
 process genomecov {
+    container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+
     input:
         tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai') from gatk_bam_to_genomecov_qch
         path 'genome.fa.fai' from genome_index_path_ch
@@ -345,6 +401,8 @@ process genomecov {
 
 
 process bedGraphToBigWig {
+    container = 'veupathdb/shortreadaligner'
+
     publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}.bw" }
 
     input:
@@ -364,6 +422,8 @@ process bedGraphToBigWig {
 
 //CNV processes
 process sortForCounting {
+    container = 'veupathdb/shortreadaligner'
+
     input:
         tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') from gatk_to_sortForCounting_qch
 
@@ -378,6 +438,8 @@ process sortForCounting {
 
 
 process htseqCount {
+    container = 'biocontainers/htseq:v0.11.2-1-deb-py3_cv1'
+
     publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.counts" }
 
     input:
@@ -395,6 +457,8 @@ process htseqCount {
 
 
 process calculateTPM {
+    container = 'veupathdb/shortreadaligner'
+
     publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.tpm" }
 
     input:
@@ -413,6 +477,8 @@ process calculateTPM {
 
 
 process makeWindowFile {
+    container = 'veupathdb/shortreadaligner'
+
     input:
         path('genome.fa.fai') from genome_index_path_ch
         val(winLen) from params.winLen
@@ -428,6 +494,8 @@ process makeWindowFile {
 
 
 process bedtoolsWindowed {
+    container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+
     input:
         tuple path('windows.bed'), path('genome.txt') from window_to_bedtoolsWindowed_qch
         tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') from gatk_to_bedtoolsWindowed_qch
@@ -443,6 +511,8 @@ process bedtoolsWindowed {
 
 
 process normaliseCoverage {
+    container = 'veupathdb/shortreadaligner'
+
     publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
     input:
@@ -460,6 +530,8 @@ process normaliseCoverage {
 
 
 process makeSnpDensity {
+    container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+
     input:
         tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi') from varscan_to_snpDensity_qch
         tuple path('windows.bed'), path('genome.txt') from window_to_snpDensity_qch
@@ -476,6 +548,8 @@ process makeSnpDensity {
 
 
 process makeDensityBigwigs {
+    container = 'veupathdb/shortreadaligner'
+
     publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
     input:
@@ -496,6 +570,7 @@ process makeDensityBigwigs {
 
 if(params.ploidy != 1) {
     process getHeterozygousSNPs {
+        container = 'veupathdb/vcf_parser_cnv'
         input:
             tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi') from varscan_to_LOH_qch
 
@@ -509,6 +584,7 @@ if(params.ploidy != 1) {
     }
 
     process makeHeterozygousDensityBed {
+        container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
         input:
             tuple path('windows.bed'), path('genome.txt') from window_to_LOH_qch
             tuple val(sampleName), path('heterozygousSNPs.vcf') from process_makeLOH_qch
@@ -523,6 +599,8 @@ if(params.ploidy != 1) {
     }
 
     process makeHeterozygousDensityBigwig {
+        container = 'veupathdb/shortreadaligner'
+
         publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
 
         input:
