@@ -361,7 +361,6 @@ process makeMergedVarscanIndex {
 }
 
 
-//TODO JB I have published this - please check
 process bcftoolsConsensus {
     container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
