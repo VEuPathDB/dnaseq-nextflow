@@ -133,6 +133,7 @@ process hisat2 {
 
     output:
         tuple val(sampleName), path('result_sorted.bam') into hisat2_to_subsample_qch
+        path('result_sorted.bam') into hisat2_to_reorder_fasta_qch
     
     script:
     if(params.fromBAM)
@@ -151,6 +152,28 @@ process hisat2 {
 	    """
         mateAEncoding=\$(<mateAEncoding)
         hisat2 --no-spliced-alignment -k 1 -p $params.hisat2Threads -q --\$mateAEncoding -x $hisat2_index -U sample_1p | samtools view -bS - | samtools sort - > result_sorted.bam
+        """
+}
+
+//reorder fasta file to match the bam files
+//all bam files in a dataset should be the same
+//do this just once with the first bam file
+process reorderFasta {
+    container = 'veupathdb/shortreadaligner'
+
+    input:
+        path 'result_sorted.bam' from hisat2_to_reorder_fasta_qch.first()
+        path 'genome.fa' from genome_fasta_path_ch
+
+    output:
+        path 'genome_reordered.fa' into genome_fasta_reordered_ch
+        path 'genome_reordered.fa.fai' into genome_index_reordered_ch
+
+    script:
+        """
+        for seq in \$(samtools view -H result_sorted.bam | grep '^@SQ' | cut -f 2); do echo \${seq#*SN:}; done > regions.txt
+        samtools faidx genome.fa \$(cat regions.txt) > genome_reordered.fa
+        samtools faidx genome_reordered.fa
         """
 }
 
@@ -186,25 +209,23 @@ process picard {
      container = 'broadinstitute/picard:2.25.0'
 
      input:
-        path 'genome.fa' from genome_fasta_path_ch
-        path 'genome.fa.fai' from genome_index_path_ch
+        path 'genome_reordered.fa' from genome_fasta_reordered_ch
+        path 'genome_reordered.fa.fai' from genome_index_reordered_ch
         path picardJar from picard_jar_path_ch
         tuple val(sampleName), path('result_sorted_ds.bam') from subsample_to_picard_qch
 
 
      output:
-        tuple val(sampleName), path('genome.dict'), path('picard_reordered.bam'), path('picard_reordered.bai') into picard_to_gatk_qch
+        tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai') into picard_to_gatk_qch
         tuple val(sampleName), path('summaryMetrics.txt') into picard_to_normaliseCoverage_qch
 
     script:
         def jarPath = picardJar.name == 'NA' ? "/usr/picard/picard.jar" : picardJar.name
         """
         java -jar $jarPath AddOrReplaceReadGroups I=result_sorted_ds.bam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
-
-        java -jar $jarPath CreateSequenceDictionary R=genome.fa UR=genome.fa
-        java -jar $jarPath ReorderSam I=picard.bam O=picard_reordered.bam SD=genome.dict
-        java -jar $jarPath BuildBamIndex I=picard_reordered.bam
-        java -jar $jarPath CollectAlignmentSummaryMetrics R=genome.fa I=picard_reordered.bam O=summaryMetrics.txt
+        java -jar $jarPath CreateSequenceDictionary R=genome_reordered.fa UR=genome_reordered.fa
+        java -jar $jarPath BuildBamIndex I=picard.bam
+        java -jar $jarPath CollectAlignmentSummaryMetrics R=genome_reordered.fa I=picard.bam O=summaryMetrics.txt
         """
 }
 
@@ -217,9 +238,9 @@ process gatk {
 
     input:
         path gatkJar from gatk_jar_path_ch
-        path 'genome.fa' from genome_fasta_path_ch
-        path 'genome.fa.fai' from genome_index_path_ch
-        tuple val(sampleName), path('genome.dict'), path('picard_reordered.bam'), path('picard_reordered.bai') from picard_to_gatk_qch
+        path 'genome_reordered.fa' from genome_fasta_reordered_ch
+        path 'genome_reordered.fa.fai' from genome_index_reordered_ch
+        tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai') from picard_to_gatk_qch
 
     output:
         tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai') into (gatk_bam_to_mpileup_qch, gatk_bam_to_varscan_qch, gatk_bam_to_genomecov_qch, gatk_to_sortForCounting_qch, gatk_to_bedtoolsWindowed_qch)
@@ -227,8 +248,8 @@ process gatk {
     script:
         def jarPath = gatkJar.name == 'NA' ? "/usr/GenomeAnalysisTK.jar" : gatkJar.name
         """
-        java -jar $jarPath -I picard_reordered.bam -R genome.fa -T RealignerTargetCreator -o forIndelRealigner.intervals 2>realaligner.err
-        java -jar $jarPath -I picard_reordered.bam -R genome.fa -T IndelRealigner -targetIntervals forIndelRealigner.intervals -o result_sorted_gatk.bam 2>indelRealigner.err
+        java -jar $jarPath -I picard.bam -R genome_reordered.fa -T RealignerTargetCreator -o forIndelRealigner.intervals 2>realaligner.err
+        java -jar $jarPath -I picard.bam -R genome_reordered.fa -T IndelRealigner -targetIntervals forIndelRealigner.intervals -o result_sorted_gatk.bam 2>indelRealigner.err
         """
 }
 
@@ -238,8 +259,8 @@ process mpileup {
 
     input:
         tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') from gatk_bam_to_mpileup_qch
-        path 'genome.fa' from genome_fasta_path_ch
-        path 'genome.fa.fai' from genome_index_path_ch
+        path 'genome_reordered.fa' from genome_fasta_reordered_ch
+        path 'genome_reordered.fa.fai' from genome_index_reordered_ch
 
     
     output:
@@ -247,7 +268,7 @@ process mpileup {
     
     script:
 	    """
-        samtools mpileup -A -f genome.fa -B result_sorted_gatk.bam > result.pileup 2>pileup.err
+        samtools mpileup -A -f genome_reordered.fa -B result_sorted_gatk.bam > result.pileup 2>pileup.err
         """
 }
 
@@ -368,15 +389,15 @@ process bcftoolsConsensus {
 
     input:
         tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') from varscan_concat_to_consensus_qch
-        path 'genome.fa' from genome_fasta_path_ch
-        path 'genome.fa.fai' from genome_index_path_ch
+        path 'genome_reordered.fa' from genome_fasta_reordered_ch
+        path 'genome_reordered.fa.fai' from genome_index_reordered_ch
 
     output:
         path('cons.fa.gz')
     
     script:
 	    """
-        bcftools consensus -I -f genome.fa varscan.concat.vcf.gz > cons.fa
+        bcftools consensus -I -f genome_reordered.fa varscan.concat.vcf.gz > cons.fa
         gzip cons.fa
 	    """
 }
@@ -387,14 +408,14 @@ process genomecov {
 
     input:
         tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai') from gatk_bam_to_genomecov_qch
-        path 'genome.fa.fai' from genome_index_path_ch
+        path 'genome_reordered.fa.fai' from genome_index_reordered_ch
 
     output:
 	    tuple val(sampleName), path('coverage.bed') into bedgraph_qch
 
     script:
 	    """
-        bedtools genomecov -bg -ibam result_sorted_gatk.bam -g genome.fa.fai >coverage.bed
+        bedtools genomecov -bg -ibam result_sorted_gatk.bam -g genome_reordered.fa.fai >coverage.bed
 	    """
 }
 
@@ -405,7 +426,7 @@ process bedGraphToBigWig {
     publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}.bw" }
 
     input:
-        path 'genome.fa.fai' from genome_index_path_ch
+        path 'genome_reordered.fa.fai' from genome_index_reordered_ch
         tuple val(sampleName), path('coverage.bed') from bedgraph_qch
 
     output:
@@ -414,7 +435,7 @@ process bedGraphToBigWig {
     script:
 	    """
         LC_COLLATE=C sort -k1,1 -k2,2n coverage.bed > sorted.coverage.bed
-        bedGraphToBigWig sorted.coverage.bed genome.fa.fai coverage.bw
+        bedGraphToBigWig sorted.coverage.bed genome_reordered.fa.fai coverage.bw
 	    """
 }
 
@@ -479,7 +500,7 @@ process makeWindowFile {
     container = 'veupathdb/shortreadaligner'
 
     input:
-        path('genome.fa.fai') from genome_index_path_ch
+        path('genome_reordered.fa.fai') from genome_index_reordered_ch
         val(winLen) from params.winLen
 
     output:
@@ -487,7 +508,7 @@ process makeWindowFile {
 
     script:
         """
-        makeWindowedBed.pl --samtoolsIndex genome.fa.fai --winLen $winLen
+        makeWindowedBed.pl --samtoolsIndex genome_reordered.fa.fai --winLen $winLen
         """
 }
 
@@ -553,7 +574,7 @@ process makeDensityBigwigs {
 
     input:
         tuple val(sampleName), path('snpDensity.bed'), path('indelDensity.bed') from process_snpDensity_qch
-        path('genome.fa.fai') from genome_index_path_ch
+        path('genome_reordered.fa.fai') from genome_index_reordered_ch
 
     output:
         tuple path('snpDensity.bw'), path('indelDensity.bw')
@@ -562,8 +583,8 @@ process makeDensityBigwigs {
         """
         LC_COLLATE=C sort -k1,1 -k2,2n snpDensity.bed > sorted.snpDensity.bed
         LC_COLLATE=C sort -k1,1 -k2,2n indelDensity.bed > sorted.indelDensity.bed
-        bedGraphToBigWig sorted.snpDensity.bed genome.fa.fai snpDensity.bw
-        bedGraphToBigWig sorted.indelDensity.bed genome.fa.fai indelDensity.bw
+        bedGraphToBigWig sorted.snpDensity.bed genome_reordered.fa.fai snpDensity.bw
+        bedGraphToBigWig sorted.indelDensity.bed genome_reordered.fa.fai indelDensity.bw
         """
 }
 
@@ -604,7 +625,7 @@ if(params.ploidy != 1) {
 
         input:
             tuple val(sampleName), path('heterozygousDensity.bed') from process_heterozygousDensity_qch
-            path('genome.fa.fai') from genome_index_path_ch
+            path('genome_reordered.fa.fai') from genome_index_reordered_ch
 
         output:
             path('heterozygousDensity.bw') 
@@ -612,7 +633,7 @@ if(params.ploidy != 1) {
         script:
             """
             LC_COLLATE=C sort -k1,1 -k2,2n heterozygousDensity.bed > sorted.heterozygousDensity.bed
-            bedGraphToBigWig sorted.heterozygousDensity.bed genome.fa.fai heterozygousDensity.bw
+            bedGraphToBigWig sorted.heterozygousDensity.bed genome_reordered.fa.fai heterozygousDensity.bw
             """
     }
 }
