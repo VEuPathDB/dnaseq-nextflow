@@ -1,4 +1,4 @@
-FROM ubuntu:groovy
+FROM ubuntu:focal
 
 # set environment variables
 ENV varscan_version 2.3.9
