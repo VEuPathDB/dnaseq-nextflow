@@ -22,7 +22,7 @@ process hisat2Index {
      	path 'genome.fa' from params.genomeFastaFile
     
     output:
-	    path 'genomeIndex*.ht2' into hisat2_index_path_ch
+	path 'genomeIndex*.ht2' into hisat2_index_path_ch
         val 'genomeIndex' into hisat2_index_value_ch
         path 'genome.fa.fai' into genome_index_path_ch
         path 'genome.fa' into genome_fasta_path_ch
@@ -261,10 +261,9 @@ process mpileup {
         tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') from gatk_bam_to_mpileup_qch
         path 'genome_reordered.fa' from genome_fasta_reordered_ch
         path 'genome_reordered.fa.fai' from genome_index_reordered_ch
-
-    
+	
     output:
-        tuple val(sampleName), path('result.pileup') into mpileup_qch
+        tuple val(sampleName), path('result.pileup') into (mpileup_qch, mpileup_to_mask_qch)
     
     script:
 	    """
@@ -281,25 +280,32 @@ process varscan {
     input:
         tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai'), path('result.pileup') from gatk_bam_to_varscan_qch.join(mpileup_qch)
         path varscanJar from varscan_jar_path_ch
+	path 'genome_reordered.fa.fai' from genome_index_reordered_ch
 
     output:
-        tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi') into (varscan_to_concat_qch, varscan_to_snpDensity_qch)
+        tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa') into (varscan_to_concat_qch, varscan_to_snpDensity_qch)
         tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi') into varscan_to_LOH_qch
         path('varscan.cons.gz')
     
     script:
         def jarPath = varscanJar.name == 'NA' ? "/usr/local/VarScan.jar" : varscanJar.name
-	    """
+       """
        echo $sampleName >vcf_sample_name
-       java -jar $jarPath mpileup2snp result.pileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.varscanMinCoverage --min-var-freq $params.varscanMinVarFreqSnp >varscan.snps.vcf  2>varscan_snps.err
-       java -jar $jarPath mpileup2indel result.pileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.varscanMinCoverage --min-var-freq $params.varscanMinVarFreqCons >varscan.indels.vcf  2> varscan_indels.err
-       java -jar $jarPath mpileup2cns result.pileup --p-value $params.varscanPValue --min-coverage $params.varscanMinCoverage --min-var-freq $params.varscanMinVarFreqCons > varscan.cons 2>varscan_cons.err
+       java -jar $jarPath mpileup2snp result.pileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqSnp >varscan.snps.vcf  2>varscan_snps.err
+       java -jar $jarPath mpileup2indel result.pileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqCons >varscan.indels.vcf  2> varscan_indels.err
+       java -jar $jarPath mpileup2cns result.pileup --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqCons > varscan.cons 2>varscan_cons.err
        bgzip varscan.snps.vcf
        tabix -fp vcf varscan.snps.vcf.gz
        bgzip varscan.indels.vcf
        tabix -fp vcf varscan.indels.vcf.gz
        bgzip varscan.cons
-        """
+       perl /usr/bin/maskGenome.pl \
+         -p result.pileup \
+         -f genome_reordered.fa.fai \
+         -dc $params.minCoverage \
+         -o masked.fa
+       fold -w 60 masked.fa > genome_masked.fa
+       """
 }
 
 
@@ -307,10 +313,10 @@ process concatSnpsAndIndels {
     container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
     input:
-        tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi') from varscan_to_concat_qch
+        tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa') from varscan_to_concat_qch
 
     output:
-	tuple val(sampleName), path('varscan.concat.vcf') into varscan_concat_vcf_qch
+	tuple val(sampleName), path('varscan.concat.vcf'), path('genome_masked.fa') into varscan_concat_vcf_qch
 
     script:
 	    """
@@ -323,10 +329,10 @@ process makeCombinedVarscanIndex {
     container = 'veupathdb/dnaseqanalysis'
 
     input:
-	    tuple val(sampleName), path('varscan.concat.vcf') from varscan_concat_vcf_qch
+	    tuple val(sampleName), path('varscan.concat.vcf'), path('genome_masked.fa') from varscan_concat_vcf_qch
 
     output:
-	    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') into varscan_concat_to_consensus_qch
+	    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa') into varscan_concat_to_consensus_qch
         path('varscan.concat.vcf.gz') into (varscan_vcf_to_count_qch, varscan_vcf_to_merge_qch)
         path('varscan.concat.vcf.gz.tbi') into varscan_vcftbi_to_merge_qch
 
@@ -381,25 +387,23 @@ process makeMergedVarscanIndex {
 	    """
 }
 
-
 process bcftoolsConsensus {
     container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
-    publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "consensus.fa.gz" }
+    publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
 
     input:
-        tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi') from varscan_concat_to_consensus_qch
-        path 'genome_reordered.fa' from genome_fasta_reordered_ch
+        tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa') from varscan_concat_to_consensus_qch
         path 'genome_reordered.fa.fai' from genome_index_reordered_ch
 
     output:
         path('cons.fa.gz')
     
     script:
-	    """
-        bcftools consensus -I -f genome_reordered.fa varscan.concat.vcf.gz > cons.fa
+	"""
+        bcftools consensus -I -f genome_masked.fa varscan.concat.vcf.gz > cons.fa
         gzip cons.fa
-	    """
+	"""
 }
 
 
@@ -553,7 +557,7 @@ process makeSnpDensity {
     container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
     input:
-        tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi') from varscan_to_snpDensity_qch
+        tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa') from varscan_to_snpDensity_qch
         tuple path('windows.bed'), path('genome.txt') from window_to_snpDensity_qch
 
     output:
