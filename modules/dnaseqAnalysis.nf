@@ -221,6 +221,9 @@ process concatSnpsAndIndels {
 
 process makeCombinedVarscanIndex {
   container = 'veupathdb/dnaseqanalysis'
+  
+   publishDir "$params.outputDir", pattern: "varscan.concat.vcf.gz", mode: "copy", saveAs: { filename -> "${sampleName}.concat.vcf.gz" }
+   publishDir "$params.outputDir", pattern: "varscan.concat.vcf.gz.tbi", mode: "copy", saveAs: { filename -> "${sampleName}.concat.vcf.gz.tbi" }
 
   input:
     tuple val(sampleName), path('varscan.concat.vcf'), path('genome_masked.fa') 
@@ -228,10 +231,45 @@ process makeCombinedVarscanIndex {
   output:
     tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa')
     path('varscan.concat.vcf.gz') 
-    path('varscan.concat.vcf.gz.tbi') 
+    path('varscan.concat.vcf.gz.tbi')
+    tuple val(sampleName), path('varscan.concat.vcf.gz')
 
   script:
     template 'makeCombinedVarscanIndex.bash'
+}
+
+
+process filterIndels {
+  container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
+
+  input:
+    tuple val(sampleName), path('varscan.concat.vcf.gz')
+
+  output:
+    tuple val(sampleName), path('output.recode.vcf')
+
+  script:
+    """
+    vcftools --gzvcf varscan.concat.vcf.gz --keep-only-indels --out output --recode 
+    """
+}
+
+
+process makeIndelTSV {
+  container = 'veupathdb/dnaseqanalysis'
+
+  publishDir "$params.outputDir", pattern: "output.tsv", mode: "copy", saveAs: { filename -> "${sampleName}.indel.tsv" }
+
+  input:
+    tuple val(sampleName), path('output.recode.vcf')
+
+  output:
+    path('output.tsv')
+
+  script:
+    """
+    perl /usr/bin/findValues.pl -i output.recode.vcf -s ${sampleName} -o output.tsv
+    """
 }
 
 
@@ -524,6 +562,10 @@ workflow dnaseqAnalysis {
 
     makeCombinedVarscanIndexResults = makeCombinedVarscanIndex(concatSnpsAndIndelsResults)
 
+    filterIndelsResults = filterIndels(makeCombinedVarscanIndexResults[3])
+
+    makeIndelTSV(filterIndelsResults[0])
+    
     mergeVcfsResults = mergeVcfs(makeCombinedVarscanIndexResults[1].collect().size(), makeCombinedVarscanIndexResults[1].collect(), makeCombinedVarscanIndexResults[2].collect())
   
     makeMergedVarscanIndexResults = makeMergedVarscanIndex(mergeVcfsResults[0])
