@@ -311,19 +311,34 @@ process makeMergedVarscanIndex {
 process bcftoolsConsensus {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
-  publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
-
   input:
     tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa') 
     path 'genome_reordered.fa.fai'
 
   output:
-    path('cons.fa.gz')
+    tuple val(sampleName), path('cons.fa')
     
   script:
     template 'bcftoolsConsensus.bash'
 }
 
+process addSampleToDefline {
+  container = 'veupathdb/dnaseqanalysis'
+
+  publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
+
+  input:
+  tuple val(sampleName), path('cons.fa')
+
+  output:
+    path 'unique_ids.fa.gz'
+
+  script:
+    """
+    perl /usr/bin/addSampleToDefline.pl -i cons.fa -o unique_ids.fa -s $sampleName
+    gzip unique_ids.fa
+    """
+}
 
 process genomecov {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
@@ -571,6 +586,8 @@ workflow dnaseqAnalysis {
     makeMergedVarscanIndexResults = makeMergedVarscanIndex(mergeVcfsResults[0])
 
     bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVarscanIndexResults[0], reorderFastaResults[1])
+
+    addSampleToDefline(bcftoolsConsensusResults)
 
     genomecovResults = genomecov(gatkResults, reorderFastaResults[1])
   
