@@ -19,14 +19,14 @@ open(O,">$outputFile");
 open(I,"$vcfFile") || die "Unable to open $vcfFile";
 
 while(<I>){
-    if (/^.*\t(\d+)\t\.\t(\w+)\t(\w+)/) {
-        $refPos = $1;
-	$refAllele = $2;
-	$altAllele = $3;
+    if (/^(.+)\t(\d+)\t\.\t(\w+)\t(\w+)/) {
+        $refPos = $2;
+	$refAllele = $3;
+	$altAllele = $4;
 	$refLen = length($refAllele);
 	$altLen = length($altAllele);
 	$shift_count = $altLen - $refLen;
-	print O "$sample\t$1\t$shift_count\n";
+	print O "$sample\t$1\t$2\t$shift_count\n";
     }
 }
 
