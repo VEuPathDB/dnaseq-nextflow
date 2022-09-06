@@ -267,9 +267,7 @@ process makeIndelTSV {
     path('output.tsv')
 
   script:
-    """
-    perl /usr/bin/findValues.pl -i output.recode.vcf -s ${sampleName} -o output.tsv
-    """
+    template 'makeIndelTSV.bash'
 }
 
 
@@ -334,10 +332,7 @@ process addSampleToDefline {
     path 'unique_ids.fa.gz'
 
   script:
-    """
-    perl /usr/bin/addSampleToDefline.pl -i cons.fa -o unique_ids.fa -s $sampleName
-    gzip unique_ids.fa
-    """
+    template 'addSampleToDefline.bash'
 }
 
 process genomecov {
