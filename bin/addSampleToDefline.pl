@@ -20,7 +20,7 @@ open(I,"$inputFile") || die "Unable to open $inputFile";
 
 while(my $line = <I>){
     if ($line =~ /^(>)(.*)/) {
-        print O "$1$sample-$2\n";
+        print O "$1$sample\n";
     }
     else {
         print O $line;
