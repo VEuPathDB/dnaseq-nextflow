@@ -44,6 +44,7 @@ while(<P>) {
 close P;
 
 # Printing N's for uncovered bases before first covered position
+# 2 because this indexes at 1 not zero, and I do not want one for the first covered position
 for my $i (2..$currentPos){
   print O "N";
 }
