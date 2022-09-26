@@ -112,24 +112,27 @@ close REGION;
 #=================================== SUBROUTINES ==========================================================================================
 
 sub calcCoordinates {
-    my ($shiftFrame, $coordinateFrame, $locationshiftsLen, $oldshift, $i) = @_;
+    my ($shiftFrame, $coordinateFrame, $locationshiftsLen, $oldShift, $i, $shiftFrameLimit) = @_;
     my $coordinate;
-    if ($shiftFrame > $locationshiftsLen) {
+    if ($shiftFrame > $shiftFrameLimit) {
 	$coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
     }
     elsif ($coordinates[$coordinateFrame][$i] < $locationshifts[$shiftFrame][0]) {
 	$coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
     }
-    elsif ($locationshifts[$shiftFrame][0] == $coordinates[$coordinateFrame][$i]) {
+    elsif ($coordinates[$coordinateFrame][$i] == $locationshifts[$shiftFrame][0]) {
 	$coordinate = $locationshifts[$shiftFrame][1] + $coordinates[$coordinateFrame][$i];
     }
-    elsif ($locationshifts[$shiftFrame][0] < $coordinates[$coordinateFrame][$i]) {
-	until ($locationshifts[$shiftFrame][0] >= $coordinates[$coordinateFrame][$i] || $shiftFrame > $locationshiftsLen) {
+    elsif ($coordinates[$coordinateFrame][$i] > $locationshifts[$shiftFrame][0] || $shiftFrame == $shiftFrameLimit) {
+	until ($locationshifts[$shiftFrame][0] >= $coordinates[$coordinateFrame][$i] || $shiftFrame == $shiftFrameLimit) {
 	    $oldShift = $locationshifts[$shiftFrame][1];
 	    $shiftFrame++;
 	}
-	if ($shiftFrame > $locationshiftsLen) {
-	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
+	if ($shiftFrame == $shiftFrameLimit && $coordinates[$coordinateFrame][$i] < $locationshifts[$shiftFrame][0]) {
+	    $coordinate = $coordinates[$coordinateFrame][$i] + $locationshifts[$shiftFrame-1][1];
+	}
+	elsif ($shiftFrame == $shiftFrameLimit && $coordinates[$coordinateFrame][$i] > $locationshifts[$shiftFrame][0]) {
+	    $coordinate = $coordinates[$coordinateFrame][$i] + $locationshifts[$shiftFrame][1];
 	}
 	elsif ($locationshifts[$shiftFrame][0] == $coordinates[$coordinateFrame][$i]) {
 	    $coordinate = $locationshifts[$shiftFrame][1] + $coordinates[$coordinateFrame][$i];
@@ -140,4 +143,5 @@ sub calcCoordinates {
     }
     return ($coordinate, $oldShift, $shiftFrame);   
 }
+
 
