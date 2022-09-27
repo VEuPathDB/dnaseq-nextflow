@@ -8,7 +8,7 @@ ENV CLASSPATH /usr/local/VarScan.jar
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y build-essential wget unzip default-jre python3 python tabix samtools perl default-jre unzip && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y build-essential wget unzip bcftools default-jre python3 python tabix samtools perl default-jre unzip && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
 
 # download software
 WORKDIR /usr/local/
