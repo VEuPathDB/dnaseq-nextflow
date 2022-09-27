@@ -11,7 +11,6 @@ process hisat2Index {
   output:
    path 'genomeIndex*.ht2' 
    val 'genomeIndex' 
-   path 'genome.fa.fai'
    path 'genome.fa' 
 
   script: 
@@ -562,7 +561,7 @@ workflow processSingleExperiment {
 
     hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults[1], hisat2IndexResults[0])
 
-    reorderFastaResults = reorderFasta(hisat2Results[1].first(), hisat2IndexResults[3])
+    reorderFastaResults = reorderFasta(hisat2Results[1].first(), hisat2IndexResults[2])
 
     subsampleResults = subsample(hisat2Results[0])
 
