@@ -1,15 +1,17 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
+
 //---------------------------------------------------------------
-// Includes
+// Including Workflows
 //---------------------------------------------------------------
 
 include { processSingleExperiment } from './modules/processSingleExperiment.nf'
 include { mergeExperiments } from './modules/mergeExperiments.nf'
 
+
 //---------------------------------------------------------------
-// param checking dnaseqanalysis 
+// PARAM CHECKING processSingleExperiment 
 //---------------------------------------------------------------
 
 if(params.workflow == 'processSingleExperiment') {
@@ -44,13 +46,14 @@ if(params.workflow == 'processSingleExperiment') {
   
   else {
     samples_qch = Channel.fromPath([params.inputDir + '/**/*.fastq', params.inputDir + '/**/*.fastq.gz', params.inputDir + '/**/*.fq.gz'])
-                    .map { file -> tuple(file.baseName, [file]) }
+                                                                                             .map { file -> tuple(file.baseName, [file]) }
   }
 
 }
 
+
 //---------------------------------------------------------------
-// param checking AllExperiments
+// PARAM CHECKING mergeExperiments
 //---------------------------------------------------------------
 
 if(params.workflow == 'mergeExperiments') {
@@ -73,6 +76,7 @@ if(params.workflow == 'mergeExperiments') {
   }
 
 }
+
 
 //---------------------------------------------------------------
 // WORKFLOW

@@ -15,7 +15,6 @@ process checkUniqueIds {
 }
 
 
-
 process generateRegion {
 
   input:
@@ -27,11 +26,7 @@ process generateRegion {
     path 'region.txt'
 
   script:
-    """
-    grep ">" input.fasta > temp.fa
-    DEFLINE=\$(sed 's/>//' temp.fa)
-    /usr/bin/perl makepositionarraycoding.pl --test_file shifted.txt --sequence_id \$DEFLINE --region_file region.txt
-    """
+    template 'generateRegion.bash'
 }
 
 
@@ -128,7 +123,6 @@ process makeIndex {
 
 
 process mergeVcfs {
-  container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
 
@@ -165,6 +159,7 @@ process snpEff {
 workflow mergeExperiments {
 
   take:
+
     fastas_qch
     vcfs_qch
     vcfsindex_qch
@@ -172,12 +167,21 @@ workflow mergeExperiments {
   main:
     
     checkResults = checkUniqueIds(params.fastaDir) 
-    generateRegion(params.makepositionarraycoding, fastas_qch) | runSamtools | collectFile(storeDir: params.outputDir, name: 'transcriptFinal.fa', newLine: true)
+
+    generateRegion(params.makepositionarraycoding, fastas_qch) \
+      | runSamtools \
+      | collectFile(storeDir: params.outputDir, name: 'transcriptFinal.fa', newLine: true)
+
     combinedFasta = fastas_qch.collectFile(name: 'CombinedFasta.fa')
+
     makeIndex(combinedFasta, checkResults)
+
     allvcfs = vcfs_qch.collect()
+
     allvcfindexes = vcfsindex_qch.collect()
+
     mergeVcfsResults = mergeVcfs(allvcfs, allvcfindexes)
+
     snpEff(mergeVcfsResults[1], params.databaseFile, params.sequenceFile)
 
 }

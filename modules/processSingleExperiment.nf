@@ -170,6 +170,7 @@ process gatk {
 
 process mpileup {
   container = 'veupathdb/shortreadaligner'
+
   publishDir "$params.outputDir", pattern: "result.pileup", mode: "copy", saveAs: { filename -> "${sampleName}.result.pileup" }
 
   input:
@@ -249,9 +250,7 @@ process filterIndels {
     tuple val(sampleName), path('output.recode.vcf')
 
   script:
-    """
-    vcftools --gzvcf varscan.concat.vcf.gz --keep-only-indels --out output --recode 
-    """
+    template 'filterIndels.bash'
 }
 
 
@@ -320,6 +319,7 @@ process bcftoolsConsensus {
     template 'bcftoolsConsensus.bash'
 }
 
+
 process addSampleToDefline {
   container = 'veupathdb/dnaseqanalysis'
 
@@ -334,6 +334,7 @@ process addSampleToDefline {
   script:
     template 'addSampleToDefline.bash'
 }
+
 
 process genomecov {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
@@ -492,6 +493,7 @@ process makeDensityBigwigs {
     template 'makeDensityBigWigs.bash'
 }
 
+
 process getHeterozygousSNPs {
   container = 'veupathdb/vcf_parser_cnv'
 
@@ -504,6 +506,7 @@ process getHeterozygousSNPs {
   script:
     template 'getHeterozygousSNPs.bash'
 }
+
 
 process makeHeterozygousDensityBed {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
@@ -518,6 +521,7 @@ process makeHeterozygousDensityBed {
   script:
     template 'makeHeterozygousDensityBed.bash'
 }
+
 
 process makeHeterozygousDensityBigwig {
   container = 'veupathdb/shortreadaligner'
@@ -539,6 +543,7 @@ process makeHeterozygousDensityBigwig {
 workflow processSingleExperiment {
 
   take:
+
     samples_qch
 
   main:
