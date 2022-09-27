@@ -1,15 +1,16 @@
-# dnaseqAnalysis Nextflow Workflows
-**Explanation of Workflows** [^1] 
+# <p align=center>dnaseqAnalysis Nextflow Workflows [^1]</p>
+
 [^1]: Both workflows are still in development   
 
-***processSingleExperiment***  
+***<p align=center>processSingleExperiment</p>***  
+![processSingleExperimentWorkflow](https://github.com/VEuPathDB/dnaseqAnalysis/blob/main/visualization/processSingleProject.png)  
 This workflow will run on a per organism basis with multiple strains. Anyone can run this workflow, as it does not require a gus environment. The output from this process will either be sent to webservices, uploaded to various databases, and/or used in the mergeExperiments process.  
   
-***mergeExperiments***  
+***<p align=center>mergeExperiments</p>***  
+![mergeExperimentsWorkflow](https://github.com/VEuPathDB/dnaseqAnalysis/blob/main/visualization/mergeExperiments.png)  
 This work flow will run after processSingleExperiment. This workflow requires a gus environment to run. It will take the strain specific vcfs and consensus sequences output from the processSingleExperiment workflow. The strain specific vcfs will be merged together to create a merged vcf. This will be sent to webservices, along with being sent to snpEff to generate an annotated vcf file. The consensus sequences will be combined and sent to web services. These masked consensus sequences, along with various information queried from our databases will be used to generate a transcript fasta file that is indel and coverage aware. This will be used in downstream processes that still need to be generated.
 
-
-**Explanation of Config File Parameters**
+**<p align=center>Explanation of Config File Parameters</p>**
 ---
 
 | Workflow | Parameter | Value | Description |
