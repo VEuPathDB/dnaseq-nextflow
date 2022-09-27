@@ -5,14 +5,14 @@ nextflow.enable.dsl=2
 // Includes
 //---------------------------------------------------------------
 
-include { dnaseqAnalysis } from './modules/dnaseqAnalysis.nf'
-include { AllExperiments } from './modules/AllExperiments.nf'
+include { processSingleExperiment } from './modules/processSingleExperiment.nf'
+include { mergeExperiments } from './modules/mergeExperiments.nf'
 
 //---------------------------------------------------------------
 // param checking dnaseqanalysis 
 //---------------------------------------------------------------
 
-if(params.workflow == 'dnaseqanalysis') {
+if(params.workflow == 'processSingleExperiment') {
   if(!params.inputDir) {
     throw new Exception("Missing parameter params.inputDir")
   }
@@ -53,7 +53,7 @@ if(params.workflow == 'dnaseqanalysis') {
 // param checking AllExperiments
 //---------------------------------------------------------------
 
-if(params.workflow == 'allexperiments') {
+if(params.workflow == 'mergeExperiments') {
 
   if(params.fastaDir) {
     fastas_qch = Channel.fromPath(params.fastaDir + '*.fa')
@@ -80,12 +80,12 @@ if(params.workflow == 'allexperiments') {
 
 workflow {
 
-  if(params.workflow == 'dnaseqanalysis') {
-    dnaseqAnalysis(samples_qch)
+  if(params.workflow == 'processSingleExperiment') {
+    processSingleExperiment(samples_qch)
   }
 
-  else if (params.workflow == 'allexperiments') {
-    AllExperiments(fastas_qch, vcfs_qch, vcfsindex_qch)
+  else if (params.workflow == 'mergeExperiments') {
+    mergeExperiments(fastas_qch, vcfs_qch, vcfsindex_qch)
   }
 
   else {

@@ -162,7 +162,7 @@ process snpEff {
 }
 
 
-workflow AllExperiments {
+workflow mergeExperiments {
 
   take:
     fastas_qch

@@ -535,7 +535,8 @@ process makeHeterozygousDensityBigwig {
     template 'makeHeterozygousDensityBigWig.bash'
 }
 
-workflow dnaseqAnalysis {
+
+workflow processSingleExperiment {
 
   take:
     samples_qch
