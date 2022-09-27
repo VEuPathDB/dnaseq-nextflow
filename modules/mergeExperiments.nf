@@ -129,7 +129,6 @@ process mergeVcfs {
 
   input:
     path '*.vcf.gz'
-    path '*.vcf.gz.tbi'
 
   output:
     path 'merged.vcf.gz'
@@ -163,7 +162,6 @@ workflow mergeExperiments {
 
     fastas_qch
     vcfs_qch
-    vcfsindex_qch
     
   main:
     
@@ -179,9 +177,7 @@ workflow mergeExperiments {
 
     allvcfs = vcfs_qch.collect()
 
-    allvcfindexes = vcfsindex_qch.collect()
-
-    mergeVcfsResults = mergeVcfs(allvcfs, allvcfindexes)
+    mergeVcfsResults = mergeVcfs(allvcfs)
 
     snpEff(mergeVcfsResults[1], params.databaseFile, params.sequenceFile)
 

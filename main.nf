@@ -68,7 +68,6 @@ if(params.workflow == 'mergeExperiments') {
    
   if(params.vcfDir) {
     vcfs_qch = Channel.fromPath(params.vcfDir + '*.vcf.gz')
-    vcfsindex_qch = Channel.fromPath(params.vcfDir + '*.vcf.gz.tbi')
   }
    
   else {
@@ -89,7 +88,7 @@ workflow {
   }
 
   else if (params.workflow == 'mergeExperiments') {
-    mergeExperiments(fastas_qch, vcfs_qch, vcfsindex_qch)
+    mergeExperiments(fastas_qch, vcfs_qch)
   }
 
   else {
