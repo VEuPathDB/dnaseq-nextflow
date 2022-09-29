@@ -6,8 +6,8 @@ use Test2::V0;
 use shifted;
 
 # =============== THESE ARRAYS ARE SET WITHIN lib/CalcCoordinates =====================================================================================
-# @locationshifts = ([1933,1],[2531,0],[3037,-2],[3254,0],[3433,-2],[8334,-1],[13340,-2],[13848,-4],[19255,-5],[20107,-8]);
-# @coordinates = ([250,560,0],[3767,4765,1],[5853,7502,1],[9124,11130,1],[12136,12705,1],[15087,17084,1],[18200,18949,1],[20013,21809,1],[22675,23388,1]);
+# @locationshifts = ([1933,1],[2531,-1],[2800,1],[2900,-1],[3037,-2],[3254,0],[3433,-2],[8334,-1],[13340,-2],[13848,-4],[19255,-5],[20107,-8]);
+# @coordinates = ([250,560,0],[1933,2000,1],[2531,2700,0],[2750,2800,0],[2850,2900,1],[3767,4765,1],[5853,7502,1],[9124,11130,1],[12136,12705,1],[15087,17084,1],[18200,18949,1],[20013,21809,1],[22675,23388,1]);
 
 
 # ================ VALUES I AM PASSING IN =============================================================================================================
@@ -20,28 +20,31 @@ use shifted;
 is( shifted::locationShifted(0,0), 250 );
 is( shifted::locationShifted(0,1), 560 );
 
-# Coordinate inside indels
-is( shifted::locationShifted(1,0), 3765 );
-is( shifted::locationShifted(1,1), 4763 );
-is( shifted::locationShifted(3,0), 9123 );
-is( shifted::locationShifted(4,1), 12704 );
-is( shifted::locationShifted(6,1), 18945 );
+# CDS start equal to SNP location with a positive shift
+is( shifted::locationShifted(1,0), 1933 );
 
-# Indel Occuring Between Positions, Last Indel Occuring Between Positions
-is( shifted::locationShifted(7,0), 20008 );
-is( shifted::locationShifted(7,1), 21801 );
+# CDS start equal to SNP location with a negative shift
+is( shifted::locationShifted(2,0), 2532 );
+
+# CDS end equal to SNP location with a positive shift
+is( shifted::locationShifted(3,1), 2801 );
+
+# CDS end equal to SNP location with a negative shift
+is( shifted::locationShifted(4,1), 2901 );
+
+# Coordinate inside indels
+is( shifted::locationShifted(7,0), 9123 );
+is( shifted::locationShifted(10,1), 18945 );
+
+# Coordinate inside indels, proving shiftFrame can be earlier, will shift to appropriate value
+is( shifted::locationShifted(7,0), 9123 );
+
+# Indel Occuring Between Coordinates as well as Ocurring in the Final Shift Frame 
+is( shifted::locationShifted(11,0), 20008 );
+is( shifted::locationShifted(11,1), 21801 );
 
 # Coordinate Greater than last indel location
-is( shifted::locationShifted(8,0), 22667 );
-is( shifted::locationShifted(8,1), 23380 );
-
-
-# Reverse Value Tests
-is( shifted::locationShifted(0,2), 0 );
-is( shifted::locationShifted(1,2), 1 );
-is( shifted::locationShifted(3,2), 1 );
-is( shifted::locationShifted(5,2), 1 );
-is( shifted::locationShifted(7,2), 1 );
-
+is( shifted::locationShifted(12,0), 22667 );
+is( shifted::locationShifted(12,1), 23380 );
 
 done_testing();
