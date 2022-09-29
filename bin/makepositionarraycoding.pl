@@ -112,16 +112,26 @@ close REGION;
 #=================================== SUBROUTINES ==========================================================================================
 
 sub calcCoordinates {
-    my ($shiftFrame, $coordinateFrame, $locationshiftsLen, $oldShift, $i, $shiftFrameLimit) = @_;
+    my ($shiftFrame, $coordinateFrame, $locationshiftsLen, $oldShift, $i, $shiftFrameLimit) = @_;;
     my $coordinate;
-    if ($shiftFrame > $shiftFrameLimit) {
+    my $oldFrame;
+    if ($coordinates[$coordinateFrame][$i] < $locationshifts[$shiftFrame][0]) {
 	$coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
     }
-    elsif ($coordinates[$coordinateFrame][$i] < $locationshifts[$shiftFrame][0]) {
-	$coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
-    }
-    elsif ($coordinates[$coordinateFrame][$i] == $locationshifts[$shiftFrame][0]) {
-	$coordinate = $locationshifts[$shiftFrame][1] + $coordinates[$coordinateFrame][$i];
+    elsif ($locationshifts[$shiftFrame][0] == $coordinates[$coordinateFrame][$i]) {
+        my $currentShift = $locationshifts[$shiftFrame][1];
+        if ($currentShift == 0) {
+	    $coordinate = $coordinates[$coordinateFrame][$i];
+        }
+        elsif ($i == 0) {
+	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
+        }
+        elsif ($i == 1 && $currentShift > 0) {
+	    $coordinate = $currentShift + $coordinates[$coordinateFrame][$i];     
+        }
+	elsif ($i == 1 && $currentShift < 0) {
+	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];     
+        }
     }
     elsif ($coordinates[$coordinateFrame][$i] > $locationshifts[$shiftFrame][0] || $shiftFrame == $shiftFrameLimit) {
 	until ($locationshifts[$shiftFrame][0] >= $coordinates[$coordinateFrame][$i] || $shiftFrame == $shiftFrameLimit) {
@@ -135,13 +145,24 @@ sub calcCoordinates {
 	    $coordinate = $coordinates[$coordinateFrame][$i] + $locationshifts[$shiftFrame][1];
 	}
 	elsif ($locationshifts[$shiftFrame][0] == $coordinates[$coordinateFrame][$i]) {
-	    $coordinate = $locationshifts[$shiftFrame][1] + $coordinates[$coordinateFrame][$i];
-	}
+	    if ($locationshifts[$shiftFrame][1] == 0) {
+                $coordinate = $coordinates[$coordinateFrame][$i];
+            }
+            elsif ($i == 0) {
+		$oldFrame = $shiftFrame - 1;
+                $coordinate = $locationshifts[$oldFrame][1] + $coordinates[$coordinateFrame][$i];
+            }
+            elsif ($i == 1 && $locationshifts[$shiftFrame][1] > 0) {
+                $coordinate = $locationshifts[$shiftFrame][1] + $coordinates[$coordinateFrame][$i];     
+            }
+	    elsif ($i == 1 && $locationshifts[$shiftFrame][1] < 0) {
+                $oldFrame = $shiftFrame - 1;
+                $coordinate = $locationshifts[$oldFrame][1] + $coordinates[$coordinateFrame][$i];     
+            }
+        }
 	else {
 	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
 	}
     }
-    return ($coordinate, $oldShift, $shiftFrame);   
+    return ($coordinate);   
 }
-
-
