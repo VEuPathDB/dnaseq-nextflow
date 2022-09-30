@@ -98,7 +98,7 @@ sub calcCoordinates {
 	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
 	}
     }
-    return ($coordinate);   
+    return ($coordinate, $oldShift, $shiftFrame);   
 }
 
    
