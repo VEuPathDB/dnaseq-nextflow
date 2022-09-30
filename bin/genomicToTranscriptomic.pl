@@ -202,7 +202,7 @@ sub calcCoordinates {
 
 
 sub getTranscriptLocation {
-    my ($snpLocation, $locationsShiftedNonCodingFrame, $locationsShiftedNonCodingFrameLimit) = @_;
+    my ($snpLocation, $locationsShiftedNonCodingFrame, $locationsShiftedNonCodingFrameLimit, $shiftFrame) = @_;
     if ($locationsShiftedNonCodingFrame == $locationsShiftedNonCodingFrameLimit) {
         if ($snpLocation >= $locationsShiftedNonCodingLen[$locationsShiftedNonCodingFrame][0] && $snpLocation <= $locationsShiftedNonCodingLen[$locationsShiftedNonCodingFrame][1]) {
             $transcriptLocation = &calcTranscriptLocation($snpLocation, $shiftFrame, $locationsShiftedNonCodingFrame);
@@ -242,11 +242,12 @@ sub getTranscriptLocation {
 sub calcTranscriptLocation {
     my ($snpLocation, $shiftFrame, $locationsShiftedNonCodingFrame) = @_;
     my $transcriptLocation;
-    if ($shiftFrame = 0) {
-        $transcriptLocation = $snpLocation - $locationsShiftedNonCodingLen[$locationsShiftedNonCodingFrame][2] + 1;
+    my $oldShiftFrame = $shiftFrame - 1;
+    if ($shiftFrame == 0) {
+        $transcriptLocation = $snpLocation + 1 - $locationsShiftedNonCodingLen[$locationsShiftedNonCodingFrame][2];
     }
     else {
-        $transcriptLocation = $snpLocation - $locationsShiftedNonCodingLen[$locationsShiftedNonCodingFrame][2] + $locationshifts[$shiftFrame-1][1] + 1;
+        $transcriptLocation = $snpLocation + 1 - $locationsShiftedNonCodingLen[$locationsShiftedNonCodingFrame][2] + $locationshifts[$oldShiftFrame][1];
     }
     return $transcriptLocation;
 }
