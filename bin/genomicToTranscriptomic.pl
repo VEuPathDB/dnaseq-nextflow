@@ -125,7 +125,7 @@ for (my $i=0;$i<$coordinatesLen;$i++){
 #close TEST;
 
 #======================================= GENERATING TRANSCRIPT LOCATION ARRAY  =========================================================================                                                    
-my @transcriptLocation = ();
+my @transcriptLocations = ();
 my $coordinatesNonCodingFrame=0;
 my $shiftFrame=0;
 my $coordinatesNonCodingFrameLen = scalar @coordinatesNonCodingLen;
@@ -137,9 +137,9 @@ my $lastCodingShiftFrame=0;
 for (my $shiftFrame;$shiftFrame<$locationShiftsLen;$shiftFrame++){
     $snpLocation = $locationshifts[$shiftFrame][0];
     ($transcriptLocation, $coordinatesNonCodingFrame,$lastCodingShiftFrame) = &getTranscriptLocation($snpLocation, $coordinatesNonCodingFrame, $coordinatesNonCodingFrameLimit, $shiftFrame, $lastCodingShiftFrame);
-    push (@{$transcriptLocation[$shiftFrame]}, ($snpLocation, $transcriptLocation));
+    push (@{$transcriptLocations[$shiftFrame]}, ($snpLocation, $transcriptLocation));
 }
-print TEST Dumper(\@transcriptLocation), "\n";
+print TEST Dumper(\@transcriptLocations), "\n";
 close TEST; 
 
 #=================================== SUBROUTINES ==========================================================================================
@@ -202,6 +202,7 @@ sub calcCoordinates {
 
 sub getTranscriptLocation {
     my ($snpLocation, $coordinatesNonCodingFrame, $coordinatesNonCodingFrameLimit, $shiftFrame, $lastCodingShiftFrame) = @_;
+    my $transcriptLocation;
     if ($coordinatesNonCodingFrame == $coordinatesNonCodingFrameLimit) {
         if ($snpLocation >= $coordinatesNonCodingLen[$coordinatesNonCodingFrame][0] && $snpLocation <= $coordinatesNonCodingLen[$coordinatesNonCodingFrame][1]) {
             ($transcriptLocation, $lastCodingShiftFrame) = &calcTranscriptLocation($snpLocation, $shiftFrame, $coordinatesNonCodingFrame, $lastCodingShiftFrame);
