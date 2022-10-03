@@ -112,7 +112,8 @@ close REGION;
 #=================================== SUBROUTINES ==========================================================================================
 
 sub calcCoordinates {
-    my ($shiftFrame, $coordinateFrame, $locationshiftsLen, $oldShift, $i, $shiftFrameLimit) = @_;
+    my ($shiftFrame, $coordinateFrame, $locationshiftsLen, $oldShift, $i) = @_;
+    my $shiftFrameLimit = $locationshiftsLen-1;
     my $coordinate;
     my $oldFrame;
     if ($coordinates[$coordinateFrame][$i] < $locationshifts[$shiftFrame][0]) {
@@ -166,3 +167,4 @@ sub calcCoordinates {
     }
     return ($coordinate, $oldShift, $shiftFrame);   
 }
+
