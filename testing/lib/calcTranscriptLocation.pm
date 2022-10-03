@@ -10,12 +10,14 @@ sub calcTranscriptLocation {
     my $snpLocation = $_[0];
     my $shiftFrame = $_[1];
     my $coordinatesNonCodingFrame = $_[2];
+    my $lastCodingShiftFrame = $_[3];
     my $transcriptLocation;
     if ($shiftFrame == 0) {
         $transcriptLocation = $snpLocation - $coordinatesNonCodingLen[$coordinatesNonCodingFrame][2];
+	$lastCodingShiftFrame = $shiftFrame;
     }
     else {
-        $transcriptLocation = $snpLocation - $coordinatesNonCodingLen[$coordinatesNonCodingFrame][2] + $locationshifts[$shiftFrame-1][1];
+        $transcriptLocation = $snpLocation - $coordinatesNonCodingLen[$coordinatesNonCodingFrame][2] + $locationshifts[$lastCodingShiftFrame][1];
     }
     return $transcriptLocation;
 }

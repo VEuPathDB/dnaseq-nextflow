@@ -16,9 +16,6 @@ use calcCoordinates;
 
 
 # ================ TESTS ==============================================================================================================================
-
-
-is( calcCoordinates::calcCoordinates(3,4,12,1,1), 2901 );
     
 # Coordinate Prior to any indels 
 is( calcCoordinates::calcCoordinates(0,0,12,0,0), 250 );
