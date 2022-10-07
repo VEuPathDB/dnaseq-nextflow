@@ -127,30 +127,10 @@ my $transcriptSummary = &getTranscriptLocations($dbh, $transcriptExtDbRlsId, $ag
 
 my $geneLocations = &getGeneLocations($transcriptSummary);
 
-my ($oldShift, $shiftFrame);
-foreach my $strain (keys $currentShifts) {
-    my @shiftArray = $currentShifts->{$strain};
-    my $shiftArrayLen = scalar( @{ $currentShifts->{$strain} } );
-    my $shiftFrameLimit = $shiftArrayLen - 1;
-    $oldShift = 0;
-    $shiftFrame = 0;
-    my ($exon_start, $exon_end);
-    my $startIndicator = "start";
-    my $endIndicator = "end";
-    foreach my $transcript (keys $transcriptSummary) {
-        my ($shifted_start, $shifted_end);
-        $exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
-        $exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
-        ($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, \@shiftArray);
-        ($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, \@shiftArray);    
-        #print "Values $exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\t$shiftFrame\n";
-        $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
-        $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
-    }
-}
-
-
+my @shiftArray;
+$transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
 print Dumper $transcriptSummary;
+
 
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
@@ -1023,4 +1003,30 @@ sub calcCoordinates {
 	}
     }
     return ($shiftedLocation, $oldShift, $shiftFrame);   
+}
+
+sub addStrainExonShiftsToTranscriptSummary {
+    my ($currentShifts, $transcriptSummary) = @_;
+    my ($oldShift, $shiftFrame);
+    foreach my $strain (keys $currentShifts) {
+	my @shiftArray = $currentShifts->{$strain};
+	my $shiftArrayLen = scalar( @{ $currentShifts->{$strain} } );
+	my $shiftFrameLimit = $shiftArrayLen - 1;
+	$oldShift = 0;
+	$shiftFrame = 0;
+	my ($exon_start, $exon_end);
+	my $startIndicator = "start";
+	my $endIndicator = "end";
+        foreach my $transcript (keys $transcriptSummary) {
+            my ($shifted_start, $shifted_end);
+            $exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
+            $exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
+            ($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, \@shiftArray);
+            ($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, \@shiftArray);
+            #print "Values $exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\t$shiftFrame\n";                                                                                                
+            $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
+            $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
+        }
+    }
+    return $transcriptSummary;
 }
