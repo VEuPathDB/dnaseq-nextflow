@@ -121,10 +121,26 @@ my $shiftArrayLen = scalar @{ $indexedArray };
 #die;
 
 $transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
-print Dumper $transcriptSummary;
+#print Dumper $transcriptSummary;
+#die;
+
+open(UNDONE, $undoneStrainsFile) or die "Cannot open file $undoneStrainsFile for reading: $!";
+my @undoneStrains =  map { chomp; $_ } <UNDONE>;
+close UNDONE;
+
+if($forcePositionCompute) {
+  push @undoneStrains, $referenceStrain;
+}
+
+my $naSequenceIds = &queryNaSequenceIds($dbh);
+
+my $merger = VEuPath::MergeSortedSeqVariations->new($newSampleFile, $cacheFile, \@undoneStrains, qr/\t/);
+
+while($merger->hasNext()) {
+  my $variations = $merger->nextSNP();
+  print Dumper $variations;
+}
 die;
-
-
 
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
@@ -168,13 +184,17 @@ from dots.nasequence s, sres.ontologyterm o
 where s.sequence_ontology_id = o.ontology_term_id
 and o.name in ('random_sequence', 'chromosome', 'contig', 'supercontig','mitochondrial_chromosome','plastid_sequence','cloned_genomic','apicoplast_chromosome', 'variant_genome','maxicircle')
 ";
-
+    print "Preparing\n";
     my $sh = $dbh->prepare($sql);
+    print "Executing\n";
     $sh->execute();
 
     my %naSequences;
+    my $counter = 0;
     while(my ($naSequenceId, $sourceId) = $sh->fetchrow_array()) {
 	$naSequences{$sourceId} = $naSequenceId;
+	print "$counter\n";
+	$counter++;
     }
     $sh->finish();
 
@@ -1025,10 +1045,11 @@ sub addStrainExonShiftsToTranscriptSummary {
 	    $exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
 	    ($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, $shiftArray);
 	    ($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, $shiftArray);    
-	    print "Values $exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\t$shiftFrame\n";
+	    #print "Values $exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\t$shiftFrame\n";
 	    $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
 	    $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
 	}
     }
     return $transcriptSummary;
 }
+
