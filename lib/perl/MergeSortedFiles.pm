@@ -1,6 +1,6 @@
 package VEuPath::MergeSortedFiles;
 
-use VEuPath::FileReader;
+use base 'VEuPath::FileReader';
 use strict;
 
 #--------------------------------------------------------------------------------

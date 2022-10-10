@@ -1,6 +1,6 @@
 package VEuPath::MergeSortedSeqVariations;
 
-use VEuPath::MergeSortedFiles;
+use base 'VEuPath::MergeSortedFiles';
 use strict;
 use locale;  
 use VEuPath::SnpUtils;
