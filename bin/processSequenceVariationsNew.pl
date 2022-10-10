@@ -1,29 +1,26 @@
 #!/usr/bin/perl
 
-use lib "$ENV{GUS_HOME}/lib/perl";
-use strict;
 use File::Basename;
 use Data::Dumper;
 use Getopt::Long;
-use GUS::ObjRelP::DbiDatabase;
-use GUS::Supported::GusConfig;
-use CBIL::Bio::SequenceUtils;
+use VEuPath::DbiDatabase;
+use VEuPath::GusConfig;
+use VEuPath::SequenceUtils;
 use Bio::Seq;
 use Bio::Tools::GFF;
 use Bio::Coordinate::GeneMapper;
 use Bio::Coordinate::Pair;
 use Bio::Location::Simple;
 use Bio::Tools::CodonTable;
-use GUS::Community::GeneModelLocations;
-use ApiCommonData::Load::SnpUtils  qw(variationFileColumnNames snpFileColumnNames);
+use VEuPath::GeneModelLocations;
+use VEuPath::SnpUtils  qw(fileColumnNames);
 use DBI;
 use DBD::Oracle;
-use ApiCommonData::Load::MergeSortedSeqVariations;
-use ApiCommonData::Load::FileReader;
-use locale;  # Use this because the input files have been sorted by unix sort (otherwise perl's default string comparison will give weird results
+use VEuPath::MergeSortedSeqVariations;
+use VEuPath::FileReader;
+use locale;
 
 my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute);
-
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
             "cache_file=s"=> \$cacheFile,
             "clean_cache"=> \$cleanCache,
@@ -39,16 +36,11 @@ my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismA
             "debug" => \$debug,
             "help|h" => \$help,
     );
-
 if($help) {
   &usage();
-
 }
-
 $gusConfigFile = $ENV{GUS_HOME} . "/config/gus.config" unless(-e $gusConfigFile);
-
 my $cacheFileExists = -e $cacheFile;
-
 if(!$cacheFileExists || $cleanCache) {
   print STDERR "Creating empty cache because none exists.\n"
     if !$cacheFileExists;
@@ -57,7 +49,6 @@ if(!$cacheFileExists || $cleanCache) {
   open(CACHE, ">$cacheFile") or die "Cannot create a cache file: $!";
   close CACHE;
 }
-
 my $initialCacheCount = `cat $cacheFile | wc -l`;
 chomp($initialCacheCount);
 print STDERR "Starting with cache file of $initialCacheCount records\n";
@@ -75,36 +66,27 @@ unless(-e $undoneStrainsFile) {
   open(FILE, "> $undoneStrainsFile") or die "Could not open file $undoneStrainsFile for writing: $!";
   close FILE;
 }
-
 my $CODON_TABLE = Bio::Tools::CodonTable->new( -id => 1); #standard codon table
-
 my $totalTime;
 my $totalTimeStart = time();
+my $gusConfig = VEuPath::GusConfig->new($gusConfigFile);
 
-my $gusConfig = GUS::Supported::GusConfig->new($gusConfigFile);
+my ($dbiDsn, $login, $password, $core);
+$dbiDsn = $gusConfig->getDbiDsn();
+$login = $gusConfig->getDatabaseLogin();
+$password = $gusConfig->getDatabasePassword();
+$core = $gusConfig->getCoreSchemaName();
 
-my $db = GUS::ObjRelP::DbiDatabase->new($gusConfig->getDbiDsn(),
-                                         $gusConfig->getDatabaseLogin(),
-                                         $gusConfig->getDatabasePassword(),
-                                         0, 0, 1,
-                                         $gusConfig->getCoreSchemaName()
-                                        );
-my $dbh = $db->getQueryHandle();
+my $dbh = DBI->connect('dbi:Oracle:database=tryp-inc;SERVICE_NAME=trypbl8n.upenn.edu;host=localhost;port=1528', $login, $password);
 
 my $SEQUENCE_QUERY = "select substr(s.sequence, ?, ?) as base
                       from dots.nasequence s
                      where s.source_id = ?";
-
 my $SEQUENCE_QUERY_SH = $dbh->prepare($SEQUENCE_QUERY);
-
 my $dirname = dirname($cacheFile);
-
 my $tempCacheFile = $dirname . "/cache.tmp";
-
 my $snpOutputFile = $dirname . "/snpFeature.dat";
-
 my ($snpFh, $cacheFh);
-
 open($cacheFh, "> $tempCacheFile") or die "Cannot open file $tempCacheFile for writing: $!";
 open($snpFh, "> $snpOutputFile") or die "Cannot open file $snpOutputFile for writing: $!";
 
@@ -113,13 +95,16 @@ my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVar
 my @allStrains = keys %{$strainVarscanFileHandles};
 
 my $currentShifts = &createCurrentShifts(\@allStrains, $dbh);
+#print keys %{ $currentShifts };
+#die; 
 
 my $strainExtDbRlsAndProtocolAppNodeIds = &queryExtDbRlsAndProtocolAppNodeIdsForStrains(\@allStrains, $dbh, $organismAbbrev);
 
 my $transcriptExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $transcriptExtDbRlsSpec);
 my $thisExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $extDbRlsSpec);
 
-my $geneModelLocations = GUS::Community::GeneModelLocations->new($dbh, $transcriptExtDbRlsId, 1);
+
+my $geneModelLocations = VEuPath::GeneModelLocations->new($dbh, $transcriptExtDbRlsId, 1);
 my $agpMap = $geneModelLocations->getAgpMap();
 
 # NOTE:  The key in this hash is actually the aa_feature_id in dots.translatedaafeature because we are interested in cds coords
@@ -127,9 +112,18 @@ my $transcriptSummary = &getTranscriptLocations($dbh, $transcriptExtDbRlsId, $ag
 
 my $geneLocations = &getGeneLocations($transcriptSummary);
 
-my @shiftArray;
+my @shiftArray = $currentShifts->{'LV39cl5_chr1'};
+
+my $indexedArray = $shiftArray[0][0];
+my $shiftArrayLen = scalar @{ $indexedArray };
+#print $shiftArrayLen;
+#print "$shiftArrayLen\n";
+#die;
+
 $transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
 print Dumper $transcriptSummary;
+die;
+
 
 
 #--------------------------------------------------------------------------------
@@ -623,10 +617,10 @@ sub openVarscanFiles {
 	    if($file =~ /\.gz$/) {
 		print STDERR "OPEN GZ FILE: $file for Strain $strain\n" if($debug);
 
-		$reader = ApiCommonData::Load::FileReader->new("zcat $fullPath |", [], qr/\t/);
+		$reader = VEuPath::FileReader->new("zcat $fullPath |", [], qr/\t/);
 	    } 
 	    else {
-		$reader = ApiCommonData::Load::FileReader->new($fullPath, [], qr/\t/);
+		$reader = VEuPath::FileReader->new($fullPath, [], qr/\t/);
 	    }
 
 	    $rv{$strain} = $reader;
@@ -805,7 +799,7 @@ order by s.source_id, el.start_min
 	my $agpArray = $agpMap->{$sequenceSourceId};
 
 	if($agpArray) {
-	    my $agp = GUS::Community::GeneModelLocations::findAgpFromPieceLocation($agpArray, $exonStart, $exonEnd, $sequenceSourceId);
+	    my $agp = VEuPath::GeneModelLocations::findAgpFromPieceLocation($agpArray, $exonStart, $exonEnd, $sequenceSourceId);
 
       # if this sequence is a PIECE in another sequence... lookup the higher level sequence
 	    if($agp) {
@@ -914,8 +908,10 @@ sub calculateAminoAcidPosition {
 }
 
 
+
 sub getAminoAcidSequenceOfSnp {
     my ($cdsSequence, $positionInCds) = @_;
+
 
     my $codonLength = 3;
     my $modCds = ($positionInCds - 1)  % $codonLength;
@@ -926,7 +922,6 @@ sub getAminoAcidSequenceOfSnp {
   # Assuming this is a simple hash lookup which is quick; 
     return $CODON_TABLE->translate($codon);
 }
-
 
 sub createCurrentShifts {
     my ($strains, $dbh) = @_;
@@ -943,7 +938,7 @@ sub createCurrentShifts {
 	    $counter++;
 	    $currentShift = $shift + $currentShift;
 	}
-        push $currentShifts->{$strain} = \@locationshifts;
+        push @{ $currentShifts->{$strain} }, \@locationshifts;
     }
     return $currentShifts;
 }
@@ -953,11 +948,14 @@ sub calcCoordinates {
     my ($shiftFrame, $shiftFrameLimit, $oldShift, $coordinate, $indicator, $shiftArray) = @_;
     my $shiftedLocation;
     my $oldFrame;
-    if ($coordinate < $shiftArray[0][$shiftFrame][0]) {
+    #print "$coordinate\t$shiftArray[0][$shiftFrame][0]\t$shiftFrame\n";
+    if ($coordinate < $shiftArray[0][0][$shiftFrame][0]) {
 	$shiftedLocation = $oldShift + $coordinate;
+        #print "Coordinate Less\n";
     }
-    elsif ($shiftArray[0][$shiftFrame][0] == $coordinate) {
-        my $currentShift = $shiftArray[0][$shiftFrame][1];
+    elsif ($shiftArray[0][0][$shiftFrame][0] == $coordinate) {
+        my $currentShift = $shiftArray[$shiftFrame][1];
+        #print "Coordinate Equal\n";
         if ($currentShift == 0) {
 	    $shiftedLocation = $coordinate;
         }
@@ -971,31 +969,34 @@ sub calcCoordinates {
 	    $shiftedLocation = $oldShift + $coordinate;     
         }
     }
-    elsif ($coordinate > $shiftArray[0][$shiftFrame][0] || $shiftFrame == $shiftFrameLimit) {
-	until ($shiftArray[0][$shiftFrame][0] >= $coordinate || $shiftFrame == $shiftFrameLimit) {
-	    $oldShift = $shiftArray[0][$shiftFrame][1];
+    elsif ($coordinate > $shiftArray[0][0][$shiftFrame][0] || $shiftFrame == $shiftFrameLimit) {
+        #print "Coordinate Greater\t$coordinate\t$shiftArray[0][$shiftFrame][0]\n";
+	until ($shiftArray[0][0][$shiftFrame][0] >= $coordinate || $shiftFrame == $shiftFrameLimit) {
+	    $oldShift = $shiftArray[0][0][$shiftFrame][1];
 	    $shiftFrame++;
+            #print "DING\n";
 	}
-	if ($shiftFrame == $shiftFrameLimit && $coordinate < $shiftArray[0][$shiftFrame][0]) {
-	    $shiftedLocation = $coordinate + $shiftArray[0][$shiftFrame-1][1];
+        #print "Processed\t$coordinate\t$shiftArray[0][$shiftFrame][0]\n";
+	if ($shiftFrame == $shiftFrameLimit && $coordinate < $shiftArray[0][0][$shiftFrame][0]) {
+	    $shiftedLocation = $coordinate + $shiftArray[0][0][$shiftFrame-1][1];
 	}
-	elsif ($shiftFrame == $shiftFrameLimit && $coordinate > $shiftArray[0][$shiftFrame][0]) {
-	    $shiftedLocation = $coordinate + $shiftArray[0][$shiftFrame][1];
+	elsif ($shiftFrame == $shiftFrameLimit && $coordinate > $shiftArray[0][0][$shiftFrame][0]) {
+	    $shiftedLocation = $coordinate + $shiftArray[0][0][$shiftFrame][1];
 	}
-	elsif ($shiftArray[0][$shiftFrame][0] == $coordinate) {
-	    if ($shiftArray[0][$shiftFrame][1] == 0) {
+	elsif ($shiftArray[0][0][$shiftFrame][0] == $coordinate) {
+	    if ($shiftArray[0][0][$shiftFrame][1] == 0) {
                 $shiftedLocation = $coordinate;
             }
             elsif ($indicator eq 'start') {
 		$oldFrame = $shiftFrame - 1;
-                $shiftedLocation = $shiftArray[0][$oldFrame][1] + $coordinate;
+                $shiftedLocation = $shiftArray[0][0][$oldFrame][1] + $coordinate;
             }
-            elsif ($indicator eq 'end' && $shiftArray[0][$shiftFrame][1] > 0) {
-                $shiftedLocation = $shiftArray[0][$shiftFrame][1] + $coordinate;     
+            elsif ($indicator eq 'end' && $shiftArray[0][0][$shiftFrame][1] > 0) {
+                $shiftedLocation = $shiftArray[0][0][$shiftFrame][1] + $coordinate;     
             }
-	    elsif ($indicator eq 'end' && $shiftArray[0][$shiftFrame][1] < 0) {
+	    elsif ($indicator eq 'end' && $shiftArray[0][0][$shiftFrame][1] < 0) {
                 $oldFrame = $shiftFrame - 1;
-                $shiftedLocation = $shiftArray[0][$oldFrame][1] + $coordinate;     
+                $shiftedLocation = $shiftArray[0][0][$oldFrame][1] + $coordinate;     
             }
         }
 	else {
@@ -1008,25 +1009,26 @@ sub calcCoordinates {
 sub addStrainExonShiftsToTranscriptSummary {
     my ($currentShifts, $transcriptSummary) = @_;
     my ($oldShift, $shiftFrame);
-    foreach my $strain (keys $currentShifts) {
-	my @shiftArray = $currentShifts->{$strain};
-	my $shiftArrayLen = scalar( @{ $currentShifts->{$strain} } );
-	my $shiftFrameLimit = $shiftArrayLen - 1;
-	$oldShift = 0;
-	$shiftFrame = 0;
-	my ($exon_start, $exon_end);
-	my $startIndicator = "start";
-	my $endIndicator = "end";
-        foreach my $transcript (keys $transcriptSummary) {
+    foreach my $strain (keys %{ $currentShifts }) {
+        my @shiftArray = $currentShifts->{$strain};
+	my $indexedArray = $shiftArray[0][0];
+        my $shiftArrayLen = scalar @{ $indexedArray };
+        my $shiftFrameLimit = $shiftArrayLen - 1;
+        $oldShift = 0;
+        $shiftFrame = 0;
+        my ($exon_start, $exon_end);
+        my $startIndicator = "start";
+        my $endIndicator = "end";
+	foreach my $transcript (keys %{ $transcriptSummary }) {    
             my ($shifted_start, $shifted_end);
-            $exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
-            $exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
-            ($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, \@shiftArray);
-            ($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, \@shiftArray);
-            #print "Values $exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\t$shiftFrame\n";                                                                                                
-            $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
-            $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
-        }
+	    $exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
+	    $exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
+	    ($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, $shiftArray);
+	    ($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, $shiftArray);    
+	    print "Values $exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\t$shiftFrame\n";
+	    $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
+	    $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
+	}
     }
     return $transcriptSummary;
 }

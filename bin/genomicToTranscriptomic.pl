@@ -15,7 +15,6 @@ my ($testFile, $gusConfigFile, $sequenceId, $regionFile);
 
 &GetOptions("test_file=s"=> \$testFile,
             "sequence_id=s"=> \$sequenceId,
-            "region_file=s"=> \$regionFile
            );
 
 $gusConfigFile = $ENV{GUS_HOME} . "/config/gus.config";
@@ -67,49 +66,6 @@ while (my ($transcript, $source_id, $gene_na_feature_id, $exon_start, $exon_end,
 #print TEST Dumper(\@coordinates), "\n";
 #close TEST;
 
-#===================================== GENERATING LOCATIONSSHIFTED ARRAY =========================================================================
-my @locationsShifted = ();
-my $shiftFrame=0;
-my $coordinateFrame=0;
-my $coordinatesLen = scalar @coordinates;
-my $locationShiftsLen = scalar @locationshifts;
-my $shiftFrameLimit = $locationShiftsLen-1;
-my $isRev;
-my $oldShift = 0;
-$counter = 0;
-my ($cds_start, $cds_end, $isRev);
-for (my $coordinateFrame;$coordinateFrame<$coordinatesLen;$coordinateFrame++){
-    for (my $i=0;$i<3;$i++) {
-	if ($i == 0) {
-	    ($cds_start, $oldShift, $shiftFrame) = &calcCoordinates($shiftFrame, $coordinateFrame, $locationShiftsLen, $oldShift, $i, $shiftFrameLimit);
-	}        
-	elsif ($i == 1) {
-	    ($cds_end, $oldShift, $shiftFrame) = &calcCoordinates($shiftFrame, $coordinateFrame, $locationShiftsLen, $oldShift, $i, $shiftFrameLimit);
-	}
-	elsif ($i == 2) {
-	    $isRev = $coordinates[$coordinateFrame][$i];
-	}
-	$oldShift = $oldShift;
-	$shiftFrame = $shiftFrame;
-    }
-    $oldShift = $oldShift;
-    $shiftFrame = $shiftFrame;
-    push (@{$locationsShifted[$counter]}, ($cds_start, $cds_end, $isRev));
-    $counter++;
-}
-#print TEST Dumper(\@locationsShifted), "\n";
-#close TEST;
-
-#========================== CREATING REGION FILE FOR SAMTOOLS ===================================================================================                                                          
-open(REGION, ">$regionFile") or die "Cannot create a region file: $!";
-my $locationsShiftedLen = scalar @locationsShifted;
-my $adjustedLen = $locationsShiftedLen - 1;
-my @lengthArray = (0..$adjustedLen);
-for my $i (@lengthArray) {
-    print REGION "$sequenceId:$locationsShifted[$i][0]-$locationsShifted[$i][1]\t$locationsShifted[$i][2]\n";
-}
-close REGION;
-
 #========================== Generating coordinatesNonCodingLen Object ===========================================================================
 
 my @coordinatesNonCodingLen = ();
@@ -143,62 +99,6 @@ print TEST Dumper(\@transcriptLocations), "\n";
 close TEST; 
 
 #=================================== SUBROUTINES ==========================================================================================
-
-sub calcCoordinates {
-    my ($shiftFrame, $coordinateFrame, $locationshiftsLen, $oldShift, $i, $shiftFrameLimit) = @_;
-    my $coordinate;
-    my $oldFrame;
-    if ($coordinates[$coordinateFrame][$i] < $locationshifts[$shiftFrame][0]) {
-	$coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
-    }
-    elsif ($locationshifts[$shiftFrame][0] == $coordinates[$coordinateFrame][$i]) {
-        my $currentShift = $locationshifts[$shiftFrame][1];
-        if ($currentShift == 0) {
-	    $coordinate = $coordinates[$coordinateFrame][$i];
-        }
-        elsif ($i == 0) {
-	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
-        }
-        elsif ($i == 1 && $currentShift > 0) {
-	    $coordinate = $currentShift + $coordinates[$coordinateFrame][$i];     
-        }
-	elsif ($i == 1 && $currentShift < 0) {
-	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];     
-        }
-    }
-    elsif ($coordinates[$coordinateFrame][$i] > $locationshifts[$shiftFrame][0] || $shiftFrame == $shiftFrameLimit) {
-	until ($locationshifts[$shiftFrame][0] >= $coordinates[$coordinateFrame][$i] || $shiftFrame == $shiftFrameLimit) {
-	    $oldShift = $locationshifts[$shiftFrame][1];
-	    $shiftFrame++;
-	}
-	if ($shiftFrame == $shiftFrameLimit && $coordinates[$coordinateFrame][$i] < $locationshifts[$shiftFrame][0]) {
-	    $coordinate = $coordinates[$coordinateFrame][$i] + $locationshifts[$shiftFrame-1][1];
-	}
-	elsif ($shiftFrame == $shiftFrameLimit && $coordinates[$coordinateFrame][$i] > $locationshifts[$shiftFrame][0]) {
-	    $coordinate = $coordinates[$coordinateFrame][$i] + $locationshifts[$shiftFrame][1];
-	}
-	elsif ($locationshifts[$shiftFrame][0] == $coordinates[$coordinateFrame][$i]) {
-	    if ($locationshifts[$shiftFrame][1] == 0) {
-                $coordinate = $coordinates[$coordinateFrame][$i];
-            }
-            elsif ($i == 0) {
-		$oldFrame = $shiftFrame - 1;
-                $coordinate = $locationshifts[$oldFrame][1] + $coordinates[$coordinateFrame][$i];
-            }
-            elsif ($i == 1 && $locationshifts[$shiftFrame][1] > 0) {
-                $coordinate = $locationshifts[$shiftFrame][1] + $coordinates[$coordinateFrame][$i];     
-            }
-	    elsif ($i == 1 && $locationshifts[$shiftFrame][1] < 0) {
-                $oldFrame = $shiftFrame - 1;
-                $coordinate = $locationshifts[$oldFrame][1] + $coordinates[$coordinateFrame][$i];     
-            }
-        }
-	else {
-	    $coordinate = $oldShift + $coordinates[$coordinateFrame][$i];
-	}
-    }
-    return ($coordinate, $oldShift, $shiftFrame);   
-}
 
 sub getTranscriptLocation {
     my ($snpLocation, $coordinatesNonCodingFrame, $coordinatesNonCodingFrameLimit, $shiftFrame, $lastCodingShiftFrame) = @_;
