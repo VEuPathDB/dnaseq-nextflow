@@ -121,8 +121,6 @@ my $shiftArrayLen = scalar @{ $indexedArray };
 #die;
 
 $transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
-#print Dumper $transcriptSummary;
-#die;
 
 open(UNDONE, $undoneStrainsFile) or die "Cannot open file $undoneStrainsFile for reading: $!";
 my @undoneStrains =  map { chomp; $_ } <UNDONE>;
@@ -132,15 +130,96 @@ if($forcePositionCompute) {
   push @undoneStrains, $referenceStrain;
 }
 
+my $naSequenceIds;
 my $naSequenceIds = &queryNaSequenceIds($dbh);
 
 my $merger = VEuPath::MergeSortedSeqVariations->new($newSampleFile, $cacheFile, \@undoneStrains, qr/\t/);
 
+my $strainFrame;
+
 while($merger->hasNext()) {
-  my $variations = $merger->nextSNP();
-  print Dumper $variations;
+    my $variations = $merger->nextSNP();
+    my $referenceAllele = $variations->[0]->{reference};
+    my $strain = $variations->[0]->{strain};
+
+    ($variations, $strainFrame) = &addShiftedLocation($variations, $strainFrame);
+    print Dumper $variations;
+    print Dumper $strainFrame;    
+    my ($sequenceId, $location) = &snpLocationFromVariations($variations);
+    print STDER "SEQUENCEID=$sequenceId\tLOCATION=$location\n" if($debug);
+    my $naSequenceId = $naSequenceIds->{$sequenceId};
+    die "Could not find na_sequence_id for sequence source id: $sequenceId" unless($naSequenceId);
+    my ($referenceAllele, $positionsInCds, $positionsInProtein, $referenceVariation, $isCoding);
+    my $geneLocation = &lookupByLocation($sequenceId, $location, $geneLocations);
+    my ($transcripts, $geneNaFeatureId);
+    if($geneLocation) {
+        $transcripts = $geneLocation->{transcripts};
+        $geneNaFeatureId = $geneLocation->{na_feature_id};
+    }
+    my $hasTranscripts = defined($transcripts) ? 1 : 0;
+    if($sequenceId ne $prevSequenceId || $location > $prevTranscriptMaxEnd) {
+        print STDERR "CLEANING CDS CACHE\n" if($debug);
+        &cleanCdsCache($transcriptSummary, $prevTranscripts);
+    }
+    my $cachedReferenceVariation = &cachedReferenceVariation($variations, $referenceStrain);
+    my $referenceProtocolAppNodeId = &queryProtocolAppNodeIdFromExtDbRlsId($dbh, $thisExtDbRlsId);
+    print STDERR "REFERENCE VARIATION NOT CACHED\n" if($debug);
+    my $referenceAllele = $variations->[0]->{reference};
+    my $strain = $variations->[0]->{strain};
+       
+    #print $transcriptSummary->{$transcripts->[0]}->{$strain}->{shifted_start};
+
+    my ($isCoding, $positionsInCds, $positionsInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
+    # Need to do the same thing here for the snpCdsPosition
+    my $positionInCds = &uniqueValueFromHashRef($positionsInCds);
+    my $positionInProtein = &uniqueValueFromHashRef($positionsInProtein);
+    my $positionsInCdsString = &hashRefToString($positionsInCds);
+    my $positionsInProteinString = &hashRefToString($positionsInProtein);
+    #print "$referenceAllele\t$isCoding\t$positionsInCdsString\t$positionsInProteinString\n";
+    
+    #my ($referenceProducts, $adjacentSnpCausesProductDifference) = &variationProduct($transcriptExtDbRlsId, $transcripts, $transcriptSummary, $sequenceId, $location, $positionsInCds, $referenceAllele, $transcriptExtDbRlsId, $sequenceId) if(keys %$positionsInCds);
+    #print "$referenceProducts\t$adjacentSnpCausesProductDifference\n";
 }
 die;
+
+sub addShiftedLocation {
+    my ($variations, $strainFrame) = @_;
+    my $location = $variations->[0]->{location};
+    print "$location\n";
+    my $strain = $variations->[0]->{strain};
+    print "$strain\n";
+    my @shiftArray = $currentShifts->{$strain};
+    my $indexedArray = $shiftArray[0][0];
+    my $shiftArrayLen = scalar @{ $indexedArray };
+    my $shiftFrameLimit = $shiftArrayLen - 1;
+    if ($strainFrame->{$strain}->{shiftFrame}) {
+        my $shiftFrame = $strainFrame->{$strain}->{shiftFrame};
+        my $oldShift = $strainFrame->{$strain}->{oldShift};
+    }
+    else {
+        my $shiftFrame = 0;
+        my $oldShift = 0;
+    }
+    until ($shiftArray[0][0][$shiftFrame][0] >= $location || $shiftFrame == $shiftFrameLimit) {
+        $oldShift = $shiftArray[0][0][$shiftFrame][1];
+        $shiftFrame++;
+    }
+    if ($shiftFrame == $shiftFrameLimit && $location <= $shiftArray[0][0][$shiftFrame][0]) {
+        $shiftedLocation = $location + $shiftArray[0][0][$shiftFrame-1][1];
+    }
+    elsif ($shiftFrame == $shiftFrameLimit && $location > $shiftArray[0][0][$shiftFrame][0]) {
+        $shiftedLocation = $location + $oldShift;
+    }
+    elsif ($location <= $shiftArray[0][0][$shiftFrame][0]) {
+        $shiftLocation = $location + $oldShift;
+    }
+    else { }
+    print "$shiftedLocation\t$oldShift\n";
+    $variations->[0]->{shifted_location} = $shiftedLocation;
+    $strainFrame->{$strain}->{oldShift} = $oldShift;
+    $strainFrame->{$strain}->{shiftFrame} = $shiftFrame;
+    return ($variations, $strainFrame);       
+}
 
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
@@ -184,16 +263,14 @@ from dots.nasequence s, sres.ontologyterm o
 where s.sequence_ontology_id = o.ontology_term_id
 and o.name in ('random_sequence', 'chromosome', 'contig', 'supercontig','mitochondrial_chromosome','plastid_sequence','cloned_genomic','apicoplast_chromosome', 'variant_genome','maxicircle')
 ";
-    print "Preparing\n";
     my $sh = $dbh->prepare($sql);
-    print "Executing\n";
     $sh->execute();
 
     my %naSequences;
     my $counter = 0;
     while(my ($naSequenceId, $sourceId) = $sh->fetchrow_array()) {
 	$naSequences{$sourceId} = $naSequenceId;
-	print "$counter\n";
+	#print "$counter\n";
 	$counter++;
     }
     $sh->finish();
@@ -202,14 +279,11 @@ and o.name in ('random_sequence', 'chromosome', 'contig', 'supercontig','mitocho
 }
 
 
-sub calculateCdsPosition {
+sub calculateReferenceCdsPosition {
     my ($transcripts, $transcriptSummary, $sequenceId, $location) = @_;
-
     my %cdsPositions;
     my %proteinPositions;
-
     my $isCoding;
-
     foreach my $transcript (@$transcripts) {
 	my $cdsStart = $transcriptSummary->{$transcript}->{min_cds_start};
 	my $cdsEnd = $transcriptSummary->{$transcript}->{max_cds_end};
@@ -251,7 +325,6 @@ sub calculateCdsPosition {
 	    $isCoding = 1;
 	}
     }
-
     return($isCoding, \%cdsPositions, \%proteinPositions);
 }
 
@@ -701,7 +774,7 @@ sub lookupByLocation {
     return(undef) unless(ref ($geneLocs->{$sequenceId}) eq 'ARRAY');
 
     my @locations = @{$geneLocs->{$sequenceId}};
-
+    
     my $startCursor = 0;
     my $endCursor = scalar(@locations) - 1;
     my $midpoint;
@@ -725,7 +798,6 @@ sub lookupByLocation {
 	    return($location);
 	}
     }
-
 
     return(undef);
 
@@ -906,7 +978,7 @@ sub getCodingSequence {
 	my $chunk =   &querySequenceSubstring($dbh, $sequenceId, $codingMin, $codingMax);
 
 	if($exonIsReversed) {
-	    $chunk = CBIL::Bio::SequenceUtils::reverseComplementSequence($chunk);
+	    $chunk = VEuPath::SequenceUtils::reverseComplementSequence($chunk);
 	    $codingSequence = $chunk . $codingSequence;
 	}
 	else {
