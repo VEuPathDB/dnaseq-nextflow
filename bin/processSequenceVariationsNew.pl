@@ -143,8 +143,10 @@ while($merger->hasNext()) {
     my $strain = $variations->[0]->{strain};
 
     ($variations, $strainFrame) = &addShiftedLocation($variations, $strainFrame);
-    print Dumper $variations;
-    print Dumper $strainFrame;    
+    # Uncomment these to see how this works
+    #print Dumper $variations;
+    #print Dumper $strainFrame;    
+    
     my ($sequenceId, $location) = &snpLocationFromVariations($variations);
     print STDER "SEQUENCEID=$sequenceId\tLOCATION=$location\n" if($debug);
     my $naSequenceId = $naSequenceIds->{$sequenceId};
@@ -166,60 +168,28 @@ while($merger->hasNext()) {
     print STDERR "REFERENCE VARIATION NOT CACHED\n" if($debug);
     my $referenceAllele = $variations->[0]->{reference};
     my $strain = $variations->[0]->{strain};
-       
+
     #print $transcriptSummary->{$transcripts->[0]}->{$strain}->{shifted_start};
 
-    my ($isCoding, $positionsInCds, $positionsInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
+    my ($isCoding, $refPositionsInCds, $refPositionsInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
+    my ($isCoding, $variationPositionInCds, $variationPositionInProtein) = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $strain, $variations);
+
     # Need to do the same thing here for the snpCdsPosition
-    my $positionInCds = &uniqueValueFromHashRef($positionsInCds);
-    my $positionInProtein = &uniqueValueFromHashRef($positionsInProtein);
-    my $positionsInCdsString = &hashRefToString($positionsInCds);
-    my $positionsInProteinString = &hashRefToString($positionsInProtein);
+    my $refPositionInCds = &uniqueValueFromHashRef($refPositionsInCds);
+    my $refPositionInProtein = &uniqueValueFromHashRef($refPositionsInProtein);
+    my $refPositionsInCdsString = &hashRefToString($refPositionsInCds);
+    my $refPositionsInProteinString = &hashRefToString($refPositionsInProtein);
     #print "$referenceAllele\t$isCoding\t$positionsInCdsString\t$positionsInProteinString\n";
+    
+    print "$isCoding\n";
+    print Dumper $variationPositionInCds;
+    print Dumper $variationPositionInProtein;
     
     #my ($referenceProducts, $adjacentSnpCausesProductDifference) = &variationProduct($transcriptExtDbRlsId, $transcripts, $transcriptSummary, $sequenceId, $location, $positionsInCds, $referenceAllele, $transcriptExtDbRlsId, $sequenceId) if(keys %$positionsInCds);
     #print "$referenceProducts\t$adjacentSnpCausesProductDifference\n";
 }
 die;
 
-sub addShiftedLocation {
-    my ($variations, $strainFrame) = @_;
-    my $location = $variations->[0]->{location};
-    print "$location\n";
-    my $strain = $variations->[0]->{strain};
-    print "$strain\n";
-    my @shiftArray = $currentShifts->{$strain};
-    my $indexedArray = $shiftArray[0][0];
-    my $shiftArrayLen = scalar @{ $indexedArray };
-    my $shiftFrameLimit = $shiftArrayLen - 1;
-    if ($strainFrame->{$strain}->{shiftFrame}) {
-        my $shiftFrame = $strainFrame->{$strain}->{shiftFrame};
-        my $oldShift = $strainFrame->{$strain}->{oldShift};
-    }
-    else {
-        my $shiftFrame = 0;
-        my $oldShift = 0;
-    }
-    until ($shiftArray[0][0][$shiftFrame][0] >= $location || $shiftFrame == $shiftFrameLimit) {
-        $oldShift = $shiftArray[0][0][$shiftFrame][1];
-        $shiftFrame++;
-    }
-    if ($shiftFrame == $shiftFrameLimit && $location <= $shiftArray[0][0][$shiftFrame][0]) {
-        $shiftedLocation = $location + $shiftArray[0][0][$shiftFrame-1][1];
-    }
-    elsif ($shiftFrame == $shiftFrameLimit && $location > $shiftArray[0][0][$shiftFrame][0]) {
-        $shiftedLocation = $location + $oldShift;
-    }
-    elsif ($location <= $shiftArray[0][0][$shiftFrame][0]) {
-        $shiftLocation = $location + $oldShift;
-    }
-    else { }
-    print "$shiftedLocation\t$oldShift\n";
-    $variations->[0]->{shifted_location} = $shiftedLocation;
-    $strainFrame->{$strain}->{oldShift} = $oldShift;
-    $strainFrame->{$strain}->{shiftFrame} = $shiftFrame;
-    return ($variations, $strainFrame);       
-}
 
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
@@ -325,9 +295,58 @@ sub calculateReferenceCdsPosition {
 	    $isCoding = 1;
 	}
     }
-    return($isCoding, \%cdsPositions, \%proteinPositions);
+    return($isCoding, $cdsPos, $positionsInProtein);
 }
 
+
+sub calculateVariationCdsPosition {
+    my ($transcripts, $transcriptSummary, $sequenceId, $location, $strain, $variations) = @_;
+    my %cdsPositions;
+    my %proteinPositions;
+    my $isCoding;
+    foreach my $transcript (@$transcripts) {
+	my $cdsStart = $transcriptSummary->{$transcript}->{$strain}->{shifted_start};
+	my $cdsEnd = $transcriptSummary->{$transcript}->{$strain}->{shifted_end};
+	my $cdsStrand = $transcriptSummary->{$transcript}->{cds_strand};
+        next unless($cdsStart && $cdsEnd);
+	next if($location < $cdsStart || $location > $cdsEnd);
+    my $gene = Bio::Coordinate::GeneMapper->new(
+      -in  => "chr",
+      -out => "cds",
+      -cds => Bio::Location::Simple->new(
+         -start  => $cdsStart,
+         -end  => $cdsEnd,
+         -strand => $cdsStrand,
+         -seq_id => $sequenceId,
+      ),
+	-exons => Bio::Location::Simple->new(
+         -start  => $cdsStart,
+         -end  => $cdsEnd,
+         -strand => $cdsStrand,
+	 -seq_id => $sequenceId,
+	 -location_type => 'EXACT',  
+      ),
+	);
+       my $loc =  Bio::Location::Simple->new(
+         -start => $variations->[0]->{shifted_location},
+         -end   => $variations->[0]->{shifted_location},
+         -strand => +1,
+         -seq_id => $sequenceId,
+	);
+
+	my $map = $gene->map($loc);
+
+	my $cdsPos = $map->start;
+	if($cdsPos && $cdsPos > 1) {
+	    my $positionsInProtein = &calculateAminoAcidPosition($cdsPos);
+	    $cdsPositions{$transcript} = $cdsPos;
+	    $proteinPositions{$transcript} = $positionsInProtein;
+
+	    $isCoding = 1;
+	}
+    }
+    return($isCoding, \%cdsPositions, \%proteinPositions);
+}
 
 
 sub usage {
@@ -1125,3 +1144,43 @@ sub addStrainExonShiftsToTranscriptSummary {
     return $transcriptSummary;
 }
 
+sub addShiftedLocation {
+    my ($variations, $strainFrame) = @_;
+    my $location = $variations->[0]->{location};
+    #print "$location\n";
+    my $strain = $variations->[0]->{strain};
+    #print "$strain\n";
+    my @shiftArray = $currentShifts->{$strain};
+    my $indexedArray = $shiftArray[0][0];
+    my $shiftArrayLen = scalar @{ $indexedArray };
+    my $shiftFrameLimit = $shiftArrayLen - 1;
+    if ($strainFrame->{$strain}->{shiftFrame}) {
+        my $shiftFrame = $strainFrame->{$strain}->{shiftFrame};
+        my $oldShift = $strainFrame->{$strain}->{oldShift};
+    }
+    else {
+        my $shiftFrame = 0;
+        my $oldShift = 0;
+    }
+    until ($shiftArray[0][0][$shiftFrame][0] >= $location || $shiftFrame == $shiftFrameLimit) {
+        $oldShift = $shiftArray[0][0][$shiftFrame][1];
+        $shiftFrame++;
+    }
+    if ($shiftFrame == $shiftFrameLimit && $location <= $shiftArray[0][0][$shiftFrame][0]) {
+        $shiftedLocation = $location + $shiftArray[0][0][$shiftFrame-1][1];
+    }
+    elsif ($shiftFrame == $shiftFrameLimit && $location > $shiftArray[0][0][$shiftFrame][0]) {
+        $shiftedLocation = $location + $oldShift;
+    }
+    elsif ($location <= $shiftArray[0][0][$shiftFrame][0]) {
+        $shiftedLocation = $location + $oldShift;
+    }
+    else {
+        $shiftedLocation = $location + $oldShift;
+    }
+    #print "$shiftedLocation\t$oldShift\n";
+    $variations->[0]->{shifted_location} = $shiftedLocation;
+    $strainFrame->{$strain}->{oldShift} = $oldShift;
+    $strainFrame->{$strain}->{shiftFrame} = $shiftFrame;
+    return ($variations, $strainFrame);       
+}
