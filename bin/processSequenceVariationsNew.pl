@@ -20,7 +20,7 @@ use VEuPath::MergeSortedSeqVariations;
 use VEuPath::FileReader;
 use locale;
 
-my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute);
+my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
             "cache_file=s"=> \$cacheFile,
             "clean_cache"=> \$cleanCache,
@@ -35,6 +35,8 @@ my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismA
             "force_position_compute" => \$forcePositionCompute,
             "debug" => \$debug,
             "help|h" => \$help,
+	    "consensus=s"=> \$consensusFasta,
+	    "genome=s"=> \$genomeFasta,
     );
 if($help) {
   &usage();
@@ -60,7 +62,7 @@ unless(-d $varscanDirectory) {
   &usage("Required Directory Missing") unless($isLegacyVariations);
 }
 unless($transcriptExtDbRlsSpec && $organismAbbrev && $referenceStrain && $extDbRlsSpec) {
-  &usage("Missing Required param value");
+ &usage("Missing Required param value");
 }
 unless(-e $undoneStrainsFile) {
   open(FILE, "> $undoneStrainsFile") or die "Could not open file $undoneStrainsFile for writing: $!";
@@ -146,23 +148,28 @@ while($merger->hasNext()) {
     # Uncomment these to see how this works
     #print Dumper $variations;
     #print Dumper $strainFrame;    
-    
+
     my ($sequenceId, $location) = &snpLocationFromVariations($variations);
+    
     print STDER "SEQUENCEID=$sequenceId\tLOCATION=$location\n" if($debug);
     my $naSequenceId = $naSequenceIds->{$sequenceId};
     die "Could not find na_sequence_id for sequence source id: $sequenceId" unless($naSequenceId);
     my ($referenceAllele, $positionsInCds, $positionsInProtein, $referenceVariation, $isCoding);
     my $geneLocation = &lookupByLocation($sequenceId, $location, $geneLocations);
     my ($transcripts, $geneNaFeatureId);
+
     if($geneLocation) {
         $transcripts = $geneLocation->{transcripts};
         $geneNaFeatureId = $geneLocation->{na_feature_id};
     }
-    my $hasTranscripts = defined($transcripts) ? 1 : 0;
-    if($sequenceId ne $prevSequenceId || $location > $prevTranscriptMaxEnd) {
-        print STDERR "CLEANING CDS CACHE\n" if($debug);
-        &cleanCdsCache($transcriptSummary, $prevTranscripts);
+    
+    if($sequenceId ne $prevSequenceId || $prevTranscript ne $transcripts->[0]) {
+	print STDERR "CLEANING CDS CACHE\n" if($debug);
+        &cleanCdsCache($transcriptSummary, $prevTranscript);
     }
+
+    my $hasTranscripts = defined($transcripts) ? 1 : 0;
+    
     my $cachedReferenceVariation = &cachedReferenceVariation($variations, $referenceStrain);
     my $referenceProtocolAppNodeId = &queryProtocolAppNodeIdFromExtDbRlsId($dbh, $thisExtDbRlsId);
     print STDERR "REFERENCE VARIATION NOT CACHED\n" if($debug);
@@ -171,25 +178,88 @@ while($merger->hasNext()) {
 
     #print $transcriptSummary->{$transcripts->[0]}->{$strain}->{shifted_start};
 
-    my ($isCoding, $refPositionsInCds, $refPositionsInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
+    my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
     my ($isCoding, $variationPositionInCds, $variationPositionInProtein) = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $strain, $variations);
 
-    # Need to do the same thing here for the snpCdsPosition
-    my $refPositionInCds = &uniqueValueFromHashRef($refPositionsInCds);
-    my $refPositionInProtein = &uniqueValueFromHashRef($refPositionsInProtein);
-    my $refPositionsInCdsString = &hashRefToString($refPositionsInCds);
-    my $refPositionsInProteinString = &hashRefToString($refPositionsInProtein);
-    #print "$referenceAllele\t$isCoding\t$positionsInCdsString\t$positionsInProteinString\n";
+    #print "$refPositionInCds\t$refPositionInProtein\n";
     
-    print "$isCoding\n";
-    print Dumper $variationPositionInCds;
-    print Dumper $variationPositionInProtein;
+    my $variationPositionInCds = &uniqueValueFromHashRef($variationPositionInCds);
+    my $variationPositionInProtein = &uniqueValueFromHashRef($variationPositionInProtein);
+
+    #print "$variationPositionInCds\t$variationPositionInProtein\n";
     
-    #my ($referenceProducts, $adjacentSnpCausesProductDifference) = &variationProduct($transcriptExtDbRlsId, $transcripts, $transcriptSummary, $sequenceId, $location, $positionsInCds, $referenceAllele, $transcriptExtDbRlsId, $sequenceId) if(keys %$positionsInCds);
-    #print "$referenceProducts\t$adjacentSnpCausesProductDifference\n";
+    my ($product, $refProduct, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $variations, $location, $variationPositionInCds, $refPositionInCds, $referenceAllele, $strain, $consensusFasta, $genomeFasta) if($refPositionInCds);
+
+    print "$product\t$refProduct\t$adjacentSnpCausesProductDifference\n";
+    
+    $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
+    $prevSequenceId = $sequenceId;
+    $prevTranscript = $transcripts->[0];
+    #print "$prevTranscriptMaxEnd\t$prevSequenceId\t$prevTranscript\n";
+
 }
 die;
 
+sub variationAndRefProduct {
+    my ($extDbRlsId, $refExtDbRlsId, $sequenceId, $refSequenceId, $transcripts, $transcriptSummary, $variations, $location, $variationPositionInCds, $refPositionInCds, $referenceAllele, $strain, $consensusFasta, $genomeFasta) = @_;
+    my $product;
+    my $refProduct;
+    my $adjacentSnpCausesProductDifference = 0;
+    foreach my $transcript (@$transcripts) {
+	my $consensusCodingSequence;
+	# We already have retrieved this coding sequence, go get it from the transcript summary object
+        if($transcriptSummary->{$transcript}->{cache}->{consensus_cds}) {
+            $consensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{consensus_cds};
+        }
+        else { # first time through for this transcript                                                                                                                                                               # Get coding sequence from samtools faidx and consensus sequence using shifted exons,
+	    my $shifted_start = $transcriptSummary->{$transcript}->{$strain}->{shifted_start};
+    	    my $shifted_end = $transcriptSummary->{$transcript}->{$strain}->{shifted_end};
+	    my $strand = $transcriptSummary->{$transcript}->{cds_strand};
+	    #print "Creating consensuscds\n";
+            $consensusCodingSequence = &getVariationCodingSequence($strain, $shifted_start, $shifted_end, $strand, $consensusFasta);
+	    #print "$consensusCodingSequence\n";
+            $transcriptSummary->{$transcript}->{cache}->{consensus_cds} = $consensusCodingSequence;
+        }
+        my $refConsensusCodingSequence;
+	# We already have retrieved the reference coding sequence for this transcript
+        if($transcriptSummary->{$transcript}->{cache}->{ref_cds}) {
+            $refConsensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{ref_cds};
+        }
+        else { # first time through for this transcript                                                                                                                                                               # Use same functionality for retrieving the reference coding sequence
+	    my $start = $transcriptSummary->{$transcript}->{min_exon_start};
+	    my $end = $transcriptSummary->{$transcript}->{max_exon_end};
+	    my $strand = $transcriptSummary->{$transcript}->{cds_strand};
+	    #print "Creating refcds\n";
+            $refConsensusCodingSequence = &getVariationCodingSequence($sequenceId, $start, $end, $strand, $genomeFasta);
+	    #print "Refcds is $refConsensusCodingSequence\n";
+            $transcriptSummary->{$transcript}->{cache}->{ref_cds} = $refConsensusCodingSequence;
+        }
+        my $strand = $transcriptSummary->{$transcript}->{cds_strand};
+        next unless($variationPositionInCds);
+        next if($variationPositionInCds > length $consensusCodingSequence);
+        $product = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $variationPositionInCds);
+        $refProduct = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $refPositionInCds);
+        if($product ne $refProduct) {
+            $adjacentSnpCausesProductDifference = 1;
+        }
+	#print "$product\t$refProduct\t$adjacentSnpCausesProductDifference\n";
+    }
+    return($product, $refProduct, $adjacentSnpCausesProductDifference);
+}
+
+sub getVariationCodingSequence {
+    my ($defline, $start, $end, $strand, $fasta) = @_;
+    my $seq;
+    if ($strand == 1) {
+        $seq = `samtools faidx $fasta $defline:$start-$end`;
+    }
+    else {
+        $seq = `samtools faidx -i $fasta $defline:$start-$end`;
+    }
+    my $seq = $seq =~ s/>.+\n//gr;
+    my $seq = $seq =~ s/\n//gr;
+    return $seq;
+}
 
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
@@ -249,20 +319,21 @@ and o.name in ('random_sequence', 'chromosome', 'contig', 'supercontig','mitocho
 }
 
 
-sub calculateReferenceCdsPosition {
+sub calculateReferenceCdsPosition { 
     my ($transcripts, $transcriptSummary, $sequenceId, $location) = @_;
-    my %cdsPositions;
-    my %proteinPositions;
+    my $cdsPos;
+    my $positionInProtein;
     my $isCoding;
+    #print "Location is $location\n";
     foreach my $transcript (@$transcripts) {
 	my $cdsStart = $transcriptSummary->{$transcript}->{min_cds_start};
 	my $cdsEnd = $transcriptSummary->{$transcript}->{max_cds_end};
 	my $cdsStrand = $transcriptSummary->{$transcript}->{cds_strand};
-
+        #print "Getting Cds start and End\n";
 	next unless($cdsStart && $cdsEnd);
-
+        #print "cds' are $cdsStart\t$cdsEnd\n";
 	next if($location < $cdsStart || $location > $cdsEnd);
-
+        #print "Is Coding\n";
     my $gene = Bio::Coordinate::GeneMapper->new(
       -in  => "chr",
       -out => "cds",
@@ -284,18 +355,19 @@ sub calculateReferenceCdsPosition {
 
 	my $map = $gene->map($loc);
 
-	my $cdsPos = $map->start;
-
+	$cdsPos = $map->start;
+        #print "cdsPos is $cdsPos\n";
 	if($cdsPos && $cdsPos > 1) {
-	    my $positionsInProtein = &calculateAminoAcidPosition($cdsPos);
-
-	    $cdsPositions{$transcript} = $cdsPos;
-	    $proteinPositions{$transcript} = $positionsInProtein;
-
+	    $positionInProtein = &calculateAminoAcidPosition($cdsPos);
+            #print "Pos in protein is $positionsInProtein\n";
+	    #$cdsPositions{$transcript} = $cdsPos;
+	    #$proteinPositions{$transcript} = $positionsInProtein;
+            
 	    $isCoding = 1;
 	}
     }
-    return($isCoding, $cdsPos, $positionsInProtein);
+    #print "$isCoding\t$cdsPos\t$positionInProtein\n";
+    return($isCoding, $cdsPos, $positionInProtein);
 }
 
 
@@ -556,7 +628,6 @@ sub makeCoverageVariation {
 }
 
 
-
 sub hasVariation {
     my ($variations) = @_;
 
@@ -741,6 +812,7 @@ sub openVarscanFiles {
 
     return \%rv;
 }
+
 
 sub cleanCdsCache {
     my ($transcriptSummary, $transcripts) = @_;
@@ -1154,13 +1226,15 @@ sub addShiftedLocation {
     my $indexedArray = $shiftArray[0][0];
     my $shiftArrayLen = scalar @{ $indexedArray };
     my $shiftFrameLimit = $shiftArrayLen - 1;
+    my $oldShift;
+    my $shiftFrame;
     if ($strainFrame->{$strain}->{shiftFrame}) {
-        my $shiftFrame = $strainFrame->{$strain}->{shiftFrame};
-        my $oldShift = $strainFrame->{$strain}->{oldShift};
+        $shiftFrame = $strainFrame->{$strain}->{shiftFrame};
+        $oldShift = $strainFrame->{$strain}->{oldShift};
     }
     else {
-        my $shiftFrame = 0;
-        my $oldShift = 0;
+        $shiftFrame = 0;
+        $oldShift = 0;
     }
     until ($shiftArray[0][0][$shiftFrame][0] >= $location || $shiftFrame == $shiftFrameLimit) {
         $oldShift = $shiftArray[0][0][$shiftFrame][1];
@@ -1180,6 +1254,7 @@ sub addShiftedLocation {
     }
     #print "$shiftedLocation\t$oldShift\n";
     $variations->[0]->{shifted_location} = $shiftedLocation;
+    $variations->[0]->{current_shift} = $oldShift;
     $strainFrame->{$strain}->{oldShift} = $oldShift;
     $strainFrame->{$strain}->{shiftFrame} = $shiftFrame;
     return ($variations, $strainFrame);       
