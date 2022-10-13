@@ -215,6 +215,16 @@ while($merger->hasNext()) {
     #push @$variations, $referenceVariation if($isCoding);
     push @$variations, $referenceVariation;
 
+    $variations->[0]->{product} = $product;
+    $variations->[0]->{position_in_cds} = $variationPositionInCds;
+    $variations->[0]->{position_in_protein} = $variationPositionInProtein;
+    $variations->[0]->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
+    $variations->[0]->{has_coding_mutation} = $isCoding;
+    $variations->[1]->{product} = $refProduct;
+    $variations->[1]->{position_in_cds} = $refPositionInCds;
+    $variations->[1]->{position_in_protein} = $refPositionInProtein;
+    $variations->[1]->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
+    
     #print Dumper $variations if($isCoding);
 
     my @variationStrains = map { $_->{strain} } @$variations;
@@ -228,16 +238,30 @@ while($merger->hasNext()) {
     my $coverageVariations = &makeCoverageVariations(\@allStrains, \@variationStrains, $strainVarscanFileHandles, $referenceVariation);
     my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
 
-    print "COVERAGES\n";
-    print Dumper $coverageVariations;
+    #print "COVERAGES\n";
+    #print Dumper $coverageVariations;
     
     push @$variations, @$coverageVariations;
 
-    print "VARIATIONS\n";
-    print Dumper $variations;
+    #print "VARIATIONS\n";
+    #print Dumper $variations;
     
     #my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
     #print "HAS COVERAGE VARIATIONS FOR THE FOLLOWING:  " . join(",", @coverageVariationStrains) . "\n";
+
+    my $variationCounter = 0;
+    foreach my $variation (@$variations) {
+	my $strain = $variation->{strain};
+	my ($protocolAppNodeId, $extDbRlsId);
+	if($refPositionInCds) {
+	    print "Coding\n";
+	    if ($variationCounter >= 2) {
+		$variation->{product} = $refProduct;
+	    }
+	    $variationCounter++;
+	    print Dumper $variation;
+	}
+    }
     
     $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
     $prevSequenceId = $sequenceId;
