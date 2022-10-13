@@ -13,7 +13,7 @@ sub fileColumnNames {
        'reference',
        'base',
        'percent',
-       'matches_ref',
+       'matches_reference',
        'quality',
        'coverage',
       );
