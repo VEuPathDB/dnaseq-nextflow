@@ -94,9 +94,13 @@ open($snpFh, "> $snpOutputFile") or die "Cannot open file $snpOutputFile for wri
 
 my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVariations);
 
+#print Dumper $strainVarscanFileHandles;
+
 my @allStrains = keys %{$strainVarscanFileHandles};
 
-my $currentShifts = &createCurrentShifts(\@allStrains, $dbh);
+my @fixStrains = ("LV39cl5_chr1");
+
+my $currentShifts = &createCurrentShifts(\@fixStrains, $dbh);
 #print keys %{ $currentShifts };
 #die; 
 
@@ -104,7 +108,6 @@ my $strainExtDbRlsAndProtocolAppNodeIds = &queryExtDbRlsAndProtocolAppNodeIdsFor
 
 my $transcriptExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $transcriptExtDbRlsSpec);
 my $thisExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $extDbRlsSpec);
-
 
 my $geneModelLocations = VEuPath::GeneModelLocations->new($dbh, $transcriptExtDbRlsId, 1);
 my $agpMap = $geneModelLocations->getAgpMap();
@@ -114,10 +117,9 @@ my $transcriptSummary = &getTranscriptLocations($dbh, $transcriptExtDbRlsId, $ag
 
 my $geneLocations = &getGeneLocations($transcriptSummary);
 
-my @shiftArray = $currentShifts->{'LV39cl5_chr1'};
-
-my $indexedArray = $shiftArray[0][0];
-my $shiftArrayLen = scalar @{ $indexedArray };
+#my @shiftArray = $currentShifts->{'LV39cl5_chr1'};
+#my $indexedArray = $shiftArray[0][0];
+#my $shiftArrayLen = scalar @{ $indexedArray };
 #print $shiftArrayLen;
 #print "$shiftArrayLen\n";
 #die;
@@ -210,9 +212,32 @@ while($merger->hasNext()) {
                            'diff_from_adjacent' => $adjacentSnpCausesProductDifference,
     };
 
-    push @$variations, $referenceVariation if($isCoding);
+    #push @$variations, $referenceVariation if($isCoding);
+    push @$variations, $referenceVariation;
 
-    print Dumper $variations if($isCoding);
+    #print Dumper $variations if($isCoding);
+
+    my @variationStrains = map { $_->{strain} } @$variations;
+    #print "HAS VARIATIONS FOR THE FOLLOWING:  " . join(",", @variationStrains) . "\n";
+    
+    #print Dumper @allStrains;
+    #print Dumper @variationStrains;
+    #print Dumper $strainVarscanFileHandles;
+    #print Dumper $referenceVariation;
+    
+    my $coverageVariations = &makeCoverageVariations(\@allStrains, \@variationStrains, $strainVarscanFileHandles, $referenceVariation);
+    my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
+
+    print "COVERAGES\n";
+    print Dumper $coverageVariations;
+    
+    push @$variations, @$coverageVariations;
+
+    print "VARIATIONS\n";
+    print Dumper $variations;
+    
+    #my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
+    #print "HAS COVERAGE VARIATIONS FOR THE FOLLOWING:  " . join(",", @coverageVariationStrains) . "\n";
     
     $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
     $prevSequenceId = $sequenceId;
@@ -511,28 +536,27 @@ sub makeCoverageVariations {
     my ($allStrains, $variationStrains, $strainVarscanFileHandles, $referenceVariation) = @_;
 
     my @rv;
-
+    #print "Next snp\n";
     foreach my $strain (@$allStrains) {
 	my $hasVariation;
-
+        #print "Strain = $strain\n";
 	foreach my $varStrain (@$variationStrains) {
 	    if($varStrain eq $strain) {
 		$hasVariation = 1;
+		#print "Has Variation\n";
 		last;
 	    }
 	}
 	unless($hasVariation) {
 	    my $fileReader = $strainVarscanFileHandles->{$strain} ;
-
-	    my $variation = &makeCoverageVariation($fileReader, $referenceVariation, $strain);
-
+            #print Dumper $fileReader;
+	    my $variation = &makeCoverageVariation($fileReader, $referenceVariation, $strain);  
 	    if($variation) {
+		#print Dumper $variation;
 		push @rv, $variation;
 	    }
 	}
     }
-
-
     return \@rv;
 }
 
