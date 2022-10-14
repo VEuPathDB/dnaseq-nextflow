@@ -139,6 +139,8 @@ my $naSequenceIds = &queryNaSequenceIds($dbh);
 
 my $merger = VEuPath::MergeSortedSeqVariations->new($newSampleFile, $cacheFile, \@undoneStrains, qr/\t/);
 
+my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscript);
+
 my $strainFrame;
 my $count = 0;
 my $total = `wc -l $newSampleFile`;
@@ -167,38 +169,51 @@ while($merger->hasNext()) {
         $transcripts = $geneLocation->{transcripts};
         $geneNaFeatureId = $geneLocation->{na_feature_id};
     }
-    
+
     if($sequenceId ne $prevSequenceId || $prevTranscript ne $transcripts->[0]) {
 	print STDERR "CLEANING CDS CACHE\n" if($debug);
         &cleanCdsCache($transcriptSummary, $prevTranscript);
     }
 
+   if($isLegacyVariations && $cleanCache) {
+       foreach my $lv (@$variations) {
+	   if($lv->{strain} eq $referenceStrain) {
+	       $lv->{strain} = $lv->{strain} . "_reference_reads";
+	   }
+       }
+    }
+    
     my $hasTranscripts = defined($transcripts) ? 1 : 0;
     
     my $cachedReferenceVariation = &cachedReferenceVariation($variations, $referenceStrain);
+    print $cachedReferenceVariation;
+    
     my $referenceProtocolAppNodeId = &queryProtocolAppNodeIdFromExtDbRlsId($dbh, $thisExtDbRlsId);
     print STDERR "REFERENCE VARIATION NOT CACHED\n" if($debug);
-    my $referenceAllele = $variations->[0]->{reference};
-    my $strain = $variations->[0]->{strain};
 
-    #print $transcriptSummary->{$transcripts->[0]}->{$strain}->{shifted_start};
-
-    my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
-    my ($isCoding, $variationPositionInCds, $variationPositionInProtein) = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $strain, $variations);
-
-    #print "$refPositionInCds\t$refPositionInProtein\n";
-    
-    my $variationPositionInCds = &uniqueValueFromHashRef($variationPositionInCds);
-    my $variationPositionInProtein = &uniqueValueFromHashRef($variationPositionInProtein);
-
-    #print "$variationPositionInCds\t$variationPositionInProtein\n";
-    
-    my ($product, $refProduct, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $variations, $location, $variationPositionInCds, $refPositionInCds, $referenceAllele, $strain, $consensusFasta, $genomeFasta) if($refPositionInCds);
-
-    #print "$product\t$refProduct\t$adjacentSnpCausesProductDifference\n";
-
-    # add a variation for the reference                                                                                                                                                                    
-    $referenceVariation = {'base' => $referenceAllele,
+    if($cachedReferenceVariation && !$isLegacyVariations) {
+	print STDERR "HAS_CACHED REFERENCE VARIATION\n" if($debug);
+	$referenceVariation = $cachedReferenceVariation;
+	$referenceVariation->{'protocol_app_node_id'} = $referenceProtocolAppNodeId;
+	$positionsInCds = &makeHashRefFromString($cachedReferenceVariation->{positions_in_cds}) if($cachedReferenceVariation->{positions_in_cds});
+	$positionsInProtein = &makeHashRefFromString($cachedReferenceVariation->{positions_in_protein}) if($cachedReferenceVariation->{positions_in_protein});
+	$referenceAllele = $cachedReferenceVariation->{base};
+	$isCoding = $cachedReferenceVariation->{is_coding};
+    }
+    else {
+	my $referenceAllele = $variations->[0]->{reference};
+	my $strain = $variations->[0]->{strain};
+	#print $transcriptSummary->{$transcripts->[0]}->{$strain}->{shifted_start};
+	my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
+	my ($isCoding, $variationPositionInCds, $variationPositionInProtein) = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $strain, $variations);
+	#print "$refPositionInCds\t$refPositionInProtein\n";
+	my $variationPositionInCds = &uniqueValueFromHashRef($variationPositionInCds);
+	my $variationPositionInProtein = &uniqueValueFromHashRef($variationPositionInProtein);
+	#print "$variationPositionInCds\t$variationPositionInProtein\n";
+	my ($product, $refProduct, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $variations, $location, $variationPositionInCds, $refPositionInCds, $referenceAllele, $strain, $consensusFasta, $genomeFasta) if($refPositionInCds);
+	#print "$product\t$refProduct\t$adjacentSnpCausesProductDifference\n";
+	# add a variation for the reference                                                                                                                                                               
+	$referenceVariation = {'base' => $referenceAllele,
                            'external_database_release_id' => $transcriptExtDbRlsId,
                            'location' => $location,
                            'sequence_source_id' => $sequenceId,
@@ -213,10 +228,16 @@ while($merger->hasNext()) {
                            'protocol_app_node_id' => $referenceProtocolAppNodeId,
                            'is_coding' => $isCoding,
                            'diff_from_adjacent' => $adjacentSnpCausesProductDifference,
-    };
+	};
+	#push @$variations, $referenceVariation if($isCoding);
+	push @$variations, $referenceVariation;
+    }
 
-    #push @$variations, $referenceVariation if($isCoding);
-    push @$variations, $referenceVariation;
+    # No need to continue if there is no variation at this point:  Important for when we undo!!                                                                                                           
+    if(!&hasVariation($variations) && !$isLegacyVariations) {
+	print STDERR  "NO VARIATION FOR STRAINS:  " . join(",", map { $_->{strain}} @$variations) . "\n" if($debug);
+	next;
+    }
 
     $variations->[0]->{product} = $product;
     $variations->[0]->{position_in_cds} = $variationPositionInCds;
@@ -237,25 +258,46 @@ while($merger->hasNext()) {
     #print Dumper @variationStrains;
     #print Dumper $strainVarscanFileHandles;
     #print Dumper $referenceVariation;
-    
-    my $coverageVariations = &makeCoverageVariations(\@allStrains, \@variationStrains, $strainVarscanFileHandles, $referenceVariation);
-    my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
 
-    #print "COVERAGES\n";
-    #print Dumper $coverageVariations;
-    
-    push @$variations, @$coverageVariations;
+    unless($isLegacyVariations) {
+        my $coverageVariations = &makeCoverageVariations(\@allStrains, \@variationStrains, $strainVarscanFileHandles, $referenceVariation);
+        my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
+	print STDERR "HAS COVERAGE VARIATIONS FOR THE FOLLOWING:  " . join(",", @coverageVariationStrains) . "\n" if($debug);
+        #print Dumper $coverageVariations;
+	push @$variations, @$coverageVariations;
+    }
 
     #print "VARIATIONS\n";
     #print Dumper $variations;
     
-    #my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
-    #print "HAS COVERAGE VARIATIONS FOR THE FOLLOWING:  " . join(",", @coverageVariationStrains) . "\n";
-
     my $variationCounter = 0;
     foreach my $variation (@$variations) {
 	my $strain = $variation->{strain};
 	my ($protocolAppNodeId, $extDbRlsId);
+	if($strain ne $referenceStrain) {
+	    $extDbRlsId = $strainExtDbRlsAndProtocolAppNodeIds->{$strain}->{ext_db_rls_id}; # this will be null if skip_coverage is turned on                                                             
+	    $protocolAppNodeId = $strainExtDbRlsAndProtocolAppNodeIds->{$strain}->{protocol_app_node_id}; # this will be null if skip_coverage is turned on     
+        }
+	if(my $cachedExtDbRlsId = $variation->{external_database_release_id}) {
+	    die "cachedExtDbRlsId did not match" if($strain ne $referenceStrain && $extDbRlsId != $cachedExtDbRlsId);
+	    my $cachedNaSequenceId = $variation->{ref_na_sequence_id};
+	    if($naSequenceId != $cachedNaSequenceId) {
+		print Dumper $variations;
+		die "cachedNaSequenceId [$cachedNaSequenceId] did not match [$naSequenceId]" ;
+	    }
+	    $variation->{snp_external_database_release_id} = $thisExtDbRlsId;
+	    if(!$forcePositionCompute || $strain eq $referenceStrain) {
+		&printVariation($variation, $cacheFh);
+		next;
+	    }
+	}
+	$variation->{ref_na_sequence_id} = $naSequenceId;
+	my $varSequenceSourceId = "$sequenceId.$strain";
+	my $varNaSequenceId = $naSequenceIds->{$varSequenceSourceId};
+	if(!$varNaSequenceId && !$isLegacyVariations) {
+	    #die "Didn't find an na_sequence_id for source_id $varSequenceSourceId";
+	}
+	$variation->{na_sequence_id} = $varNaSequenceId ? $varNaSequenceId : $naSequenceId;
 	if($refPositionInCds) {
 	    #print "Coding\n";
 	    if ($variationCounter >= 2) {
@@ -265,8 +307,8 @@ while($merger->hasNext()) {
 	    #print Dumper $variation;
 	}
 	$variation->{external_database_release_id} = $extDbRlsId;
-        $variation->{snp_external_database_release_id} = $thisExtDbRlsId;
-        $variation->{protocol_app_node_id} = $protocolAppNodeId;
+	$variation->{snp_external_database_release_id} = $thisExtDbRlsId;
+	$variation->{protocol_app_node_id} = $protocolAppNodeId;
 	&printVariation($variation, $cacheFh);
     }
 
@@ -288,6 +330,10 @@ while($merger->hasNext()) {
 $|=1; #autoflush 
 print "\033[JCOMPLETE"."\033[G";
 sleep 1;
+close $cacheFh;
+close $snpFh;
+&closeVarscanFiles($strainVarscanFileHandles);
+
 
 
 #--------------------------------------------------------------------------------
@@ -681,7 +727,7 @@ sub querySequenceSubstring {
 
 sub cachedReferenceVariation {
     my ($variations, $referenceStrain) = @_;
-
+    
     foreach(@$variations) {
 	return $_ if($_->{strain} eq $referenceStrain);
     }
