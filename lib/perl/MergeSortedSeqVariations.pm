@@ -18,7 +18,7 @@ sub new {
 
   my $self = $class->SUPER::new(@_);
 
-  my $columnNames = &fileColumnNames();
+  my $columnNames = &sampleCacheFileColumnNames();
   $self->setDictionaryNames($columnNames);
 
   return $self;
