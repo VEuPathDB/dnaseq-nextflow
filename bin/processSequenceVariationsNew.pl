@@ -13,7 +13,7 @@ use Bio::Coordinate::Pair;
 use Bio::Location::Simple;
 use Bio::Tools::CodonTable;
 use VEuPath::GeneModelLocations;
-use VEuPath::SnpUtils  qw(fileColumnNames);
+use VEuPath::SnpUtils  qw(sampleCacheFileColumnNames snpFileColumnNames);
 use DBI;
 use DBD::Oracle;
 use VEuPath::MergeSortedSeqVariations;
@@ -140,6 +140,9 @@ my $naSequenceIds = &queryNaSequenceIds($dbh);
 my $merger = VEuPath::MergeSortedSeqVariations->new($newSampleFile, $cacheFile, \@undoneStrains, qr/\t/);
 
 my $strainFrame;
+my $count = 0;
+my $total = `wc -l $newSampleFile`;
+$total = $total =~ s/\s.+//gr;
 
 while($merger->hasNext()) {
     my $variations = $merger->nextSNP();
@@ -254,22 +257,37 @@ while($merger->hasNext()) {
 	my $strain = $variation->{strain};
 	my ($protocolAppNodeId, $extDbRlsId);
 	if($refPositionInCds) {
-	    print "Coding\n";
+	    #print "Coding\n";
 	    if ($variationCounter >= 2) {
 		$variation->{product} = $refProduct;
 	    }
 	    $variationCounter++;
-	    print Dumper $variation;
+	    #print Dumper $variation;
 	}
+	$variation->{external_database_release_id} = $extDbRlsId;
+        $variation->{snp_external_database_release_id} = $thisExtDbRlsId;
+        $variation->{protocol_app_node_id} = $protocolAppNodeId;
+	&printVariation($variation, $cacheFh);
     }
+
+    my $snp = &makeSNPFeatureFromVariations($variations, $referenceVariation, $geneNaFeatureId, $thisExtDbRlsId);
+    #print Dumper $snp;
+    &printSNP($snp, $snpFh);
     
     $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
     $prevSequenceId = $sequenceId;
     $prevTranscript = $transcripts->[0];
     #print "$prevTranscriptMaxEnd\t$prevSequenceId\t$prevTranscript\n";
 
+    $|=1; #autoflush
+    my $per=($count/$total)*100;
+    my $rounded = sprintf("%.0f", $per);
+    print "\033[JProcessing SNPS: ${rounded}% Complete"."\033[G";
+    $count++;
 }
-die;
+$|=1; #autoflush 
+print "\033[JCOMPLETE"."\033[G";
+sleep 1;
 
 
 #--------------------------------------------------------------------------------
@@ -447,19 +465,14 @@ sub usage {
 
 sub printVariation {
     my ($variation, $fh) = @_;
-
-    my $keys = &variationFileColumnNames();
-
+    my $keys = VEuPath::SnpUtils::sampleCacheFileColumnNames();
     print $fh join("\t", map {$variation->{$_}} @$keys) . "\n";
-
 }
 
 
 sub printSNP {
     my ($snp, $fh) = @_;
-
-    my $keys = &snpFileColumnNames();
-
+    my $keys = VEuPath::SnpUtils::snpFileColumnNames();
     print $fh join("\t", map {$snp->{$_}} @$keys) . "\n";
 }
 
