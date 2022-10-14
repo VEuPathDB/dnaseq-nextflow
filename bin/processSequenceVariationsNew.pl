@@ -13,7 +13,7 @@ use Bio::Coordinate::Pair;
 use Bio::Location::Simple;
 use Bio::Tools::CodonTable;
 use VEuPath::GeneModelLocations;
-use VEuPath::SnpUtils  qw(sampleCacheFileColumnNames snpFileColumnNames);
+use VEuPath::SnpUtils  qw(sampleCacheFileColumnNames snpFileColumnNames alleleFileColumnNames productFileColumnNames);
 use DBI;
 use DBD::Oracle;
 use VEuPath::MergeSortedSeqVariations;
@@ -88,9 +88,13 @@ my $SEQUENCE_QUERY_SH = $dbh->prepare($SEQUENCE_QUERY);
 my $dirname = dirname($cacheFile);
 my $tempCacheFile = $dirname . "/cache.tmp";
 my $snpOutputFile = $dirname . "/snpFeature.dat";
-my ($snpFh, $cacheFh);
+my $alleleOutputFile = $dirname . "/allele.dat";
+my $productOutputFile = $dirname . "/product.dat";
+my ($snpFh, $cacheFh, $alleleFh, $productFh);
 open($cacheFh, "> $tempCacheFile") or die "Cannot open file $tempCacheFile for writing: $!";
 open($snpFh, "> $snpOutputFile") or die "Cannot open file $snpOutputFile for writing: $!";
+open($alleleFh, "> $alleleOutputFile") or die "Cannot open file $alleleOutputFile for writing: $!";
+open($productFh, "> $productOutputFile") or die "Cannot open file $productOutputFile for writing: $!";
 
 my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVariations);
 
@@ -315,8 +319,8 @@ while($merger->hasNext()) {
     }
 
     my $snp = &makeSNPFeatureFromVariations($variations, $referenceVariation, $geneNaFeatureId, $thisExtDbRlsId);
-    print Dumper $snp;
-    #&printSNP($snp, $snpFh);
+    #print Dumper $snp;
+    &printSNP($snp, $snpFh, $alleleFh, $productFh);
     
     $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
     $prevSequenceId = $sequenceId;
@@ -510,18 +514,20 @@ sub usage {
     exit(0);
 }
 
-
 sub printVariation {
     my ($variation, $fh) = @_;
     my $keys = VEuPath::SnpUtils::sampleCacheFileColumnNames();
     print $fh join("\t", map {$variation->{$_}} @$keys) . "\n";
 }
 
-
 sub printSNP {
-    my ($snp, $fh) = @_;
+    my ($snp, $snpFh, $alleleFh, $productFh) = @_;
     my $keys = VEuPath::SnpUtils::snpFileColumnNames();
-    print $fh join("\t", map {$snp->{$_}} @$keys) . "\n";
+    print $snpFh join("\t", map {$snp->{$_}} @$keys) . "\n";
+    $keys = VEuPath::SnpUtils::alleleFileColumnNames();
+    print $alleleFh join("\t", map {$snp->{$_}} @$keys) . "\n";
+    $keys = VEuPath::SnpUtils::productFileColumnNames();
+    print $productFh join("\t", map {$snp->{$_}} @$keys) . "\n";
 }
 
 
@@ -575,8 +581,6 @@ sub makeSNPFeatureFromVariations {
 
     my $shift = $variations->[0]->{current_shift} % 3;
     my $downstream_of_frame_shift = ($shift != 0) ? 1 : 0;
-    
-    # Could do the snpFeatureFileColumn name to save space
     
     return { "gene_na_feature_id" => $geneNaFeatureId,
              "source_id" => $snpSourceId,
