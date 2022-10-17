@@ -21,7 +21,7 @@ my @strains = keys %{$$firstLoc{gtypes}};
 
 open(SNP, ">$snpFile");
 
-my ($snps, $base, $strain, $percent, $reference, $sequence_source_id, $location, $matches_ref, $quality, $coverage, $pVal);
+my ($snps, $base, $strain, $percent, $reference, $sequence_source_id, $location, $matches_ref, $quality, $coverage, $pval, $snpId);
 while (my $loc=$vcf->next_data_hash()) {
     for my $gt (keys %{$$loc{gtypes}}) {
         my ($alt,$sep,$alt2) = $vcf->parse_alleles($loc,$gt);
@@ -36,14 +36,17 @@ while (my $loc=$vcf->next_data_hash()) {
 	}
 	$strain = $gt;
 	$percent = $$loc{gtypes}->{$gt}->{'FREQ'};
+	$percent = $percent =~ s/%//gr;
 	$reference = $$loc{REF};
 	$sequence_source_id = $$loc{CHROM};
 	$location = $$loc{POS};
 	$matches_ref = $reference eq $base ? 1 : 0;
 	$quality = $$loc{gtypes}->{$gt}->{'GQ'};
 	$coverage = $$loc{gtypes}->{$gt}->{'SDP'};
-        $pVal = $$loc{gtypes}->{$gt}->{'PVAL'};
-	print SNP "$strain\t$location\t$sequence_source_id\t$reference\t$base\t$percent\t$matches_ref\t$quality\t$coverage\t$pVal\n";
+	$pval = $$loc{gtypes}->{$gt}->{'PVAL'};
+	$snpId = "NGS_SNP.$sequence_source_id.$location";
+	print SNP join("\t", ($sequence_source_id, $location, $strain, $reference, $base, $coverage, $percent, $quality, $pval, $snpId)) . "\n";
+
     }
 }
 
