@@ -1,22 +1,35 @@
-package VEuPath::SnpUtils;
+package VEuPath::testSnpUtils;
 
 use Exporter;
 @ISA = qw(Exporter);
-@EXPORT = qw(sampleCacheFileColumnNames snpFileColumnNames isSameSNP );
+@EXPORT = qw(sampleCacheFileColumnNames snpFileColumnNames isSameSNP alleleFileColumnNames productFileColumnNames);
 use strict;
-
 
 sub sampleCacheFileColumnNames {
   my @columnNames = 
-      ('strain',
+       ('sequence_source_id',
        'location',
-       'sequence_source_id',
+       'strain',
        'reference',
        'base',
-       'percent',
-       'matches_reference',
-       'quality',
        'coverage',
+       'percent',
+       'quality',
+       'pvalue',
+       'snp_source_id',
+       'external_database_release_id',
+       'matches_reference',
+       'product',
+       'position_in_cds',
+       'position_in_protein',
+       'na_sequence_id',
+       'ref_na_sequence_id',
+       'snp_external_database_release_id',
+       'protocol_app_node_id',
+       'positions_in_cds',
+       'positions_in_protein',
+       'products',
+       'diff_from_adjacent',
       );
 
   return wantarray ? @columnNames : \@columnNames;
@@ -24,10 +37,12 @@ sub sampleCacheFileColumnNames {
 
 
 sub snpFileColumnNames {
-    my @columnNames =  ("gene_na_feature_id",
-             "source_id",
-             "na_sequence_id",
+    my @columnNames =  (
+	     "strain",
              "location",
+	     "gene_na_feature_id",
+             "source_id",
+	     "na_sequence_id",
              "reference_strain",
              "reference_na",
              "reference_aa",
@@ -56,6 +71,45 @@ sub snpFileColumnNames {
              "snp_position_in_protein",
              "shifted_location",
              "has_coding_mutation",
+             "is_downstream_of_frameshift"
+	);
+
+   return wantarray ? @columnNames : \@columnNames;
+}
+
+
+sub alleleFileColumnNames {
+    my @columnNames =  ("gene_na_feature_id",
+             "source_id",
+             "na_sequence_id",
+             "location",
+             "reference_aa",
+             "has_nonsynonymous_allele",
+             "major_allele",
+             "minor_allele",
+             "major_allele_count",
+             "minor_allele_count",
+             "distinct_allele_count",
+             "total_allele_count"
+	);
+
+   return wantarray ? @columnNames : \@columnNames;
+}
+
+
+sub productFileColumnNames {
+    my @columnNames =  ("gene_na_feature_id",
+             "source_id",
+             "na_sequence_id",
+	     "location",
+	     "shifted_location",		
+             "distinct_strain_count",
+             "transcript",
+             "product",
+             "codon",
+             "position_in_codon",
+             "snp_position_in_cds",
+             "snp_position_in_protein",
              "is_downstream_of_frameshift"
 	);
 
