@@ -1,4 +1,4 @@
-package VEuPath::testSnpUtils;
+package VEuPath::SnpUtils;
 
 use Exporter;
 @ISA = qw(Exporter);
@@ -26,15 +26,12 @@ sub sampleCacheFileColumnNames {
        'ref_na_sequence_id',
        'snp_external_database_release_id',
        'protocol_app_node_id',
-       'positions_in_cds',
-       'positions_in_protein',
-       'products',
-       'diff_from_adjacent',
+       'has_nonsynonomous',
+       'is_coding'	
       );
 
   return wantarray ? @columnNames : \@columnNames;
 }
-
 
 sub snpFileColumnNames {
     my @columnNames =  (
@@ -58,8 +55,7 @@ sub snpFileColumnNames {
              "minor_product",
              "distinct_strain_count",
              "distinct_allele_count",
-             "is_coding",
-             "reference_aa_full",
+             "has_coding_mutation",
              "total_allele_count",
              "has_stop_codon",
              "transcript",
@@ -70,8 +66,13 @@ sub snpFileColumnNames {
              "snp_position_in_cds",
              "snp_position_in_protein",
              "shifted_location",
-             "has_coding_mutation",
-             "is_downstream_of_frameshift"
+	     "is_downstream_of_frameshift",
+	     "strain",
+             "snp_na",
+             "percent",
+             "matches_ref",
+             "quality",
+             "coverage"
 	);
 
    return wantarray ? @columnNames : \@columnNames;

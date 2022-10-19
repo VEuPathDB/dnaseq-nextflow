@@ -1,9 +1,9 @@
-package VEuPath::testMergeSortedSeqVariations;
+package VEuPath::MergeSortedSeqVariations;
 
 use base 'VEuPath::MergeSortedFiles';
 use strict;
 use locale;  
-use VEuPath::testSnpUtils;
+use VEuPath::SnpUtils;
 
 
 sub getSkipCount {
