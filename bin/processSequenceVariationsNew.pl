@@ -151,7 +151,7 @@ my $strainFrame;
 my $count = 0;
 my $total = `wc -l $newSampleFile`;
 $total = $total =~ s/\s.+//gr;
-			  
+#$total = 109;			  
 # TODO: Could use the gene_na_feature_id to clear cache
 my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscripts, $counter);
 
@@ -208,10 +208,14 @@ while($merger->hasNext()) {
     print STDERR "HAS_CACHED REFERENCE VARIATION\n" if($debug);
     $referenceVariation = $cachedReferenceVariation;
     $referenceVariation->{'protocol_app_node_id'} = $referenceProtocolAppNodeId;
-    $positionsInCds = &makeHashRefFromString($cachedReferenceVariation->{positions_in_cds}) if($cachedReferenceVariation->{positions_in_cds});
-    $positionsInProtein = &makeHashRefFromString($cachedReferenceVariation->{positions_in_protein}) if($cachedReferenceVariation->{positions_in_protein});
+    $refPositionInCds = $cachedReferenceVariation->{position_in_cds} if($cachedReferenceVariation->{position_in_cds});
+    $refPositionInProtein = $cachedReferenceVariation->{position_in_protein} if($cachedReferenceVariation->{position_in_protein});
     $referenceAllele = $cachedReferenceVariation->{base};
     $isCoding = $cachedReferenceVariation->{is_coding};
+    $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
+    #print Dumper $referenceVariation if($refPositionInCds);
+    #die if($refPositionInCds);
+    my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
   }
   else {
     
@@ -219,7 +223,7 @@ while($merger->hasNext()) {
     my $strain = $variations->[0]->{strain};
 
     my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
-
+    
     $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
     #my $variationPositionInCds = &uniqueValueFromHashRef($variationPositionInCds);
     #my $variationPositionInProtein = &uniqueValueFromHashRef($variationPositionInProtein);
@@ -229,6 +233,7 @@ while($merger->hasNext()) {
     #print "$refProduct\t$refCodon\t$adjacentSnpCausesProductDifference\n";
     
     $referenceVariation = {'base' => $referenceAllele,
+			   'reference' => $referenceAllele,    
                            'external_database_release_id' => $transcriptExtDbRlsId,
                            'location' => $location,
                            'sequence_source_id' => $sequenceId,
@@ -245,8 +250,6 @@ while($merger->hasNext()) {
                            'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
                            'ref_codon' => $refCodon
     };
-        
-
     #push @$variations, $referenceVariation if($isCoding);                                                                                                                                            
     push @$variations, $referenceVariation;
   }
@@ -312,23 +315,28 @@ while($merger->hasNext()) {
       $variation->{protocol_app_node_id} = $protocolAppNodeId;
       &printVariation($variation, $cacheFh);
   }  
-  
+
   my $snp = &makeSNPFeatureFromVariations($variations, $referenceVariation, $geneNaFeatureId, $thisExtDbRlsId);
+
+  #print Dumper $snp->[0]->{reference_na};
+  #die if($variations->[0]->{is_coding} == 1);
+  
   &printSNP($snp, $snpFh);
 
-  # need to track these so we know when to clear the cache
-  my @transcriptEnds = sort map {$transcriptSummary->{$_}->{max_exon_end}} @$transcripts;
-
-  $prevTranscriptMaxEnd = $transcriptEnds[scalar(@transcriptEnds) - 1];
+  $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
   $prevSequenceId = $sequenceId;
-  $prevTranscripts = $transcripts;
+  $prevTranscript = $transcripts->[0];
+  #print "$prevTranscriptMaxEnd\t$prevSequenceId\t$prevTranscript\n";                                                                                                                                    
 
-  print STDERR "\n" if($debug);
-  if(++$counter % 1000 == 0) {
-    print STDERR "Processed $counter SNPs\n";
-  }
-
+  $|=1; #autoflush                                                                                                                                                                                       
+  my $per=($count/$total)*100;
+  my $rounded = sprintf("%.0f", $per);
+  print "\033[JProcessing SNPS: ${rounded}% Complete"."\033[G";
+  $count++;
 }
+$|=1; #autoflush                                                                                                                                                                                          
+print "\033[JCOMPLETE"."\033[G";
+sleep 1;
 
 close $cacheFh;
 close $snpFh;
@@ -501,11 +509,11 @@ sub printVariation {
 }
 
 sub printSNP {
-  my ($snp, $fh) = @_;
-
+  my ($snps, $fh) = @_;
   my $keys = &snpFileColumnNames();
-
-  print $fh join("\t", map {$snp->{$_}} @$keys) . "\n";
+  foreach my $snp ($snps) {
+      print $fh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
+  }
 }
 
 
@@ -531,6 +539,7 @@ sub makeSNPFeatureFromVariations {
     my $strain = $variation->{strain};
 
     $hasStopCodon = 1 if($product eq '*');
+    $variation->{has_stop_codon} = $hasStopCodon;
 
     $alleleCounts{$allele} ++;
     $strains{$strain}++;
@@ -557,32 +566,53 @@ sub makeSNPFeatureFromVariations {
   my $majorAlleleCount = $sortedAlleleCounts[0];
   my $minorAlleleCount = $sortedAlleleCounts[1];
 
-  return { "gene_na_feature_id" => $geneNaFeatureId,
-           "source_id" => $snpSourceId,
-           "na_sequence_id" => $referenceVariation->{na_sequence_id},
-           "location" => $location,
-           "reference_strain" => $referenceStrain,
-           "reference_na" => $referenceVariation->{base},
-           "reference_aa" => $referenceVariation->{product},
-           "position_in_cds" => $referenceVariation->{position_in_cds},
-           "position_in_protein" => $referenceVariation->{position_in_protein},
-           "external_database_release_id" => $extDbRlsId,
-           "has_nonsynonymous_allele" => $hasNonSynonymousAllele,
-           "major_allele" => $majorAllele,
-           "minor_allele" => $minorAllele,
-           "major_allele_count" => $majorAlleleCount,
-           "minor_allele_count" => $minorAlleleCount,
-           "major_product" => $majorProduct,
-           "minor_product" => $minorProduct,
-           "distinct_strain_count" => $distinctStrainCount,
-           "distinct_allele_count" => $distinctAlleleCount,
-           "is_coding" => $referenceVariation->{is_coding},
-           "positions_in_cds" => $referenceVariation->{positions_in_cds},
-           "positions_in_protein" => $referenceVariation->{positions_in_protein},
-           "reference_aa_full" => $referenceVariation->{products},
-           "total_allele_count" => $totalAlleleCount,
-           "has_stop_codon" => $hasStopCodon
-  };
+  my $snps;   
+  foreach my $variation (@$variations) {
+      next unless($variation->{pvalue});
+      my $shift = $variation->{current_shift} % 3;
+      my $downstream_of_frame_shift = ($shift != 0) ? 1 : 0;
+      my $snp = {     "gene_na_feature_id" => $geneNaFeatureId,
+		      "source_id" => $snpSourceId,
+		      "na_sequence_id" => $referenceVariation->{na_sequence_id},
+		      "location" => $location,
+		      "reference_strain" => $referenceStrain,
+		      "reference_na" => $referenceVariation->{base},
+		      "reference_aa" => $referenceVariation->{product},
+		      "ref_position_in_cds" => $referenceVariation->{position_in_cds},
+		      "ref_position_in_protein" => $referenceVariation->{position_in_protein},
+		      "external_database_release_id" => $extDbRlsId,
+		      "has_nonsynonymous_allele" => $hasNonSynonymousAllele,
+		      "major_allele" => $majorAllele,
+		      "minor_allele" => $minorAllele,
+		      "major_allele_count" => $majorAlleleCount,
+		      "minor_allele_count" => $minorAlleleCount,
+		      "major_product" => $majorProduct,
+		      "minor_product" => $minorProduct,
+		      "distinct_strain_count" => $distinctStrainCount,
+		      "distinct_allele_count" => $distinctAlleleCount,
+		      "has_coding_mutation" => $variation->{is_coding},
+		      "total_allele_count" => $totalAlleleCount,
+		      "has_stop_codon" => $variation->{has_stop_codon},
+		      "transcript" => $variation->{transcript},
+                      "product" => $variation->{product},
+		      "codon" => $variation->{codon},
+		      "position_in_codon" => $variation->{position_in_codon},
+		      "ref_codon" => $referenceVariation->{ref_codon},
+		      "snp_position_in_cds" => $variation->{position_in_cds},
+		      "snp_position_in_protein" => $variation->{position_in_protein},
+		      "shifted_location" => $variation->{shifted_location},
+		      "is_downstream_of_frameshift" =>  $downstream_of_frame_shift,
+		      "strain" => $variation->{strain},
+                      "snp_na" => $variation->{base},
+                      "percent" => $variation->{percent},
+                      "matches_ref" => $variation->{matches_ref},
+                      "quality" => $variation->{quality},
+                      "coverage" => $variation->{coverage}	  
+      };
+      push @$snps, $snp;
+  }
+
+  return $snps; 
 
 }
 
@@ -1344,11 +1374,24 @@ sub calculateVariationCdsPosition {
     my ($transcripts, $transcriptSummary, $sequenceId, $location, $variations) = @_;
     my $isCoding;
     my $positionInProtein;
+    my $cdsShiftedStart;
+    my $cdsShiftedEnd;
+    my $cdsStart;
+    my $cdsEnd;
+    my $cdsStrand;
     foreach my $variation (@$variations) {
 	my $strain = $variation->{strain};
+	$variation->{is_coding} = 0;
         foreach my $transcript (@$transcripts) {
-            my $cdsShiftedStart = $transcriptSummary->{$transcript}->{$strain}->{shifted_start};
-            my $cdsShiftedEnd = $transcriptSummary->{$transcript}->{$strain}->{shifted_end};
+	    if ($transcriptSummary->{$transcript}->{$strain}->{shifted_start}) {
+                $cdsShiftedStart = $transcriptSummary->{$transcript}->{$strain}->{shifted_start};
+                $cdsShiftedEnd = $transcriptSummary->{$transcript}->{$strain}->{shifted_end};
+		#print "SHIFTS ARE $cdsShiftedStart\t$cdsShiftedEnd\n";
+	    }
+	    else {
+                $cdsShiftedStart = $transcriptSummary->{$transcript}->{min_exon_start};
+                $cdsShiftedEnd = $transcriptSummary->{$transcript}->{max_cds_end};
+	    }
             my $cdsStart = $transcriptSummary->{$transcript}->{min_exon_start};
             my $cdsEnd = $transcriptSummary->{$transcript}->{max_cds_end};
             my $cdsStrand = $transcriptSummary->{$transcript}->{cds_strand};
@@ -1390,7 +1433,7 @@ sub calculateVariationCdsPosition {
         $variation->{transcript} = $transcript;
         $variation->{position_in_cds} = $cdsPos;
         $variation->{position_in_protein} = $positionInProtein;
-	$variation->{has_coding_mutation} = $isCoding;
+	$variation->{is_coding} = $isCoding;
 	$variation->{position_in_codon} = $cdsPos % 3;
 	#print "$transcript\t$cdsPos\t$positionInProtein\t$isCoding\n";    
     }
@@ -1496,7 +1539,7 @@ sub variationAndRefProduct {
 	    next if($variationPositionInCds > length $consensusCodingSequence);
 	    ($product, $codon) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $variationPositionInCds);
 	    ($refProduct, $refCodon) = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $refPositionInCds);
-	    print "PRODUCT $product \tCODON $codon \tREFPRODUCT $refProduct \t REFCODON $refCodon\n";
+	    #print "PRODUCT $product \tCODON $codon \tREFPRODUCT $refProduct \t REFCODON $refCodon\n";
 	    if($product ne $refProduct) {
 		$adjacentSnpCausesProductDifference = 1;
 	    }
@@ -1505,7 +1548,6 @@ sub variationAndRefProduct {
 	    $variation->{codon} = $codon;
 	    $variation->{reference_aa} = $refProduct;
 	    $variation->{reference_codon} = $refCodon;
-	    $variation->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
 	    $variation->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
         }
     }
