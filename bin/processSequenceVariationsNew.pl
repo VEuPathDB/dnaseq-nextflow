@@ -20,6 +20,7 @@ use VEuPath::MergeSortedSeqVariations;
 use VEuPath::FileReader;
 use locale;
 use Sort::Naturally;
+use Set::CrossProduct; 
 
 my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
@@ -149,9 +150,8 @@ my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscript);
 
 my $strainFrame;
 my $count = 0;
-my $total = `wc -l $newSampleFile`;
-$total = $total =~ s/\s.+//gr;
-#$total = 109;			  
+$|=1; #autoflush 
+print "\033[JProcessing Snps"."\033[G";        
 # TODO: Could use the gene_na_feature_id to clear cache
 my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscripts, $counter);
 
@@ -203,7 +203,6 @@ while($merger->hasNext()) {
   my $cachedReferenceVariation = &cachedReferenceVariation($variations, $referenceStrain);
   my $referenceProtocolAppNodeId = &queryProtocolAppNodeIdFromExtDbRlsId($dbh, $thisExtDbRlsId);
 
-  # for the refereence, get   positionsInCds, positionsInProtein, product, codon?
   if($cachedReferenceVariation && !$isLegacyVariations) {
     print STDERR "HAS_CACHED REFERENCE VARIATION\n" if($debug);
     $referenceVariation = $cachedReferenceVariation;
@@ -213,9 +212,7 @@ while($merger->hasNext()) {
     $referenceAllele = $cachedReferenceVariation->{base};
     $isCoding = $cachedReferenceVariation->{is_coding};
     $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
-    #print Dumper $referenceVariation if($refPositionInCds);
-    #die if($refPositionInCds);
-    my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
+    my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndReProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
   }
   else {
     
@@ -225,8 +222,6 @@ while($merger->hasNext()) {
     my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
     
     $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
-    #my $variationPositionInCds = &uniqueValueFromHashRef($variationPositionInCds);
-    #my $variationPositionInProtein = &uniqueValueFromHashRef($variationPositionInProtein);
     
     my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
 
@@ -250,7 +245,7 @@ while($merger->hasNext()) {
                            'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
                            'ref_codon' => $refCodon
     };
-    #push @$variations, $referenceVariation if($isCoding);                                                                                                                                            
+    
     push @$variations, $referenceVariation;
   }
   
@@ -318,28 +313,22 @@ while($merger->hasNext()) {
 
   my $snp = &makeSNPFeatureFromVariations($variations, $referenceVariation, $geneNaFeatureId, $thisExtDbRlsId);
 
-  #print Dumper $snp->[0]->{reference_na};
-  #die if($variations->[0]->{is_coding} == 1);
-  
-  &printSNP($snp, $snpFh);
+  &printSNP($snp, $snpFh, $alleleFh, $productFh);
 
   $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
   $prevSequenceId = $sequenceId;
   $prevTranscript = $transcripts->[0];
-  #print "$prevTranscriptMaxEnd\t$prevSequenceId\t$prevTranscript\n";                                                                                                                                    
-
-  $|=1; #autoflush                                                                                                                                                                                       
-  my $per=($count/$total)*100;
-  my $rounded = sprintf("%.0f", $per);
-  print "\033[JProcessing SNPS: ${rounded}% Complete"."\033[G";
+  
   $count++;
 }
 $|=1; #autoflush                                                                                                                                                                                          
 print "\033[JCOMPLETE"."\033[G";
 sleep 1;
-
+print "Processed $count Snps\n";
 close $cacheFh;
 close $snpFh;
+close $alleleFh;
+close $productFh;
 &closeVarscanFiles($strainVarscanFileHandles);
 
 # compare file sizes of old and new cache file
@@ -349,9 +338,6 @@ chomp($newCacheCount);
 my $skipCount = $merger->getSkipCount();
 
 print STDERR "NEWCACHECOUNT=$newCacheCount, INITIALCACHECOUNT=$initialCacheCount, SKIPCOUNT=$skipCount\n";
-
-#die "cache file got smaller"
-#  if $newCacheCount < ($initialCacheCount - $skipCount);
 
 # Rename the output file to full cache file
 unlink $cacheFile or warn "Could not unlink $cacheFile: $!";
@@ -373,13 +359,9 @@ close OUT;
 $totalTime += time() - $totalTimeStart;
 print STDERR "Total Time:  $totalTime Seconds\n";
 
-
-
-
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
 #--------------------------------------------------------------------------------
-
 
 sub uniqueValueFromHashRef {
   my ($hashRef) = @_;
@@ -486,7 +468,6 @@ sub calculateCdsPosition {
 }
 
 
-
 sub usage {
   my ($m) = @_;
 
@@ -499,6 +480,7 @@ sub usage {
   exit(0);
 }
 
+
 sub printVariation {
   my ($variation, $fh) = @_;
 
@@ -508,12 +490,19 @@ sub printVariation {
 
 }
 
+
 sub printSNP {
-  my ($snps, $fh) = @_;
-  my $keys = &snpFileColumnNames();
-  foreach my $snp ($snps) {
-      print $fh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
-  }
+    my ($snps, $snpFh, $alleleFh, $productFh)= @_;
+    foreach my $snp ($snps) {
+        my $keys = VEuPath::SnpUtils::snpFileColumnNames();
+        print $snpFh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
+	if ($snp->[0]->{has_coding_mutation} == 1) {
+	    $keys = VEuPath::SnpUtils::alleleFileColumnNames();
+	    print $alleleFh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
+	    $keys = VEuPath::SnpUtils::productFileColumnNames();
+	    print $productFh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
+	}
+    }
 }
 
 
@@ -535,7 +524,6 @@ sub makeSNPFeatureFromVariations {
 
   foreach my $variation (@$variations) {
     my $allele = $variation->{base};
-    my $product = $variation->{product};
     my $strain = $variation->{strain};
 
     $hasStopCodon = 1 if($product eq '*');
@@ -543,9 +531,14 @@ sub makeSNPFeatureFromVariations {
 
     $alleleCounts{$allele} ++;
     $strains{$strain}++;
-
-    next if(uc($product) eq 'X');
-    $productCounts{$product}++;
+    
+    my $products = $variation->{product};
+    my $productsLen = scalar @$products;
+    $productsLen = $productsLen-1;
+    foreach my $i (0..$productsLen) {
+	my $product = $products->[$i];
+        $productCounts{$product}++;
+    }
   }
 
   my $distinctStrainCount = scalar keys %strains;
@@ -741,55 +734,6 @@ sub querySequenceSubstring {
   return $base;
 }
 
-sub variationProduct {
-  my ($extDbRlsId, $transcripts, $transcriptSummary, $sequenceId, $location, $positionsInCds, $allele, $refExtDbRlsId, $refSequenceId) = @_;
-
-  my %products;
-  my %refProducts;
-
-  my $adjacentSnpCausesProductDifference = 0;
-
-  foreach my $transcript (@$transcripts) {
-
-    my $consensusCodingSequence;
-    if($transcriptSummary->{$transcript}->{cache}->{$extDbRlsId}->{consensus_cds}) {
-      $consensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{$extDbRlsId}->{consensus_cds};
-    }
-    else { # first time through for this transcript
-      $consensusCodingSequence = &getCodingSequence($dbh, $sequenceId, $transcriptSummary, $transcript, $location, $location, $extDbRlsId);
-      $transcriptSummary->{$transcript}->{cache}->{$extDbRlsId}->{consensus_cds} = $consensusCodingSequence;
-    }
-
-
-    my $refConsensusCodingSequence;
-    if($transcriptSummary->{$transcript}->{cache}->{$refExtDbRlsId}->{consensus_cds}) {
-      $refConsensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{$refExtDbRlsId}->{consensus_cds};
-    }
-    else { # first time through for this transcript
-      $refConsensusCodingSequence = &getCodingSequence($dbh, $refSequenceId, $transcriptSummary, $transcript, $location, $location, $refExtDbRlsId);
-      $transcriptSummary->{$transcript}->{cache}->{$refExtDbRlsId}->{consensus_cds} = $refConsensusCodingSequence;
-    }
-
-    my $strand = $transcriptSummary->{$transcript}->{cds_strand};
-
-    my $positionInCds = $positionsInCds->{$transcript};
-
-    next unless($positionInCds);
-
-    next if($positionInCds > length $consensusCodingSequence);
-
-    my $product = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $positionInCds);
-    my $refProduct = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $positionInCds);
-
-    if($product ne $refProduct) {
-      $adjacentSnpCausesProductDifference = 1;
-    }
-
-    $products{$transcript} = $product;
-  }
-
-  return(\%products, $adjacentSnpCausesProductDifference);
-}
 
 sub cachedReferenceVariation {
     my ($variations, $referenceStrain) = @_;
@@ -1189,9 +1133,17 @@ sub getAminoAcidSequenceOfSnp {
   my $offset = $positionInCds - $modCds;
 
   my $codon = substr $cdsSequence, $offset - 1, $codonLength;
-
+  my $codons = &calculatePossibleCodons($codon);
+  my $products;
+  my $productsLen = scalar @$codons;
+  $productsLen=$productsLen-1;
+  foreach my $i (0..$productsLen) {
+      $codon = $codons->[$i];
+      my $product = $CODON_TABLE->translate($codon);
+      push @{ $products }, $product; 
+  }
   # Assuming this is a simple hash lookup which is quick; 
-  return $CODON_TABLE->translate($codon), $codon;
+  return $codon, $products;
 }
 
 
@@ -1537,13 +1489,15 @@ sub variationAndRefProduct {
 	    my $variationPositionInCds = $variation->{position_in_cds};
 	    next unless($variationPositionInCds);
 	    next if($variationPositionInCds > length $consensusCodingSequence);
-	    ($product, $codon) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $variationPositionInCds);
-	    ($refProduct, $refCodon) = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $refPositionInCds);
+	    ($codon, $product) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $variationPositionInCds);
+	    ($refCodon, $refProduct) = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $refPositionInCds);
 	    #print "PRODUCT $product \tCODON $codon \tREFPRODUCT $refProduct \t REFCODON $refCodon\n";
+	    #print Dumper $product;
+	    #print Dumper $refProduct;
 	    if($product ne $refProduct) {
 		$adjacentSnpCausesProductDifference = 1;
 	    }
-	    #print "$product\t$refProduct\t$adjacentSnpCausesProductDifference\n";
+	    
             $variation->{product} = $product;
 	    $variation->{codon} = $codon;
 	    $variation->{reference_aa} = $refProduct;
@@ -1567,4 +1521,36 @@ sub getVariationCodingSequence {
     my $seq = $seq =~ s/>.+\n//gr;
     my $seq = $seq =~ s/\n//gr;
     return $seq;
+}
+
+
+sub calculatePossibleCodons {
+    my ($codon) = @_;
+    my @codonArray=split(//, $codon);
+    my %translate = (A => ['A'],
+    		     G => ['G'],
+		     C => ['C'],
+		     T => ['T'],
+                     R => ['A','G'],
+		     Y => ['C','T'],
+		     K => ['G','T'],
+		     M => ['A','C'],
+		     S => ['G','C'],
+		     W => ['A','T'],
+		     B => ['G','T','C'],
+		     D => ['G','A','T'],
+		     H => ['A','C','T'],
+		     V => ['G','C','A'],
+		     N => ['A','G','C','T']
+                     );
+    my @expanded = map { $translate{$_} } @codonArray;
+    my $iterator = Set::CrossProduct->new(\@expanded);
+    my $codonList;
+    foreach my $codon ($iterator->combinations) {
+        #print Dumper @$codon;
+        my $string = join(",", @$codon);
+        $string = $string =~ s/,//gr;
+	push @{ $codonList }, $string;
+    }
+    return $codonList;
 }

@@ -43,7 +43,7 @@ WORKDIR /work
 WORKDIR /usr/local/
 RUN wget -O VarScan.jar https://sourceforge.net/projects/varscan/files/VarScan.v${varscan_version}.jar/download
 
-RUN cpanm Bio::Perl Bio::Seq Bio::Tools::GFF Bio::Coordinate::GeneMapper Bio::Coordinate::Pair Bio::Location::Simple Bio::Tools::CodonTable VCF DBD::Oracle DBI
+RUN cpanm Bio::Perl Bio::Seq Bio::Tools::GFF Bio::Coordinate::GeneMapper Bio::Coordinate::Pair Bio::Location::Simple Bio::Tools::CodonTable VCF DBD::Oracle DBI Set::CrossProduct
 
 WORKDIR /usr/bin/
 
