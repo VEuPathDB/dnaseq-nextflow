@@ -212,7 +212,7 @@ while($merger->hasNext()) {
     $referenceAllele = $cachedReferenceVariation->{base};
     $isCoding = $cachedReferenceVariation->{is_coding};
     $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
-    my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndReProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
+    my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
   }
   else {
     
@@ -549,7 +549,7 @@ sub makeSNPFeatureFromVariations {
   my @sortedAlleles = sort { ($alleleCounts{$b} <=> $alleleCounts{$a}) || ($a cmp $b) } keys %alleleCounts;
   my @sortedProducts = sort { ($productCounts{$b} <=> $productCounts{$a}) || ($a cmp $b) } keys %productCounts;
   my @sortedAlleleCounts = map {$alleleCounts{$_}} @sortedAlleles;
-
+  
   my $majorAllele = $sortedAlleles[0];
   my $minorAllele = $sortedAlleles[1];
 
@@ -562,6 +562,20 @@ sub makeSNPFeatureFromVariations {
   my $snps;   
   foreach my $variation (@$variations) {
       next unless($variation->{pvalue});
+      my $products = $variation->{product};
+      my $productString;
+      my $productsLen = scalar @$products;
+      foreach my $i (0..$productsLen) {
+	  my $nextProduct = "$products->[$i]";
+	  next unless($nextProduct);
+	  if ($nextProduct eq '*') {
+              next if($productString =~ /\$nextProduct/);    
+	  }
+	  else {
+              next if($productString =~ /$nextProduct/);
+	  }
+          $productString = $productString . "$products->[$i]";
+      }
       my $shift = $variation->{current_shift} % 3;
       my $downstream_of_frame_shift = ($shift != 0) ? 1 : 0;
       my $snp = {     "gene_na_feature_id" => $geneNaFeatureId,
@@ -570,7 +584,7 @@ sub makeSNPFeatureFromVariations {
 		      "location" => $location,
 		      "reference_strain" => $referenceStrain,
 		      "reference_na" => $referenceVariation->{base},
-		      "reference_aa" => $referenceVariation->{product},
+		      "reference_aa" => $referenceVariation->{product}->[0],
 		      "ref_position_in_cds" => $referenceVariation->{position_in_cds},
 		      "ref_position_in_protein" => $referenceVariation->{position_in_protein},
 		      "external_database_release_id" => $extDbRlsId,
@@ -587,7 +601,7 @@ sub makeSNPFeatureFromVariations {
 		      "total_allele_count" => $totalAlleleCount,
 		      "has_stop_codon" => $variation->{has_stop_codon},
 		      "transcript" => $variation->{transcript},
-                      "product" => $variation->{product},
+                      "product" => $productString,
 		      "codon" => $variation->{codon},
 		      "position_in_codon" => $variation->{position_in_codon},
 		      "ref_codon" => $referenceVariation->{ref_codon},
