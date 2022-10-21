@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use Test2::V0;
-use calcTranscriptLocation;
+use VEuPath::calcTranscriptLocation;
 
 # =============== THESE ARRAYS ARE SET WITHIN lib/calcTranscriptLocation =====================================================================================
 
@@ -16,16 +16,16 @@ use calcTranscriptLocation;
 
 # ================ TESTS ==============================================================================================================================
 
-is( calcTranscriptLocation::calcTranscriptLocation(4000,0,0,0), 234 );
+is( VEuPath::calcTranscriptLocation::calcTranscriptLocation(4000,0,0,0), 234 );
 
-is( calcTranscriptLocation::calcTranscriptLocation(4334,1,0,0), 566 );
+is( VEuPath::calcTranscriptLocation::calcTranscriptLocation(4334,1,0,0), 566 );
 
-is( calcTranscriptLocation::calcTranscriptLocation(9340,2,2,1), 2865 );
+is( VEuPath::calcTranscriptLocation::calcTranscriptLocation(9340,2,2,1), 2865 );
 
-is( calcTranscriptLocation::calcTranscriptLocation(15848,3,4,2), 5986 );
+is( VEuPath::calcTranscriptLocation::calcTranscriptLocation(15848,3,4,2), 5986 );
 
-is( calcTranscriptLocation::calcTranscriptLocation(18225,4,5,3), 7246 );
+is( VEuPath::calcTranscriptLocation::calcTranscriptLocation(18225,4,5,3), 7246 );
 
-is( calcTranscriptLocation::calcTranscriptLocation(20107,5,6,4), 8064 );
+is( VEuPath::calcTranscriptLocation::calcTranscriptLocation(20107,5,6,4), 8064 );
     
 done_testing();

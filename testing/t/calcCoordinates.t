@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use Test2::V0;
-use calcCoordinates;
+use VEuPath::calcCoordinates;
 
 
 # =============== THESE ARRAYS ARE SET WITHIN lib/CalcCoordinates =====================================================================================
@@ -18,34 +18,34 @@ use calcCoordinates;
 # ================ TESTS ==============================================================================================================================
     
 # Coordinate Prior to any indels 
-is( calcCoordinates::calcCoordinates(0,0,12,0,0), 250 );
-is( calcCoordinates::calcCoordinates(0,0,12,0,1), 560 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,0,12,0,0), 250 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,0,12,0,1), 560 );
 
 # CDS start equal to SNP location with a positive shift
-is( calcCoordinates::calcCoordinates(0,1,12,0,0), 1933 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,1,12,0,0), 1933 );
 
 # CDS start equal to SNP location with a negative shift
-is( calcCoordinates::calcCoordinates(0,2,12,0,0), 2532 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,2,12,0,0), 2532 );
 
 # CDS end equal to SNP location with a positive shift
-is( calcCoordinates::calcCoordinates(0,3,12,0,1), 2801 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,3,12,0,1), 2801 );
 
 # CDS end equal to SNP location with a negative shift
-is( calcCoordinates::calcCoordinates(0,4,12,0,1), 2901 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,4,12,0,1), 2901 );
 
 # Coordinate inside indels
-is( calcCoordinates::calcCoordinates(0,7,12,0,0), 9123 );
-is( calcCoordinates::calcCoordinates(0,10,12,0,1), 18945 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,7,12,0,0), 9123 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,10,12,0,1), 18945 );
 
 # Coordinate inside indels, proving shiftFrame can be earlier, will shift to appropriate value
-is( calcCoordinates::calcCoordinates(4,7,12,-2,0), 9123 );
+is( VEuPath::calcCoordinates::calcCoordinates(4,7,12,-2,0), 9123 );
 
 # Indel Occuring Between Coordinates as well as Ocurring in the Final Shift Frame 
-is( calcCoordinates::calcCoordinates(0,11,12,0,0), 20008 );
-is( calcCoordinates::calcCoordinates(0,11,12,0,1), 21801 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,11,12,0,0), 20008 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,11,12,0,1), 21801 );
 
 # Coordinate Greater than last indel location
-is( calcCoordinates::calcCoordinates(0,12,12,0,0), 22667 );
-is( calcCoordinates::calcCoordinates(0,12,12,0,1), 23380 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,12,12,0,0), 22667 );
+is( VEuPath::calcCoordinates::calcCoordinates(0,12,12,0,1), 23380 );
 
 done_testing();

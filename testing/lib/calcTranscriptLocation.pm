@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-package calcTranscriptLocation;
+package VEuPath::calcTranscriptLocation;
 use strict;
 
 my @locationshifts = ([4000,-2],[4334,-1],[9340,-2],[15848,-4],[18255,-5],[20107,-8]);

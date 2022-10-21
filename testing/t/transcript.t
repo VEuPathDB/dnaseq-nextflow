@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-use transcript;
+use VEuPath::transcript;
 use strict;
 use warnings;
 use Test2::V0;
@@ -14,16 +14,16 @@ use Test2::V0;
 
 # ================ TESTS ==============================================================================================================================
 
-is( transcript::transcript(0), 234 );
+is( VEuPath::transcript::transcript(0), 234 );
 
-is( transcript::transcript(1), 566 );
+is( VEuPath::transcript::transcript(1), 566 );
 
-is( transcript::transcript(2), "NC" );
+is( VEuPath::transcript::transcript(2), "NC" );
 
-is( transcript::transcript(3), 2865 ); 
+is( VEuPath::transcript::transcript(3), 2865 ); 
 
-is( transcript::transcript(4), "NC" );
+is( VEuPath::transcript::transcript(4), "NC" );
 
-is( transcript::transcript(5), 5986 );
+is( VEuPath::transcript::transcript(5), 5986 );
     
 done_testing();

@@ -8,7 +8,7 @@ nextflow.enable.dsl=2
 
 include { processSingleExperiment } from './modules/processSingleExperiment.nf'
 include { mergeExperiments } from './modules/mergeExperiments.nf'
-
+include { runTests } from './modules/runTests.nf'
 
 //---------------------------------------------------------------
 // PARAM CHECKING processSingleExperiment 
@@ -76,6 +76,22 @@ if(params.workflow == 'mergeExperiments') {
 
 }
 
+//---------------------------------------------------------------
+// PARAM CHECKING testExperiments
+//---------------------------------------------------------------
+
+if(params.workflow == 'test') {
+
+  if(params.testDir) {
+    tests_qch = Channel.fromPath([params.testDir + '*.t'])
+  }
+  
+  else {
+    throw new Exception("Missing parameter params.testDir")
+  }
+   
+}
+
 
 //---------------------------------------------------------------
 // WORKFLOW
@@ -91,6 +107,10 @@ workflow {
     mergeExperiments(fastas_qch, vcfs_qch)
   }
 
+  else if (params.workflow == 'test') {
+    runTests(tests_qch)
+  }
+  
   else {
     throw new Exception("Invalid value for workflow parameter")
   }

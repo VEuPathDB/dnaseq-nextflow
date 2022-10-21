@@ -43,7 +43,7 @@ WORKDIR /work
 WORKDIR /usr/local/
 RUN wget -O VarScan.jar https://sourceforge.net/projects/varscan/files/VarScan.v${varscan_version}.jar/download
 
-RUN cpanm Bio::Perl Bio::Seq Bio::Tools::GFF Bio::Coordinate::GeneMapper Bio::Coordinate::Pair Bio::Location::Simple Bio::Tools::CodonTable VCF DBD::Oracle DBI Set::CrossProduct
+RUN cpanm Bio::Perl Bio::Seq Bio::Tools::GFF Bio::Coordinate::GeneMapper Bio::Coordinate::Pair Bio::Location::Simple Bio::Tools::CodonTable VCF DBD::Oracle DBI Set::CrossProduct Test2::V0
 
 WORKDIR /usr/bin/
 
@@ -57,5 +57,6 @@ ADD /bin/snpEff.config /usr/bin/snpEff/snpEff.config
 ADD /bin/*.pl /usr/bin/
 
 ADD /lib/perl/* /usr/lib/x86_64-linux-gnu/perl5/5.30/VEuPath/
+ADD /testing/lib/*.pm /usr/lib/x86_64-linux-gnu/perl5/5.30/VEuPath/
 
 WORKDIR /work

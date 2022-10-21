@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-package calcCoordinates;
+package VEuPath::calcCoordinates;
 use strict;
 
 my @locationshifts = ([1933,1],[2531,-1],[2800,1],[2900,-1],[3037,-2],[3254,0],[3433,-2],[8334,-1],[13340,-2],[13848,-4],[19255,-5],[20107,-8]);

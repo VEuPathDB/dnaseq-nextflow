@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-package getTranscriptLocation;
+package VEuPath::getTranscriptLocation;
 use strict;
 
 my @locationshifts = ([4000,-2],[4334,-1],[5000,0],[9340,-2],[12000,-1],[15848,-4],[18255,-5],[20000,-4],[20107,-8]);

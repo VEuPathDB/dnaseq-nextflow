@@ -6,6 +6,3 @@ modules/
 
 #Ignoring data folder
 data/
-
-#Ignoring testing folder
-testing/

@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-use getTranscriptLocation;
+use VEuPath::getTranscriptLocation;
 use strict;
 use warnings;
 use Test2::V0;
@@ -14,16 +14,16 @@ use Test2::V0;
 
 # ================ TESTS ==============================================================================================================================
 
-is( getTranscriptLocation::getTranscriptLocation(4000,0,6,0,0), 234 );
+is( VEuPath::getTranscriptLocation::getTranscriptLocation(4000,0,6,0,0), 234 );
 
-is( getTranscriptLocation::getTranscriptLocation(4334,0,6,1,0), 566 );
+is( VEuPath::getTranscriptLocation::getTranscriptLocation(4334,0,6,1,0), 566 );
 
-is( getTranscriptLocation::getTranscriptLocation(5000,0,6,2,1), "NC" );
+is( VEuPath::getTranscriptLocation::getTranscriptLocation(5000,0,6,2,1), "NC" );
 
-is( getTranscriptLocation::getTranscriptLocation(9340,0,6,3,1), 2865 ); 
+is( VEuPath::getTranscriptLocation::getTranscriptLocation(9340,0,6,3,1), 2865 ); 
 
-is( getTranscriptLocation::getTranscriptLocation(12000,0,6,4,2,3), "NC" );
+is( VEuPath::getTranscriptLocation::getTranscriptLocation(12000,0,6,4,2,3), "NC" );
 
-is( getTranscriptLocation::getTranscriptLocation(18255,0,6,5,5), 7276 );
+is( VEuPath::getTranscriptLocation::getTranscriptLocation(18255,0,6,5,5), 7276 );
     
 done_testing();
