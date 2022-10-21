@@ -84,7 +84,7 @@ sub alleleFileColumnNames {
              "source_id",
              "na_sequence_id",
              "location",
-             "reference_aa",
+             "reference_na",
              "has_nonsynonymous_allele",
              "major_allele",
              "minor_allele",
