@@ -66,7 +66,6 @@ sub snpFileColumnNames {
              "snp_position_in_cds",
              "snp_position_in_protein",
              "shifted_location",
-	     "is_downstream_of_frameshift",
 	     "strain",
              "snp_na",
              "percent",
