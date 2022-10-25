@@ -77,11 +77,11 @@ sub alleleFileColumnNames {
 
 sub productFileColumnNames {
     my @columnNames =  (
+	     "codon",
+	     "position_in_codon",
 	     "transcript",
              "count",
              "product",
-	     "codons",
-	     "position_in_codon",
              "ref_location_cds",
              "ref_location_protein"
 	);
