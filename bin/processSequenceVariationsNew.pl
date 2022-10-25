@@ -354,10 +354,17 @@ while($merger->hasNext()) {
       &printVariation($variation, $cacheFh);
   }  
 
-  my $snp = &makeSNPFeatureFromVariations($variations, $referenceVariation, $geneNaFeatureId, $thisExtDbRlsId);
+  my $snpFeature = &makeSNPFeatureFromVariations($variations, $referenceVariation, $geneNaFeatureId, $thisExtDbRlsId);
 
-  &printSNP($snp, $snpFh, $alleleFh, $productFh);
+  &printSNPFeature($snpFeature, $snpFh);
 
+  if ($variations->[0]->{is_coding} == 1) {
+      my $productFeature = &makeProductFeatureFromVariations($variations, $referenceVariation);
+      my $alleleFeature = &makeAlleleFeatureFromVariations($variations);
+      &printProductFeature($productFeature, $productFh);
+      &printAlleleFeature($alleleFeature, $alleleFh);
+  }
+  
   $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
   $prevSequenceId = $sequenceId;
   $prevTranscript = $transcripts->[0];
@@ -453,144 +460,6 @@ sub printVariation {
   my $keys = &sampleCacheFileColumnNames();
 
   print $fh join("\t", map {$variation->{$_}} @$keys) . "\n";
-
-}
-
-
-sub printSNP {
-    my ($snps, $snpFh, $alleleFh, $productFh)= @_;
-    foreach my $snp ($snps) {
-        my $keys = VEuPath::SnpUtils::snpFileColumnNames();
-        print $snpFh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
-	if ($snp->[0]->{has_coding_mutation} == 1) {
-	    $keys = VEuPath::SnpUtils::alleleFileColumnNames();
-	    print $alleleFh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
-	    $keys = VEuPath::SnpUtils::productFileColumnNames();
-	    print $productFh join("\t", map {$snp->[0]->{$_}} @$keys) . "\n";
-	}
-    }
-}
-
-
-sub makeSNPFeatureFromVariations {
-  my ($variations, $referenceVariation, $geneNaFeatureId, $extDbRlsId) = @_;
-
-  my $sequenceSourceId = $referenceVariation->{sequence_source_id};
-  my $location = $referenceVariation->{location};
-  my $snpSourceId = $referenceVariation->{snp_source_id} ? $referenceVariation->{snp_source_id} : "NGS_SNP.$sequenceSourceId.$location";
-
-  my $referenceStrain = $referenceVariation->{strain};
-
-  my %alleleCounts;
-  my %productCounts;
-  my %strains;
-
-  my $totalAlleleCount = scalar @$variations;
-  my $hasStopCodon = 0;
-
-  foreach my $variation (@$variations) {
-    my $allele = $variation->{base};
-    my $strain = $variation->{strain};
-
-    $hasStopCodon = 1 if($product eq '*');
-    $variation->{has_stop_codon} = $hasStopCodon;
-
-    $alleleCounts{$allele} ++;
-    $strains{$strain}++;
-    
-    my $products = $variation->{product};
-    my $productsLen = scalar @$products;
-    $productsLen = $productsLen-1;
-    foreach my $i (0..$productsLen) {
-	my $product = $products->[$i];
-        $productCounts{$product}++;
-    }
-  }
-
-  my $distinctStrainCount = scalar keys %strains;
-  my $distinctAlleleCount =  scalar keys %alleleCounts;
-
-  my $hasNonSynonymousAllele = scalar keys %productCounts > 1 ? 1 : 0;
-
-  my @sortedAlleles = sort { ($alleleCounts{$b} <=> $alleleCounts{$a}) || ($a cmp $b) } keys %alleleCounts;
-  my @sortedProducts = sort { ($productCounts{$b} <=> $productCounts{$a}) || ($a cmp $b) } keys %productCounts;
-  my @sortedAlleleCounts = map {$alleleCounts{$_}} @sortedAlleles;
-  
-  my $majorAllele = $sortedAlleles[0];
-  my $minorAllele = $sortedAlleles[1];
-
-  my $majorProduct = $sortedProducts[0];
-  my $minorProduct = $sortedProducts[1];
-
-  my $majorAlleleCount = $sortedAlleleCounts[0];
-  my $minorAlleleCount = $sortedAlleleCounts[1];
-
-  my $snps;   
-  foreach my $variation (@$variations) {
-
-      next unless($variation->{pvalue});
-
-      my $products = $variation->{product};
-      my $productString;
-      my $productsLen = scalar @$products;
-
-      foreach my $i (0..$productsLen) {
-
-	  my $nextProduct = "$products->[$i]";
-	  next unless($nextProduct);
-
-	  if ($nextProduct eq '*') {
-              next if($productString =~ /\$nextProduct/);    
-	  }
-
-	  else {
-              next if($productString =~ /$nextProduct/);
-	  }
-
-	  $productString = $productString . "$products->[$i]";
-      }
-
-      my $snp = {     "gene_na_feature_id" => $geneNaFeatureId,
-		      "source_id" => $snpSourceId,
-		      "na_sequence_id" => $referenceVariation->{na_sequence_id},
-		      "location" => $location,
-		      "reference_strain" => $referenceStrain,
-		      "reference_na" => $referenceVariation->{base},
-		      "reference_aa" => $referenceVariation->{product}->[0],
-		      "ref_position_in_cds" => $referenceVariation->{position_in_cds},
-		      "ref_position_in_protein" => $referenceVariation->{position_in_protein},
-		      "external_database_release_id" => $extDbRlsId,
-		      "has_nonsynonymous_allele" => $hasNonSynonymousAllele,
-		      "major_allele" => $majorAllele,
-		      "minor_allele" => $minorAllele,
-		      "major_allele_count" => $majorAlleleCount,
-		      "minor_allele_count" => $minorAlleleCount,
-		      "major_product" => $majorProduct,
-		      "minor_product" => $minorProduct,
-		      "distinct_strain_count" => $distinctStrainCount,
-		      "distinct_allele_count" => $distinctAlleleCount,
-		      "has_coding_mutation" => $variation->{is_coding},
-		      "total_allele_count" => $totalAlleleCount,
-		      "has_stop_codon" => $variation->{has_stop_codon},
-		      "transcript" => $variation->{transcript},
-                      "product" => $productString,
-		      "codon" => $variation->{codon},
-		      "position_in_codon" => $variation->{position_in_codon},
-		      "ref_codon" => $referenceVariation->{ref_codon},
-		      "snp_position_in_cds" => $variation->{position_in_cds},
-		      "snp_position_in_protein" => $variation->{position_in_protein},
-		      "shifted_location" => $variation->{shifted_location},
-		      "strain" => $variation->{strain},
-                      "snp_na" => $variation->{base},
-                      "percent" => $variation->{percent},
-                      "matches_ref" => $variation->{matches_ref},
-                      "quality" => $variation->{quality},
-                      "coverage" => $variation->{coverage}	  
-      };
-      push @$snps, $snp;
-  }
-
-  return $snps; 
 
 }
 
@@ -1538,4 +1407,173 @@ sub calculatePossibleCodons {
     }
 
     return $codonList;
+}
+
+
+sub printSNPFeature {
+    my ($snp, $snpFh) = @_;
+    my $keys = VEuPath::SnpUtils::snpFileColumnNames();
+    print $snpFh join("\t", map {$snp->{$_}} @$keys) . "\n";
+}
+
+sub printProductFeature {
+    my ($products, $productFh)= @_;
+    $keys = VEuPath::SnpUtils::productFileColumnNames();
+    foreach my $product ($products) {
+	print $productFh join("\t", map {$product->[0]->{$_}} @$keys) . "\n";
+    }
+}
+
+sub printAlleleFeature {
+    my ($alleles, $alleleFh)= @_;
+    $keys = VEuPath::SnpUtils::alleleFileColumnNames();
+    foreach my $allele ($alleles) {	
+	print $alleleFh join("\t", map {$allele->[0]->{$_}} @$keys) . "\n";
+    }
+}
+
+
+sub makeAlleleFeatureFromVariations {
+  my ($variations) = @_;
+  my %alleleCounts;
+  my %strains;
+  my $alleles;
+  foreach my $variation (@$variations) {
+    my $allele = $variation->{base};
+    $alleleCounts{$allele} ++;
+  }
+  foreach my $allele (keys %alleleCounts) {
+      my $distinct_strain_count;
+      my %strains;
+      my $count;
+      my $avg_read_percent=0;
+      my $avg_coverage=0;
+      foreach my $variation (@$variations) {
+	  next unless($variation->{base} eq $allele);
+	      $count++;
+	      my $strain = $variation->{strain};
+	      $strains{$strain}++;
+	      my $percent = $variation->{percent};
+	      my $coverage = $variation->{coverage};
+	      $avg_read_percent += $percent;
+	      $avg_coverage += $coverage;
+      }
+      $distinctStrainCount = scalar keys %strains;
+      $avg_read_percent = $avg_read_percent / $count;
+      $avg_coverage = $avg_coverage / $count;
+      my $all = { "allele" => $allele,
+                  "distinct_strain_count" => $distinctStrainCount,
+	          "allele_count" => $count,
+	          "average_coverage" => $avg_coverage,
+	          "average_read_percent" => $avg_read_percent
+                };
+      push @$alleles, $all;
+  }
+  return $alleles;
+}
+
+
+sub makeProductFeatureFromVariations {
+  my ($variations, $referenceVariation) = @_;
+  my %productCounts;
+  my $products;
+  my $refLocationCds = $referenceVariation->{position_in_cds};
+  my $refLocationProtein = $referenceVariation->{position_in_protein};
+  foreach my $variation (@$variations) {
+      next unless($variation->{product});
+      my $productsArray = $variation->{product};
+      my $productsLen = scalar @$productsArray;
+      $productsLen = $productsLen-1;
+      foreach my $i (0..$productsLen) {
+          my $product = $productsArray->[$i];
+	  $productCounts{$product}++;
+      }
+  }
+  foreach my $variation (@$variations) {
+      next unless($variation->{codon});
+      my $transcript = $variation->{transcript};
+      my $position_in_codon = $variation->{position_in_codon};
+      my $codon = $variation->{codon};
+      my $codons =  &calculatePossibleCodons($codon);
+      my $codonsLen = scalar @$codons;
+      $codonsLen=$codonsLen-1;
+      foreach my $i (0..$codonsLen) {
+          $codon = $codons->[$i];
+          my $product = $CODON_TABLE->translate($codon);
+          my $pro = { "product" => $product,
+                      "transcript" => $transcript,
+		      "count" => $productCounts{$product},
+                      "codon" => $codon,
+	              "position_in_codon" => $position_in_codon,
+	              "ref_location_cds" => $refLocationCds,
+		      "ref_location_protein" => $refLocationProtein
+	             };
+	  print Dumper $pro;
+	  push @$products, $pro;      
+      }
+  }
+  return $products;
+}
+
+
+sub makeSNPFeatureFromVariations {
+  my ($variations, $referenceVariation, $geneNaFeatureId, $extDbRlsId) = @_;
+  my $sequenceSourceId = $referenceVariation->{sequence_source_id};
+  my $location = $referenceVariation->{location};
+  my $snpSourceId = $referenceVariation->{snp_source_id} ? $referenceVariation->{snp_source_id} : "NGS_SNP.$sequenceSourceId.$location";
+  my $referenceStrain = $referenceVariation->{strain};
+  my %alleleCounts;
+  my %productCounts;
+  my %strains;
+  my $totalAlleleCount = scalar @$variations;
+  my $hasStopCodon = 0;
+  foreach my $variation (@$variations) {
+    my $allele = $variation->{base};
+    my $strain = $variation->{strain};
+    $alleleCounts{$allele} ++;
+    $strains{$strain}++; 
+    my $products = $variation->{product};
+    my $productsLen = scalar @$products;
+    $productsLen = $productsLen-1;
+    foreach my $i (0..$productsLen) {
+	my $product = $products->[$i];
+        $productCounts{$product}++;
+	$hasStopCodon = 1 if($product eq '*');
+    }
+  }
+  my $distinctStrainCount = scalar keys %strains;
+  my $distinctAlleleCount =  scalar keys %alleleCounts;
+  my $hasNonSynonymousAllele = scalar keys %productCounts > 1 ? 1 : 0;
+  my @sortedAlleles = sort { ($alleleCounts{$b} <=> $alleleCounts{$a}) || ($a cmp $b) } keys %alleleCounts;
+  my @sortedProducts = sort { ($productCounts{$b} <=> $productCounts{$a}) || ($a cmp $b) } keys %productCounts;
+  my @sortedAlleleCounts = map {$alleleCounts{$_}} @sortedAlleles;
+  my $majorAllele = $sortedAlleles[0];
+  my $minorAllele = $sortedAlleles[1];
+  my $majorProduct = $sortedProducts[0];
+  my $minorProduct = $sortedProducts[1];
+  my $majorAlleleCount = $sortedAlleleCounts[0];
+  my $minorAlleleCount = $sortedAlleleCounts[1];
+  my $snp = {     "gene_na_feature_id" => $geneNaFeatureId,
+                  "source_id" => $snpSourceId,
+	          "na_sequence_id" => $referenceVariation->{na_sequence_id},
+	          "location" => $location,
+	          "reference_strain" => $referenceStrain,
+	          "reference_na" => $referenceVariation->{base},
+	          "reference_aa" => $referenceVariation->{product}->[0],
+		  "external_database_release_id" => $extDbRlsId,
+		  "has_nonsynonymous_allele" => $hasNonSynonymousAllele,
+		  "major_allele" => $majorAllele,
+		  "minor_allele" => $minorAllele,
+		  "major_allele_count" => $majorAlleleCount,
+		  "minor_allele_count" => $minorAlleleCount,
+		  "major_product" => $majorProduct,
+		  "minor_product" => $minorProduct,
+		  "distinct_strain_count" => $distinctStrainCount,
+		  "distinct_allele_count" => $distinctAlleleCount,
+		  "has_coding_mutation" => $referencevariation->{is_coding},
+		  "total_allele_count" => $totalAlleleCount,
+		  "has_stop_codon" => $has_stop_codon,
+		  "ref_codon" => $referenceVariation->{ref_codon}
+            };
+  return $snp;
 }

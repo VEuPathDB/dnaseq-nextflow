@@ -33,18 +33,16 @@ sub sampleCacheFileColumnNames {
   return wantarray ? @columnNames : \@columnNames;
 }
 
+
 sub snpFileColumnNames {
     my @columnNames =  (
-	     "strain",
-             "location",
+	     "location",
 	     "gene_na_feature_id",
              "source_id",
 	     "na_sequence_id",
              "reference_strain",
              "reference_na",
              "reference_aa",
-             "ref_position_in_cds",
-             "ref_position_in_protein",
              "external_database_release_id",
              "has_nonsynonymous_allele",
              "major_allele",
@@ -58,59 +56,34 @@ sub snpFileColumnNames {
              "has_coding_mutation",
              "total_allele_count",
              "has_stop_codon",
-             "transcript",
-             "product",
-             "codon",
-             "position_in_codon",
              "ref_codon",
-             "snp_position_in_cds",
-             "snp_position_in_protein",
-             "shifted_location",
-	     "strain",
-             "snp_na",
-             "percent",
-             "matches_ref",
-             "quality",
-             "coverage"
-	);
+             );
 
    return wantarray ? @columnNames : \@columnNames;
 }
 
 
 sub alleleFileColumnNames {
-    my @columnNames =  ("gene_na_feature_id",
-             "source_id",
-             "na_sequence_id",
-             "location",
-             "reference_na",
-             "has_nonsynonymous_allele",
-             "major_allele",
-             "minor_allele",
-             "major_allele_count",
-             "minor_allele_count",
-             "distinct_allele_count",
-             "total_allele_count"
+    my @columnNames =  (
+	"allele",
+	"distinct_strain_count",
+	"allele_count",
+	"average_coverage",
+	"average_read_percent"
 	);
-
    return wantarray ? @columnNames : \@columnNames;
 }
 
 
 sub productFileColumnNames {
-    my @columnNames =  ("gene_na_feature_id",
-             "source_id",
-             "na_sequence_id",
-	     "location",
-	     "shifted_location",		
-             "distinct_strain_count",
-             "transcript",
+    my @columnNames =  (
+	     "transcript",
+             "count",
              "product",
-             "codon",
-             "position_in_codon",
-             "snp_position_in_cds",
-             "snp_position_in_protein",
-             "is_downstream_of_frameshift"
+	     "codons",
+	     "position_in_codon",
+             "ref_location_cds",
+             "ref_location_protein"
 	);
 
    return wantarray ? @columnNames : \@columnNames;
