@@ -3,6 +3,7 @@ nextflow.enable.dsl=2
 
 
 process runTest {
+  container = 'veupathdb/dnaseqanalysis'
 
   input:
     path test
