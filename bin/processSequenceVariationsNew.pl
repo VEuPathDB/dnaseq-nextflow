@@ -251,7 +251,7 @@ while($merger->hasNext()) {
       my $strain = $variations->[0]->{strain};
 
       my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
-    
+
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
     
       my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
@@ -274,10 +274,10 @@ while($merger->hasNext()) {
                              'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
                              'ref_codon' => $refCodon
       };
-      
+
       push @$variations, $referenceVariation;
   }
-  
+
   # No need to continue if there is no variation at this point:  Important for when we undo!!
   if(!&hasVariation($variations) && !$isLegacyVariations) {
       print STDERR  "NO VARIATION FOR STRAINS:  " . join(",", map { $_->{strain}} @$variations) . "\n" if($debug);
@@ -358,7 +358,7 @@ while($merger->hasNext()) {
 
   &printSNPFeature($snpFeature, $snpFh);
 
-  if ($variations->[0]->{is_coding} == 1) {
+  if ($referenceVariation->{is_coding} == 1) {
       my $productFeature = &makeProductFeatureFromVariations($variations, $referenceVariation);
       my $alleleFeature = &makeAlleleFeatureFromVariations($variations);
       &printProductFeature($productFeature, $productFh);
@@ -1242,12 +1242,11 @@ sub calculateReferenceCdsPosition {
     my $cdsPos;
     my $positionInProtein;
     my $isCoding;
-
     foreach my $transcript (@$transcripts) {
         my $cdsStart = $transcriptSummary->{$transcript}->{min_cds_start};
         my $cdsEnd = $transcriptSummary->{$transcript}->{max_cds_end};
         my $cdsStrand = $transcriptSummary->{$transcript}->{cds_strand};
-
+        $isCoding = 0;
 	next unless($cdsStart && $cdsEnd);
 	next if($location < $cdsStart || $location > $cdsEnd);
 
@@ -1274,14 +1273,8 @@ sub calculateReferenceCdsPosition {
 
 	if($cdsPos && $cdsPos > 1) {
             $positionInProtein = &calculateAminoAcidPosition($cdsPos);
-
-            $cdsPositions{$transcript} = $cdsPos;
-	    
-            $proteinPositions{$transcript} = $positionsInProtein;
-
             $isCoding = 1;
         }
-
     }
     return($isCoding, $cdsPos, $positionInProtein);
 }
@@ -1508,7 +1501,6 @@ sub makeProductFeatureFromVariations {
 	              "ref_location_cds" => $refLocationCds,
 		      "ref_location_protein" => $refLocationProtein
 	             };
-	  print Dumper $pro;
 	  push @$products, $pro;      
       }
   }
@@ -1570,7 +1562,7 @@ sub makeSNPFeatureFromVariations {
 		  "minor_product" => $minorProduct,
 		  "distinct_strain_count" => $distinctStrainCount,
 		  "distinct_allele_count" => $distinctAlleleCount,
-		  "has_coding_mutation" => $referencevariation->{is_coding},
+		  "has_coding_mutation" => $referenceVariation->{is_coding},
 		  "total_allele_count" => $totalAlleleCount,
 		  "has_stop_codon" => $has_stop_codon,
 		  "ref_codon" => $referenceVariation->{ref_codon}
