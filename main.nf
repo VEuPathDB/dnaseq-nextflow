@@ -1,12 +1,12 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-
 //---------------------------------------------------------------
 // Including Workflows
 //---------------------------------------------------------------
 
 include { processSingleExperiment } from './modules/processSingleExperiment.nf'
+include { loadSingleExperiment } from './modules/loadSingleExperiment.nf'
 include { mergeExperiments } from './modules/mergeExperiments.nf'
 include { runTests } from './modules/runTests.nf'
 
@@ -53,6 +53,23 @@ if(params.workflow == 'processSingleExperiment') {
 
 
 //---------------------------------------------------------------
+// PARAM CHECKING loadSingleExperiment 
+//---------------------------------------------------------------
+
+if(params.workflow == 'loadSingleExperiment') {
+  if(!params.inputDir) {
+    throw new Exception("Missing parameter params.inputDir")
+  }
+  else {
+    indels_qch = Channel.fromPath([params.inputDir + '/*.indel.tsv'])
+    bam_qch = Channel.fromPath([params.inputDir + '/*.bam'])
+    bw_qch = Channel.fromPath([params.inputDir + '/*.bw'])
+    cnv_qch = Channel.fromPath([params.inputDir + '/CNVs/*.counts'])
+    ploidy_qch = Channel.fromPath([params.inputDir + '/*.vcf.gz'])
+  }
+}
+
+//---------------------------------------------------------------
 // PARAM CHECKING mergeExperiments
 //---------------------------------------------------------------
 
@@ -92,7 +109,6 @@ if(params.workflow == 'test') {
    
 }
 
-
 //---------------------------------------------------------------
 // WORKFLOW
 //---------------------------------------------------------------
@@ -101,6 +117,10 @@ workflow {
 
   if(params.workflow == 'processSingleExperiment') {
     processSingleExperiment(samples_qch)
+  }
+
+  else if(params.workflow == 'loadSingleExperiment') {
+    loadSingleExperiment(indels_qch, bam_qch, bw_qch, cnv_qch, ploidy_qch)
   }
 
   else if (params.workflow == 'mergeExperiments') {
