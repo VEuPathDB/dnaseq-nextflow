@@ -6,10 +6,7 @@ process loadPloidy {
   tag "plugin"
   
   input:
-    stdin
-
-  output:
-    stdout
+    path(ploidy)
 
   script:
     template 'loadPloidy.bash'
@@ -20,10 +17,7 @@ process loadGeneCNV {
   tag "plugin"
   
   input:
-    stdin
-
-  output:
-    stdout
+    path(geneCNV)
 
   script:
     template 'loadGeneCNV.bash'
@@ -32,28 +26,34 @@ process loadGeneCNV {
 
 process copyBWToWS {
   tag "plugin"
-  
+
+    // TODO add a publishDir  for webservices here
+
   input:
-    stdin
+    path(bw)
 
   output:
-    stdout
+    path(bw)
 
+  // TODO: may not need the script here.  just the dir to publish ?
   script:
     template 'copyBWToWS.bash'
 }
 
 
 process copyBAMToWS {
-  tag "plugin"
+    tag "plugin"
 
-  input:
-    stdin
+    // TODO add a publishDir  for webservices here
 
-  output:
-    stdout
+    input:
+    path(bam)
 
-  script:
+    output:
+    path(bam)
+
+    // TODO: may not need the script here.  just the dir to publish ?
+    script:
     template 'copyBAMToWS.bash'
 }
 
@@ -62,10 +62,7 @@ process loadIndels {
   tag "plugin"
 
   input:
-    stdin
-
-  output:
-    stdout
+    path(indel)
 
   script:
     template 'loadIndels.bash'
@@ -75,7 +72,6 @@ process loadIndels {
 workflow loadSingleExperiment {
 
   take:
-
     indels_qch
     bam_qch
     bw_qch
@@ -83,11 +79,12 @@ workflow loadSingleExperiment {
     ploidy_qch
     
   main:
-
     loadPloidy(ploidy_qch)
     loadGeneCNV(cnv_qch)
-    copyBWToWS(bw_qch)
-    copyBAMToWS(bam_qch)
+
     loadIndels(indels_qch)
 
+    // TODO:  do we need a process to make the webservice directory?
+    copyBWToWS(bw_qch)
+    copyBAMToWS(bam_qch)
 }

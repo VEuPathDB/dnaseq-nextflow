@@ -57,16 +57,16 @@ if(params.workflow == 'processSingleExperiment') {
 //---------------------------------------------------------------
 
 if(params.workflow == 'loadSingleExperiment') {
-  if(!params.inputDir) {
-    throw new Exception("Missing parameter params.inputDir")
-  }
-  else {
-    indels_qch = Channel.fromPath([params.inputDir + '/*.indel.tsv'])
-    bam_qch = Channel.fromPath([params.inputDir + '/*.bam'])
-    bw_qch = Channel.fromPath([params.inputDir + '/*.bw'])
-    cnv_qch = Channel.fromPath([params.inputDir + '/CNVs/*.counts'])
-    ploidy_qch = Channel.fromPath([params.inputDir + '/*.vcf.gz'])
-  }
+    if(!params.inputDir) {
+        throw new Exception("Missing parameter params.inputDir")
+    }
+    else {
+        indels_qch = Channel.fromPath([params.inputDir + '/*.indel.tsv'], checkIfExists: true)
+        bam_qch = Channel.fromPath([params.inputDir + '/*.bam'], checkIfExists: true)
+        bw_qch = Channel.fromPath([params.inputDir + '/*.bw'], checkIfExists: true)
+        cnv_qch = Channel.fromPath([params.inputDir + '/CNVs/*.counts'], checkIfExists: true)
+        ploidy_qch = Channel.fromPath([params.inputDir + '/*.vcf.gz'], checkIfExists: true)
+    }
 }
 
 //---------------------------------------------------------------
