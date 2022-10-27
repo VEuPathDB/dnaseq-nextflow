@@ -41,6 +41,8 @@ process loadIndels {
 
   input:
     path(indel)
+    val extDbRlsSpec
+    val genomeExtDbRlsSpec
 
   script:
     template 'loadIndels.bash'
@@ -56,7 +58,7 @@ workflow loadSingleExperiment {
     
   main:
 
-    loadIndels(indels_qch)
+    loadIndels(indels_qch, params.extDbRlsSpec, params.genomeExtDbRlsSpec)
 
     // TODO:  do we need a process to make the webservice directory?
     copyBWToWS(bw_qch)
