@@ -7,6 +7,7 @@ nextflow.enable.dsl=2
 
 include { processSingleExperiment } from './modules/processSingleExperiment.nf'
 include { loadSingleExperiment } from './modules/loadSingleExperiment.nf'
+include { loadPloidyAndCNV } from './modules/loadPloidyAndCNV.nf'
 include { mergeExperiments } from './modules/mergeExperiments.nf'
 include { runTests } from './modules/runTests.nf'
 
@@ -64,6 +65,19 @@ if(params.workflow == 'loadSingleExperiment') {
         indels_qch = Channel.fromPath([params.inputDir + '/*.indel.tsv'], checkIfExists: true)
         bam_qch = Channel.fromPath([params.inputDir + '/*.bam'], checkIfExists: true)
         bw_qch = Channel.fromPath([params.inputDir + '/*.bw'], checkIfExists: true)
+    }
+}
+
+
+//---------------------------------------------------------------
+// PARAM CHECKING loadPloidyAndCNV 
+//---------------------------------------------------------------
+
+if(params.workflow == 'loadPloidyAndCNV') {
+    if(!params.inputDir) {
+        throw new Exception("Missing parameter params.inputDir")
+    }
+    else {
         cnv_qch = Channel.fromPath([params.inputDir + '/CNVs/*.counts'], checkIfExists: true)
         ploidy_qch = Channel.fromPath([params.inputDir + '/*.vcf.gz'], checkIfExists: true)
     }
@@ -120,7 +134,11 @@ workflow {
   }
 
   else if(params.workflow == 'loadSingleExperiment') {
-    loadSingleExperiment(indels_qch, bam_qch, bw_qch, cnv_qch, ploidy_qch)
+    loadSingleExperiment(indels_qch, bam_qch, bw_qch)
+  }
+
+  else if(params.workflow == 'loadPloidyAndCNV') {
+    loadPloidyAndCNV(cnv_qch, ploidy_qch)
   }
 
   else if (params.workflow == 'mergeExperiments') {

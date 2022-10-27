@@ -2,28 +2,6 @@
 nextflow.enable.dsl=2
 
 
-process loadPloidy {
-  tag "plugin"
-  
-  input:
-    path(ploidy)
-
-  script:
-    template 'loadPloidy.bash'
-}
-
-
-process loadGeneCNV {
-  tag "plugin"
-  
-  input:
-    path(geneCNV)
-
-  script:
-    template 'loadGeneCNV.bash'
-}
-
-
 process copyBWToWS {
   tag "plugin"
 
@@ -75,12 +53,8 @@ workflow loadSingleExperiment {
     indels_qch
     bam_qch
     bw_qch
-    cnv_qch
-    ploidy_qch
     
   main:
-    loadPloidy(ploidy_qch)
-    loadGeneCNV(cnv_qch)
 
     loadIndels(indels_qch)
 
