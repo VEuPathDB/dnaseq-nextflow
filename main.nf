@@ -78,8 +78,7 @@ if(params.workflow == 'loadPloidyAndCNV') {
         throw new Exception("Missing parameter params.inputDir")
     }
     else {
-        cnv_qch = Channel.fromPath([params.inputDir + '/CNVs/*.counts'], checkIfExists: true)
-        ploidy_qch = Channel.fromPath([params.inputDir + '/*.vcf.gz'], checkIfExists: true)
+        tpm_qch = Channel.fromPath([params.inputDir + '/CNVs/*.tpm'], checkIfExists: true).map { file -> tuple(file.baseName, [file]) }
     }
 }
 
@@ -138,7 +137,7 @@ workflow {
   }
 
   else if(params.workflow == 'loadPloidyAndCNV') {
-    loadPloidyAndCNV(cnv_qch, ploidy_qch)
+    loadPloidyAndCNV(tpm_qch)
   }
 
   else if (params.workflow == 'mergeExperiments') {

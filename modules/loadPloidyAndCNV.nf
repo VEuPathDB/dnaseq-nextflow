@@ -2,6 +2,24 @@
 nextflow.enable.dsl=2
 
 
+process calculatePloidyAndGeneCNV {
+  publishDir "$params.outputDir"
+  
+  input:
+    tuple val(sampleName), path(sampleFile)
+    path 'footprints'
+    path 'gusConfig'
+    val ploidy
+    val taxonId
+  output:
+    path '$sampleName_Ploidy.txt'
+    path '$sampleName_geneCNVs.txt'
+    path '$sampleName_CNVestimations.tsv'
+  script:
+    template 'calculatePloidyAndGeneCNV.bash'
+}
+
+
 process loadPloidy {
   tag "plugin"
   
@@ -27,11 +45,11 @@ process loadGeneCNV {
 workflow loadPloidyAndCNV {
 
   take:
-    cnv_qch
-    ploidy_qch
+    tpm_qch
     
   main:
-    loadPloidy(ploidy_qch)
-    loadGeneCNV(cnv_qch)
+    calculatePloidyAndGeneCNV(tpm_qch, params.footprintFile, params.gusConfig, params.ploidy, params.taxonId)
+    //loadPloidy()
+    //loadGeneCNV()
 
 }
