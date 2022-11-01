@@ -3,6 +3,8 @@ nextflow.enable.dsl=2
 
 
 process calculatePloidyAndGeneCNV {
+  container 'veupathdb/dnaseqanalysis'
+
   publishDir "$params.outputDir"
   
   input:
@@ -12,9 +14,9 @@ process calculatePloidyAndGeneCNV {
     val ploidy
     val taxonId
   output:
-    path '$sampleName_Ploidy.txt'
-    path '$sampleName_geneCNVs.txt'
-    path '$sampleName_CNVestimations.tsv'
+    path "${sampleName}_Ploidy.txt"
+    path "${sampleName}_geneCNVs.txt"
+    path "${sampleName}_CNVestimations.tsv"
   script:
     template 'calculatePloidyAndGeneCNV.bash'
 }
