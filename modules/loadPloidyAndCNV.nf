@@ -13,32 +13,46 @@ process calculatePloidyAndGeneCNV {
     path 'gusConfig'
     val ploidy
     val taxonId
+
   output:
     tuple val(sampleName), path( "${sampleName}_Ploidy.txt" ), emit: ploidy
     tuple val(sampleName), path( "${sampleName}_geneCNVs.txt" ), emit: geneCNV
     path "${sampleName}_CNVestimations.tsv"
+
   script:
     template 'calculatePloidyAndGeneCNV.bash'
 }
 
+
 process writePloidyConfigFile {
   container 'veupathdb/dnaseqanalysis'
+
   publishDir "$params.outputDir"
+
   input:
     tuple val(sampleName), path(ploidyFile)
+
   output:
-    path "${sampleName}_ploidyConfig.txt"
+    path "${sampleName}_ploidyConfig.txt", emit: ploidyConfig
+    path ploidyFile, emit: ploidyFile
+
   script:
     template 'writePloidyConfigFile.bash'
 }
 
+
 process writeCNVConfigFile {
   container 'veupathdb/dnaseqanalysis'
+
   publishDir "$params.outputDir"
+
   input:
     tuple val(sampleName), path(geneCNVFile)
+
   output:
-    path "${sampleName}_geneCNVConfig.txt"
+    path "${sampleName}_geneCNVConfig.txt", emit: cnvConfig
+    path geneCNVFile, emit: cnvFile
+
   script:
     template 'writeCNVConfigFile.bash'
 }
@@ -48,10 +62,11 @@ process loadPloidy {
   tag "plugin"
   
   input:
-    path(ploidy)
+    path 'ploidyFile'
+    path 'configFile'
 
   script:
-    template 'loadPloidy.bash'
+    template 'insertStudyResults.bash'
 }
 
 
@@ -59,10 +74,11 @@ process loadGeneCNV {
   tag "plugin"
   
   input:
-    path(geneCNV)
+    path 'geneCNVFile'
+    path 'configFile'
 
   script:
-    template 'loadGeneCNV.bash'
+    template 'insertStudyResults.bash'
 }
 
 
@@ -72,10 +88,13 @@ workflow loadPloidyAndCNV {
     tpm_qch
     
   main:
+  
     calcPloidyCNVResults = calculatePloidyAndGeneCNV(tpm_qch, params.footprintFile, params.gusConfig, params.ploidy, params.taxonId)
-    writePloidyConfigFile(calcPloidyCNVResults.ploidy)
-    writeCNVConfigFile(calcPloidyCNVResults.geneCNV)
-    //loadPloidy()
-    //loadGeneCNV()
+    
+    writePloidyConfigFileResults = writePloidyConfigFile(calcPloidyCNVResults.ploidy) 
+    writeCNVConfigFileResults = writeCNVConfigFile(calcPloidyCNVResults.geneCNV)
+    
+    //loadPloidy(writePloidyConfigFileResults.ploidyFile, writeCNVConfigFileResults.ploidyConfig)
+    //loadGeneCNV(writeCNVConfigFileResults.cnvFile, writeCNVConfigFileResults.cnvConfig)
 
 }
