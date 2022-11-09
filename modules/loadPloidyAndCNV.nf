@@ -94,7 +94,7 @@ workflow loadPloidyAndCNV {
     writePloidyConfigFileResults = writePloidyConfigFile(calcPloidyCNVResults.ploidy) 
     writeCNVConfigFileResults = writeCNVConfigFile(calcPloidyCNVResults.geneCNV)
     
-    //loadPloidy(writePloidyConfigFileResults.ploidyFile, writeCNVConfigFileResults.ploidyConfig)
-    //loadGeneCNV(writeCNVConfigFileResults.cnvFile, writeCNVConfigFileResults.cnvConfig)
+    loadPloidy(writePloidyConfigFileResults.ploidyFile, writePloidyConfigFileResults.ploidyConfig)
+    loadGeneCNV(writeCNVConfigFileResults.cnvFile, writeCNVConfigFileResults.cnvConfig)
 
 }
