@@ -56,7 +56,8 @@ sub snpFileColumnNames {
              "has_coding_mutation",
              "total_allele_count",
              "has_stop_codon",
-             "ref_codon",
+	     "ref_codon",
+	     "reference_aa_full"
              );
 
    return wantarray ? @columnNames : \@columnNames;

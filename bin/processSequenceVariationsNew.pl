@@ -241,7 +241,7 @@ while($merger->hasNext()) {
 
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
 
-      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
+      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
 
   }
 
@@ -254,7 +254,7 @@ while($merger->hasNext()) {
 
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
     
-      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
+      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
 
       $referenceVariation = {'base' => $referenceAllele,
 			     'reference' => $referenceAllele,    
@@ -272,7 +272,8 @@ while($merger->hasNext()) {
                              'protocol_app_node_id' => $referenceProtocolAppNodeId,
                              'is_coding' => $isCoding,
                              'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
-                             'ref_codon' => $refCodon
+			     'ref_codon' => $refCodon,
+			     'reference_aa_full' => $reference_aa_full	 
       };
 
       push @$variations, $referenceVariation;
@@ -1284,7 +1285,7 @@ sub variationAndRefProduct {
     my ($extDbRlsId, $refExtDbRlsId, $sequenceId, $refSequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) = @_;
     my ($product, $refProduct, $codon, $refCodon);
     my $adjacentSnpCausesProductDifference = 0;
-
+    my $refConsensusCodingSequence;    
     foreach my $variation (@$variations) {
 	my $strain = $variation->{strain};
 
@@ -1306,7 +1307,6 @@ sub variationAndRefProduct {
 		$transcriptSummary->{$transcript}->{cache}->{consensus_cds} = $consensusCodingSequence;
 	    }
 
-	    my $refConsensusCodingSequence;
 	    # We already have retrieved the reference coding sequence for this transcript
 	
 	    if($transcriptSummary->{$transcript}->{cache}->{ref_cds}) {
@@ -1344,7 +1344,7 @@ sub variationAndRefProduct {
 	    $variation->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
         }
     }
-    return($refProduct, $refCodon, $adjacentSnpCausesProductDifference);
+    return($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $refConsensusCodingSequence);
 }
 
 
@@ -1565,7 +1565,8 @@ sub makeSNPFeatureFromVariations {
 		  "has_coding_mutation" => $referenceVariation->{is_coding},
 		  "total_allele_count" => $totalAlleleCount,
 		  "has_stop_codon" => $has_stop_codon,
-		  "ref_codon" => $referenceVariation->{ref_codon}
+		  "ref_codon" => $referenceVariation->{ref_codon},
+		  "reference_aa_full" => $referenceVariation->{reference_aa_full}    
             };
   return $snp;
 }
