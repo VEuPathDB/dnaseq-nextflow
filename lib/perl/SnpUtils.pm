@@ -17,17 +17,9 @@ sub sampleCacheFileColumnNames {
        'quality',
        'pvalue',
        'snp_source_id',
-       'external_database_release_id',
-       'matches_reference',
-       'product',
+       'is_coding',
        'position_in_cds',
-       'position_in_protein',
-       'na_sequence_id',
-       'ref_na_sequence_id',
-       'snp_external_database_release_id',
-       'protocol_app_node_id',
-       'has_nonsynonomous',
-       'is_coding'	
+       'position_in_protein'
       );
 
   return wantarray ? @columnNames : \@columnNames;

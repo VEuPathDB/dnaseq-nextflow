@@ -231,11 +231,9 @@ while($merger->hasNext()) {
 
       print STDERR "HAS_CACHED REFERENCE VARIATION\n" if($debug);
       $referenceVariation = $cachedReferenceVariation;
-      $referenceVariation->{'protocol_app_node_id'} = $referenceProtocolAppNodeId;
 
       $refPositionInCds = $cachedReferenceVariation->{position_in_cds} if($cachedReferenceVariation->{position_in_cds});
       $refPositionInProtein = $cachedReferenceVariation->{position_in_protein} if($cachedReferenceVariation->{position_in_protein});
-
       $referenceAllele = $cachedReferenceVariation->{base};
       $isCoding = $cachedReferenceVariation->{is_coding};
 
@@ -243,13 +241,23 @@ while($merger->hasNext()) {
 
       my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
 
+      $referenceVariation->{'protocol_app_node_id'} = $referenceProtocolAppNodeId;
+      $referenceVariation->{'ref_codon'} = $refCodon;
+      $referenceVariation->{'reference_aa_full'} = $reference_aa_full;
+      $referenceVariation->{'has_nonsynonomous'} = $adjacentSnpCausesProductDifference;
+      $referenceVariation->{'product'} = $refProduct;
+      $referenceVariation->{'snp_external_database_release_id'} = $thisExtDbRlsId;
+      $referenceVariation->{'external_database_release_id'} = $transcriptExtDbRlsId;
+      $referenceVariation->{'na_sequence_id'} = $naSequenceId;
+      $referenceVariation->{'ref_na_sequence_id'} = $naSequenceId;
+      $referenceVariation->{'matches_reference'} = 1;
+      
   }
 
   else {  
 
       my $referenceAllele = $variations->[0]->{reference};
-      my $strain = $variations->[0]->{strain};
-
+      
       my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
 
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
@@ -457,11 +465,8 @@ sub usage {
 
 sub printVariation {
   my ($variation, $fh) = @_;
-
   my $keys = &sampleCacheFileColumnNames();
-
   print $fh join("\t", map {$variation->{$_}} @$keys) . "\n";
-
 }
 
 
