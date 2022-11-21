@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+cp consensus.fa.gz unzipped.fa.gz;
+
+gunzip unzipped.fa.gz;
+
 processSequenceVariationsNew.pl \
   --new_sample_file snpFile.tsv \
   --cache_file cache.txt \
@@ -13,4 +17,4 @@ processSequenceVariationsNew.pl \
   --varscan_directory varscan_directory/ \
   --gusConfigFile gusConfig.txt \
   --genome genome.fa \
-  --consensus consensus.fa
+  --consensus unzipped.fa

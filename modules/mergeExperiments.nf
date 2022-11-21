@@ -60,7 +60,7 @@ process processSeqVars {
     val  extdb_spec
     path 'varscan_directory'
     path 'genome.fa'
-    path 'consensus.fa'
+    path 'consensus.fa.gz'
   
   output:
     path 'cache.txt'
@@ -100,7 +100,7 @@ workflow mergeExperiments {
     
     checkResults = checkUniqueIds(params.fastaDir) 
 
-    combinedFasta = fastas_qch.collectFile(name: 'CombinedFasta.fa')
+    combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz', storeDir: params.outputDir )
 
     allvcfs = vcfs_qch.collect()
 
@@ -108,7 +108,7 @@ workflow mergeExperiments {
     
     makeSnpFileResults = makeSnpFile(mergeVcfsResults.mergedVcf)
     
-    processSeqVars(makeSnpFileResults.snpFile, params.gusConfig, params.cacheFile, params.undoneStrains, params.transcript_extdb_spec, params.organism_abbrev, params.reference_strain, params.extdb_spec, params.varscan_directory, params.genomeFasta, combinedFasta)
+    processSeqVars(makeSnpFileResults.snpFile, params.gusConfig, params.cacheFile, params.undoneStrains, params.transcript_extdb_spec, params.organism_abbrev, params.reference_strain, params.extdb_spec, params.varscan_directory, params.genomeFasta, combinedFastagz)
 
     snpEff(mergeVcfsResults.mergedVcf, params.databaseFile, params.sequenceFile)
 
