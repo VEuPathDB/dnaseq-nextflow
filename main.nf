@@ -7,7 +7,7 @@ nextflow.enable.dsl=2
 
 include { processSingleExperiment } from './modules/processSingleExperiment.nf'
 include { loadSingleExperiment } from './modules/loadSingleExperiment.nf'
-include { loadPloidyAndCNV } from './modules/loadPloidyAndCNV.nf'
+include { loadCNV } from './modules/loadCNV.nf'
 include { mergeExperiments } from './modules/mergeExperiments.nf'
 include { runTests } from './modules/runTests.nf'
 
@@ -73,7 +73,7 @@ if(params.workflow == 'loadSingleExperiment') {
 // PARAM CHECKING loadPloidyAndCNV 
 //---------------------------------------------------------------
 
-if(params.workflow == 'loadPloidyAndCNV') {
+if(params.workflow == 'loadCNV') {
     if(!params.inputDir) {
         throw new Exception("Missing parameter params.inputDir")
     }
@@ -136,8 +136,8 @@ workflow {
     loadSingleExperiment(indels_qch, bam_qch, bw_qch)
   }
 
-  else if(params.workflow == 'loadPloidyAndCNV') {
-    loadPloidyAndCNV(tpm_qch)
+  else if(params.workflow == 'loadCNV') {
+    loadCNV(tpm_qch)
   }
 
   else if (params.workflow == 'mergeExperiments') {

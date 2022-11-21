@@ -82,7 +82,7 @@ process loadGeneCNV {
 }
 
 
-workflow loadPloidyAndCNV {
+workflow loadCNV {
 
   take:
     tpm_qch
