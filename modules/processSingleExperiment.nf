@@ -486,7 +486,7 @@ process getHeterozygousSNPs {
   container = 'veupathdb/vcf_parser_cnv'
 
   input:
-    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi') 
+    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa')
 
   output:
     tuple val(sampleName), path('heterozygousSNPs.vcf') 
