@@ -12,6 +12,11 @@ process loadIndels {
 
   script:
     template 'loadIndels.bash'
+
+  stub:
+    """
+    touch stdout
+    """
 }
 
 
