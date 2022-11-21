@@ -89,7 +89,7 @@ if(params.workflow == 'loadCNV') {
 if(params.workflow == 'mergeExperiments') {
 
   if(params.fastaDir) {
-    fastas_qch = Channel.fromPath(params.fastaDir + '*.fa')
+    fastas_qch = Channel.fromPath(params.fastaDir + '*.fa.gz')
   }
   
   else {
@@ -132,6 +132,9 @@ workflow {
     processSingleExperiment(samples_qch)
   }
 
+  // move the indels out of this graph to Reflow
+  // move the ortholog input here.  will use orthology to load geneCNV
+  // rename this "loadCNV"
   else if(params.workflow == 'loadSingleExperiment') {
     loadSingleExperiment(indels_qch, bam_qch, bw_qch)
   }
