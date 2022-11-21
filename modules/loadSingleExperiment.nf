@@ -5,7 +5,7 @@ nextflow.enable.dsl=2
 process copyBWToWS {
   tag "plugin"
 
-    // TODO add a publishDir  for webservices here
+  publishDir params.webServicesDir
 
   input:
     path(bw)
@@ -13,26 +13,26 @@ process copyBWToWS {
   output:
     path(bw)
 
-  // TODO: may not need the script here.  just the dir to publish ?
   script:
-    template 'copyBWToWS.bash'
+    """
+    """
 }
 
 
 process copyBAMToWS {
-    tag "plugin"
+  tag "plugin"
 
-    // TODO add a publishDir  for webservices here
+  publishDir params.webServicesDir
 
-    input:
+  input:
     path(bam)
 
-    output:
+  output:
     path(bam)
 
-    // TODO: may not need the script here.  just the dir to publish ?
-    script:
-    template 'copyBAMToWS.bash'
+  script:
+    """
+    """
 }
 
 
