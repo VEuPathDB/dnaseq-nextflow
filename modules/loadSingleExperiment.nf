@@ -2,40 +2,6 @@
 nextflow.enable.dsl=2
 
 
-process copyBWToWS {
-  tag "plugin"
-
-  publishDir params.webServicesDir
-
-  input:
-    path(bw)
-
-  output:
-    path(bw)
-
-  script:
-    """
-    """
-}
-
-
-process copyBAMToWS {
-  tag "plugin"
-
-  publishDir params.webServicesDir
-
-  input:
-    path(bam)
-
-  output:
-    path(bam)
-
-  script:
-    """
-    """
-}
-
-
 process loadIndels {
   tag "plugin"
 
@@ -60,7 +26,7 @@ workflow loadSingleExperiment {
 
     loadIndels(indels_qch, params.extDbRlsSpec, params.genomeExtDbRlsSpec)
 
-    // TODO:  do we need a process to make the webservice directory?
-    copyBWToWS(bw_qch)
-    copyBAMToWS(bam_qch)
+    bw_qch | collectFile(storeDir: params.webServicesDir)
+    bam_qch | collectFile(storeDir: params.webServicesDir)
+    
 }
