@@ -89,7 +89,7 @@ if(params.workflow == 'loadCNV') {
 if(params.workflow == 'mergeExperiments') {
 
   if(params.fastaDir) {
-    fastas_qch = Channel.fromPath(params.fastaDir + '*.fa')
+    fastas_qch = Channel.fromPath(params.fastaDir + '*.fa.gz')
   }
   
   else {

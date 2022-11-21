@@ -2,4 +2,4 @@
 
 set -euo pipefail
 echo $vcfCount
-mv .vcf.gz result.vcf.gz
+cp *.vcf.gz result.vcf.gz

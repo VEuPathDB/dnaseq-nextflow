@@ -5,10 +5,10 @@ nextflow.enable.dsl=2
 process checkUniqueIds {
 
   input:
-    path params.fastaDir
+    path fastaDir
 
   output:
-    path 'check.txt'
+    stdout
 
   script:
     template 'checkUniqueIds.bash'

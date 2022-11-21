@@ -9,9 +9,8 @@ process hisat2Index {
    path 'genome.fa'  
     
   output:
-   path 'genomeIndex*.ht2' 
-   val 'genomeIndex' 
-   path 'genome.fa' 
+   path 'genomeIndex*.ht2', emit: ht2_files
+   val 'genomeIndex' , emit: genome_index_name
 
   script: 
     if(params.fromBAM)
@@ -87,8 +86,7 @@ process hisat2 {
 
     output:
       tuple val(sampleName), path('result_sorted.bam')
-      path('result_sorted.bam') 
-    
+
     script:
       if(params.fromBAM)
         template 'hisat2Bam.bash'
@@ -103,12 +101,11 @@ process reorderFasta {
   container = 'veupathdb/shortreadaligner'
    
   input:
-    path 'result_sorted.bam' 
+    tuple val(sampleName), path('result_sorted.bam')
     path 'genome.fa'
 
   output:
-    path 'genome_reordered.fa'
-    path 'genome_reordered.fa.fai'
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
 
   script:
     template 'reorderFasta.bash'
@@ -133,14 +130,13 @@ process picard {
   container = 'broadinstitute/picard:2.25.0'
 
   input:
-    path 'genome_reordered.fa'
-    path 'genome_reordered.fa.fai'
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
     path picardJar
     tuple val(sampleName), path('result_sorted_ds.bam') 
 
   output:
-    tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai') 
-    tuple val(sampleName), path('summaryMetrics.txt')
+    tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai'), emit: bam_and_dict
+    tuple val(sampleName), path('summaryMetrics.txt'), emit: metrics
 
   script:
     template 'picard.bash'
@@ -155,9 +151,8 @@ process gatk {
 
   input:
     path gatkJar 
-    path 'genome_reordered.fa'
-    path 'genome_reordered.fa.fai'
-    tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai') 
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai')
 
   output:
     tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai')
@@ -174,9 +169,8 @@ process mpileup {
 
   input:
     tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai')
-    path 'genome_reordered.fa'
-    path 'genome_reordered.fa.fai'
- 
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+
   output:
     tuple val(sampleName), path('result.pileup') 
     
@@ -193,11 +187,10 @@ process varscan {
   input:
     tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai'), path('result.pileup') 
     path varscanJar
-    path 'genome_reordered.fa.fai'
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
 
   output:
-    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa')
-    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi') 
+    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
     path 'varscan.cons.gz'
 
   script:
@@ -230,9 +223,6 @@ process makeCombinedVarscanIndex {
 
   output:
     tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa')
-    path('varscan.concat.vcf.gz') 
-    path('varscan.concat.vcf.gz.tbi')
-    tuple val(sampleName), path('varscan.concat.vcf.gz')
 
   script:
     template 'makeCombinedVarscanIndex.bash'
@@ -243,7 +233,7 @@ process filterIndels {
   container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path('varscan.concat.vcf.gz')
+    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa')
 
   output:
     tuple val(sampleName), path('output.recode.vcf')
@@ -273,9 +263,8 @@ process mergeVcfs {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
-    val 'vcfCount' 
-    path '*.vcf.gz'
-    path '*.vcf.gz.tbi' 
+    val vcfCount
+    tuple path('*.vcf.gz'), path('*.vcf.gz.tbi'), val(key)
 
   output:
     path('result.vcf.gz') 
@@ -308,8 +297,8 @@ process bcftoolsConsensus {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa') 
-    path 'genome_reordered.fa.fai'
+    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa')
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
 
   output:
     tuple val(sampleName), path('cons.fa')
@@ -340,7 +329,7 @@ process genomecov {
 
   input:
     tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai') 
-    path 'genome_reordered.fa.fai' 
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
 
   output:
     tuple val(sampleName), path('coverage.bed')
@@ -356,7 +345,7 @@ process bedGraphToBigWig {
   publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}.bw" }
 
   input:
-    path 'genome_reordered.fa.fai' 
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
     tuple val(sampleName), path('coverage.bed') 
 
   output:
@@ -370,8 +359,8 @@ process bedGraphToBigWig {
 process sortForCounting {
   container = 'veupathdb/shortreadaligner'
 
-  input:
-    tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') 
+    input:
+    tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai')
 
   output:
     tuple val(sampleName), path('result_sortByName.bam') 
@@ -419,7 +408,7 @@ process makeWindowFile {
   container = 'veupathdb/shortreadaligner'
 
   input:
-    path 'genome_reordered.fa.fai' 
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
     val winLen 
 
   output:
@@ -483,7 +472,7 @@ process makeDensityBigwigs {
 
   input:
     tuple val(sampleName), path('snpDensity.bed'), path('indelDensity.bed')
-    path('genome_reordered.fa.fai') 
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
 
   output:
     tuple path('snpDensity.bw'), path('indelDensity.bw')
@@ -529,7 +518,7 @@ process makeHeterozygousDensityBigwig {
 
   input:
     tuple val(sampleName), path('heterozygousDensity.bed') 
-    path('genome_reordered.fa.fai') 
+    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
 
   output:
     path('heterozygousDensity.bw') 
@@ -551,7 +540,9 @@ workflow processSingleExperiment {
     picard_jar_path = file(params.picardJar)
     varscan_jar_path = file(params.varscanJar)
 
-    hisat2IndexResults = hisat2Index(params.genomeFastaFile)
+    genome_fasta_file = file(params.genomeFastaFile)
+
+    hisat2IndexResults = hisat2Index(genome_fasta_file)
 
     fastqcResults = fastqc(samples_qch)
 
@@ -559,63 +550,64 @@ workflow processSingleExperiment {
 
     trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults), params.trimmomaticAdaptorsFile)
 
-    hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults[1], hisat2IndexResults[0])
+    hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
 
-    reorderFastaResults = reorderFasta(hisat2Results[1].first(), hisat2IndexResults[2])
+    reorderFastaResults = reorderFasta(hisat2Results.first(), genome_fasta_file)
 
-    subsampleResults = subsample(hisat2Results[0])
+    subsampleResults = subsample(hisat2Results)
 
-    picardResults = picard(reorderFastaResults[0], reorderFastaResults[1], picard_jar_path, subsampleResults) 
+    picardResults = picard(reorderFastaResults, picard_jar_path, subsampleResults)
 
-    gatkResults = gatk(gatk_jar_path, reorderFastaResults[0], reorderFastaResults[1], picardResults[0])
+    gatkResults = gatk(gatk_jar_path, reorderFastaResults, picardResults.bam_and_dict )
 
-    mpileupResults = mpileup(gatkResults, reorderFastaResults[0], reorderFastaResults[1])
+    mpileupResults = mpileup(gatkResults, reorderFastaResults)
 
-    varscanResults = varscan(gatkResults.join(mpileupResults), varscan_jar_path, reorderFastaResults[1])
+    varscanResults = varscan(gatkResults.join(mpileupResults), varscan_jar_path, reorderFastaResults)
   
-    concatSnpsAndIndelsResults = concatSnpsAndIndels(varscanResults[0])
+    concatSnpsAndIndelsResults = concatSnpsAndIndels(varscanResults.vcf_files)
 
     makeCombinedVarscanIndexResults = makeCombinedVarscanIndex(concatSnpsAndIndelsResults)
 
-    filterIndelsResults = filterIndels(makeCombinedVarscanIndexResults[3])
+    filterIndelsResults = filterIndels(makeCombinedVarscanIndexResults)
 
-    makeIndelTSV(filterIndelsResults[0])
-    
-    mergeVcfsResults = mergeVcfs(makeCombinedVarscanIndexResults[1].collect().size(), makeCombinedVarscanIndexResults[1].collect(), makeCombinedVarscanIndexResults[2].collect())
-  
-    makeMergedVarscanIndexResults = makeMergedVarscanIndex(mergeVcfsResults[0])
+    makeIndelTSV(filterIndelsResults)
 
-    bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVarscanIndexResults[0], reorderFastaResults[1])
+    // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
+    mergeVcfsResults = mergeVcfs(makeCombinedVarscanIndexResults.count(), makeCombinedVarscanIndexResults.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
+
+    makeMergedVarscanIndexResults = makeMergedVarscanIndex(mergeVcfsResults)
+
+    bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVarscanIndexResults, reorderFastaResults)
 
     addSampleToDefline(bcftoolsConsensusResults)
 
-    genomecovResults = genomecov(gatkResults, reorderFastaResults[1])
-  
-    bedgraphToBigWigResults = bedGraphToBigWig(reorderFastaResults[1], genomecovResults)
+    genomecovResults = genomecov(gatkResults, reorderFastaResults)
+
+    bedgraphToBigWigResults = bedGraphToBigWig(reorderFastaResults, genomecovResults)
 
     sortForCountingResults = sortForCounting(gatkResults)
 
     htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
-  
+
     calculateTPMResults = calculateTPM(htseqCountResults, params.geneFootprintFile)
 
-    makeWindowFileResults = makeWindowFile(reorderFastaResults[1], params.winLen)
-  
-    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults) 
+    makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
-    normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults[1]))
+    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults)
 
-    makeSnpDensityResults = makeSnpDensity(varscanResults[0], makeWindowFileResults)
+    normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics))
 
-    makeDensityBigwigsResults = makeDensityBigwigs(makeSnpDensityResults, reorderFastaResults[1])
-  
+    makeSnpDensityResults = makeSnpDensity(varscanResults.vcf_files, makeWindowFileResults)
+
+    makeDensityBigwigsResults = makeDensityBigwigs(makeSnpDensityResults, reorderFastaResults)
+
     if (params.ploidy != 1) {
 
-      getHeterozygousSNPsResults = getHeterozygousSNPs(varscanResults[1])
+      getHeterozygousSNPsResults = getHeterozygousSNPs(varscanResults.vcf_files)
 
       makeHeterozygousDensityBedResults = makeHeterozygousDensityBed(makeWindowFileResults, getHeterozygousSNPsResults)
 
-      makeHeterozygousDensityBigwig(makeHeterozygousDensityBedResults, reorderFastaResults[1])
+      makeHeterozygousDensityBigwig(makeHeterozygousDensityBedResults, reorderFastaResults)
     }
 
 }
