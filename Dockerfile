@@ -55,6 +55,8 @@ RUN wget https://snpeff.blob.core.windows.net/versions/snpEff_latest_core.zip \
 ADD /bin/snpEff.config /usr/bin/snpEff/snpEff.config
 
 ADD /bin/*.pl /usr/bin/
+RUN cd /usr/bin \
+  && chmod +x *.pl
 
 ADD /lib/perl/* /usr/lib/x86_64-linux-gnu/perl5/5.30/VEuPath/
 ADD /testing/lib/*.pm /usr/lib/x86_64-linux-gnu/perl5/5.30/VEuPath/

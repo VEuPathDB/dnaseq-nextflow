@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-perl /usr/bin/writeStudyConfig.pl \
+writeStudyConfig.pl \
   --outputFile ${sampleName}_geneCNVConfig.txt \
   --file geneCNVFile \
   --name "${sampleName}_geneCNV (CNV)" \

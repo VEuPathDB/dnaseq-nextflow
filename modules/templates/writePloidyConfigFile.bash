@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-perl /usr/bin/writeStudyConfig.pl \
+writeStudyConfig.pl \
   --name "${sampleName}_ploidy (CNV)" \
   --file ploidyFile \
   --outputFile ${sampleName}_ploidyConfig.txt \

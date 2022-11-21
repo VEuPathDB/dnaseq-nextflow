@@ -15,7 +15,7 @@ tabix -fp vcf varscan.snps.vcf.gz
 bgzip varscan.indels.vcf
 tabix -fp vcf varscan.indels.vcf.gz
 bgzip varscan.cons
-perl /usr/bin/maskGenome.pl \
+maskGenome.pl \
   -p result.pileup \
   -f genome_reordered.fa.fai \
   -dc $params.minCoverage \

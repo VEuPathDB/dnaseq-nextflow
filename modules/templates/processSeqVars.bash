@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-perl /usr/bin/processSequenceVariationsNew.pl \
+processSequenceVariationsNew.pl \
   --new_sample_file snpFile.tsv \
   --cache_file cache.txt \
   --undone_strains_file undoneStrains.txt \

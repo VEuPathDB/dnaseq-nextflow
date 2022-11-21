@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-perl /usr/bin/addSampleToDefline.pl \
+addSampleToDefline.pl \
      -i cons.fa \
      -o unique_ids.fa \
      -s $sampleName
