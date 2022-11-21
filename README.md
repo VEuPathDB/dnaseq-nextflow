@@ -141,8 +141,96 @@ flowchart TD
 ```
 This workflow will run on a per organism basis with multiple strains. Anyone can run this workflow, as it does not require a gus environment. The output from this process will either be sent to webservices, uploaded to various databases, and/or used in the mergeExperiments process.  
   
+
+***<p align=center>loadCNV</p>***  
+```mermaid
+flowchart TD
+    p0((Channel.fromPath))
+    p1([map])
+    p2(( ))
+    p3(( ))
+    p4(( ))
+    p5(( ))
+    p6[loadCNV:calculatePloidyAndGeneCNV]
+    p7(( ))
+    p8[loadCNV:writePloidyConfigFile]
+    p9[loadCNV:writeCNVConfigFile]
+    p10[loadCNV:loadPloidy]
+    p11[loadCNV:loadGeneCNV]
+    p0 --> p1
+    p1 -->|tpm_qch| p6
+    p2 -->|footprints| p6
+    p3 -->|gusConfig| p6
+    p4 -->|ploidy| p6
+    p5 -->|taxonId| p6
+    p6 --> p8
+    p6 --> p9
+    p6 --> p7
+    p8 --> p10
+    p8 -->|ploidyFile| p10
+    p9 --> p11
+    p9 -->|geneCNVFile| p11
+```
+
 ***<p align=center>mergeExperiments</p>***  
-![mergeExperimentsWorkflow](https://github.com/VEuPathDB/dnaseqAnalysis/blob/main/visualization/mergeExperiments.png)  
+***<p align=center>loadCNV</p>***  
+```mermaid
+flowchart TD
+    p0((Channel.fromPath))
+    p1((Channel.fromPath))
+    p2(( ))
+    p3[mergeExperiments:checkUniqueIds]
+    p4(( ))
+    p5([collectFile])
+    p6([collect])
+    p7[mergeExperiments:mergeVcfs]
+    p8(( ))
+    p9[mergeExperiments:makeSnpFile]
+    p10(( ))
+    p11(( ))
+    p12(( ))
+    p13(( ))
+    p14(( ))
+    p15(( ))
+    p16(( ))
+    p17(( ))
+    p18(( ))
+    p19[mergeExperiments:processSeqVars]
+    p20(( ))
+    p21(( ))
+    p22(( ))
+    p23(( ))
+    p24(( ))
+    p25(( ))
+    p26[mergeExperiments:snpEff]
+    p27(( ))
+    p0 -->|fastas_qch| p5
+    p1 -->|vcfs_qch| p6
+    p2 -->|fastaDir| p3
+    p3 -->|-| p4
+    p5 -->|combinedFastagz| p19
+    p6 -->|allvcfs| p7
+    p7 --> p8
+    p7 --> p9
+    p9 --> p19
+    p10 -->|gusConfig.txt| p19
+    p11 -->|cache.txt| p19
+    p12 -->|undoneStrains.txt| p19
+    p13 -->|transcript_extdb_spec| p19
+    p14 -->|organism_abbrev| p19
+    p15 -->|reference_strain| p19
+    p16 -->|extdb_spec| p19
+    p17 -->|varscan_directory| p19
+    p18 -->|genome.fa| p19
+    p19 --> p23
+    p19 --> p22
+    p19 --> p21
+    p19 --> p20
+    p7 -->|merged.vcf| p26
+    p24 -->|genes.gtf.gz| p26
+    p25 -->|sequences.fa.gz| p26
+    p26 --> p27
+```
 This work flow will run after processSingleExperiment. This workflow requires a gus environment to run. It will take the strain specific vcfs and consensus sequences output from the processSingleExperiment workflow. The strain specific vcfs will be merged together to create a merged vcf. This will be sent to webservices, along with being sent to snpEff to generate an annotated vcf file. The consensus sequences will be combined and sent to web services. These masked consensus sequences, along with various information queried from our databases will be used to generate a transcript fasta file that is indel and coverage aware. This will be used in downstream processes that still need to be generated.
 
 **<p align=center>Explanation of Config File Parameters</p>**

@@ -21,6 +21,13 @@ process calculatePloidyAndGeneCNV {
 
   script:
     template 'calculatePloidyAndGeneCNV.bash'
+
+  stub:
+    """
+    touch ${sampleName}_Ploidy.txt
+    touch ${sampleName}_geneCNVs.txt
+    touch ${sampleName}_CNVestimations.tsv
+    """
 }
 
 
@@ -38,6 +45,13 @@ process writePloidyConfigFile {
 
   script:
     template 'writePloidyConfigFile.bash'
+
+  stub:
+    """
+    touch ${sampleName}_ploidyConfig.txt
+    touch $ploidyFile
+    """
+
 }
 
 
@@ -55,6 +69,12 @@ process writeCNVConfigFile {
 
   script:
     template 'writeCNVConfigFile.bash'
+
+  stub:
+    """
+    touch ${sampleName}_geneCNVConfig.txt
+    """
+
 }
 
 
@@ -67,6 +87,11 @@ process loadPloidy {
 
   script:
     template 'insertStudyResults.bash'
+
+  stub:
+    """
+    touch stdout
+    """
 }
 
 
@@ -79,6 +104,12 @@ process loadGeneCNV {
 
   script:
     template 'insertStudyResults.bash'
+
+  stub:
+    """
+    touch stdout
+    """
+
 }
 
 

@@ -19,6 +19,11 @@ process hisat2Index {
       template 'hisat2IndexCreateIndex.bash'
     else
       template 'hisat2IndexNoBamNoIndex.bash'
+
+  stub:
+    """
+    touch genomeIndex1.ht2
+    """
 }
 
 
@@ -36,6 +41,11 @@ process fastqc {
       template 'fastqcBam.bash'
     else 
       template 'fastqcNoBam.bash'
+
+  stub:
+    """
+    mkdir fastqc_output
+    """
 }
 
 
@@ -53,6 +63,12 @@ process fastqc_check {
       template 'fastqc_checkBam.bash'
     else 
       template 'fastqc_checkNoBam.bash'            
+
+  stub:
+    """
+    touch mateAEncoding
+    """
+
 }
 
 
@@ -73,6 +89,13 @@ process trimmomatic {
       template 'trimmomaticPaired.bash'
     else 
       template 'trimmomaticSingle.bash'
+
+  stub:
+    """
+    touch sample_1P
+    touch sample_2P
+    """
+
 }
 
 
@@ -94,6 +117,10 @@ process hisat2 {
         template 'hisat2Paired.bash'
       else 
         template 'hisat2Single.bash'
+  stub:
+    """
+    touch result_sorted.bam
+    """
 }
 
 
@@ -109,6 +136,13 @@ process reorderFasta {
 
   script:
     template 'reorderFasta.bash'
+
+  stub:
+    """
+    touch genome_reordered.fa
+    touch genome_reordered.fa.fai
+    """
+
 }
 
 
@@ -123,6 +157,11 @@ process subsample {
 
   script:
     template 'subsample.bash'
+
+  stub:
+    """
+    touch result_sorted_ds.bam
+    """
 }
 
 
@@ -140,6 +179,15 @@ process picard {
 
   script:
     template 'picard.bash'
+
+  stub:
+    """
+    touch genome_reordered.dict
+    touch picard.bam
+    touch picard.bai
+    touch summaryMetrics.txt
+    """
+
 }
 
 
@@ -159,6 +207,12 @@ process gatk {
 
   script:
     template 'gatk.bash'
+
+  stub:
+    """
+    touch result_sorted_gatk.bam
+    touch result_sorted_gatk.bai
+    """
 }
 
 
@@ -176,6 +230,12 @@ process mpileup {
     
   script:
     template 'mpileup.bash'
+
+  stub:
+    """
+    touch result.pileup
+    """
+
 }
 
 
@@ -195,6 +255,16 @@ process varscan {
 
   script:
     template 'varscan.bash'
+
+  stub:
+    """
+    touch varscan.snps.vcf.gz
+    touch varscan.snps.vcf.gz.tbi
+    touch varscan.indels.vcf.gz
+    touch varscan.indels.vcf.gz.tbi
+    touch genome_masked.fa
+    touch varscan.cons.gz
+    """
 }
 
 
@@ -209,6 +279,13 @@ process concatSnpsAndIndels {
 
   script:
     template 'concatSnpsAndIndels.bash'
+
+  stub:
+    """
+    touch varscan.concat.vcf
+    touch genome_masked.fa
+    """
+
 }
 
 
@@ -226,6 +303,14 @@ process makeCombinedVarscanIndex {
 
   script:
     template 'makeCombinedVarscanIndex.bash'
+
+  stub:
+    """
+    touch varscan.concat.vcf.gz
+    touch varscan.concat.vcf.gz.tbi
+    touch genome_masked.fa
+    """
+
 }
 
 
@@ -240,6 +325,13 @@ process filterIndels {
 
   script:
     template 'filterIndels.bash'
+
+  stub:
+    """
+    touch output.recode.vcf
+    """
+
+
 }
 
 
@@ -256,6 +348,12 @@ process makeIndelTSV {
 
   script:
     template 'makeIndelTSV.bash'
+
+  stub:
+    """
+    touch output.tsv
+    """
+
 }
 
 
@@ -274,6 +372,12 @@ process mergeVcfs {
       template 'mergeVcfsCount.bash'
     else
       template 'mergeVcfsNoCount.bash'
+
+  stub:
+    """
+    touch result.vcf.gz
+    """
+
 }
 
 
@@ -290,6 +394,13 @@ process makeMergedVarscanIndex {
 
   script:
     template 'makeMergedVarscanIndex.bash'
+
+  stub:
+    """
+    touch result.vcf.gz
+    touch result.vcf.gz.tbi
+    """
+
 }
 
 
@@ -305,6 +416,12 @@ process bcftoolsConsensus {
     
   script:
     template 'bcftoolsConsensus.bash'
+
+  stub:
+    """
+    touch cons.fa
+    """
+
 }
 
 
@@ -321,6 +438,12 @@ process addSampleToDefline {
 
   script:
     template 'addSampleToDefline.bash'
+
+  stub:
+    """
+    touch unique_ids.fa.gz
+    """
+
 }
 
 
@@ -336,6 +459,13 @@ process genomecov {
 
   script:
     template 'genomecov.bash'
+
+
+  stub:
+    """
+    touch coverage.bed
+    """
+
 }
 
 
@@ -353,6 +483,12 @@ process bedGraphToBigWig {
     
   script:
     template 'bedGraphToBigWig.bash'
+
+  stub:
+    """
+    touch coverage.bw
+    """
+
 }
 
 
@@ -367,6 +503,12 @@ process sortForCounting {
 
   script:
     template 'sortForCounting.bash'
+
+  stub:
+    """
+    touch result_sortByName.bam
+    """
+
 }
 
 
@@ -384,6 +526,11 @@ process htseqCount {
 
   script:
     template 'htseqCount.bash'
+
+  stub:
+    """
+    touch counts.txt
+    """
 }
 
 
@@ -401,6 +548,12 @@ process calculateTPM {
 
   script:
     template 'calculateTpm.bash'
+
+  stub:
+    """
+    touch tpm.txt
+    """
+
 }
 
 
@@ -416,6 +569,13 @@ process makeWindowFile {
 
   script:
     template 'makeWindowFile.bash'
+
+  stub:
+    """
+    touch windows.bed
+    touch genome.txt
+    """
+
 }
 
 
@@ -431,6 +591,12 @@ process bedtoolsWindowed {
 
   script:
     template 'bedtoolsWindowed.bash'
+
+  stub:
+    """
+    touch windowedCoverage.bed
+    """
+
 }
 
 
@@ -447,7 +613,12 @@ process normaliseCoverage {
 
   script:
     template 'normaliseCoverage.bash'
-} 
+
+  stub:
+    """
+    touch normalisedCoverage.bed
+    """
+}
 
 
 process makeSnpDensity {
@@ -462,6 +633,12 @@ process makeSnpDensity {
 
   script: 
     template 'makeSnpDensity.bash'
+
+  stub:
+    """
+    touch snpDensity.bed
+    touch indelDensity.bed
+    """
 }
 
 
@@ -479,6 +656,12 @@ process makeDensityBigwigs {
 
   script:
     template 'makeDensityBigWigs.bash'
+
+  stub:
+    """
+    touch snpDensity.bw
+    touch indelDensity.bw
+    """
 }
 
 
@@ -489,10 +672,15 @@ process getHeterozygousSNPs {
     tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa')
 
   output:
-    tuple val(sampleName), path('heterozygousSNPs.vcf') 
+    tuple val(sampleName), path('heterozygousSNPs.vcf')
 
   script:
     template 'getHeterozygousSNPs.bash'
+
+  stub:
+    """
+    touch heterozygousSNPs.vcf
+    """
 }
 
 
@@ -508,6 +696,11 @@ process makeHeterozygousDensityBed {
 
   script:
     template 'makeHeterozygousDensityBed.bash'
+
+  stub:
+    """
+    touch heterozygousDensity.bed
+    """
 }
 
 
@@ -525,6 +718,12 @@ process makeHeterozygousDensityBigwig {
 
   script:
     template 'makeHeterozygousDensityBigWig.bash'
+
+
+  stub:
+    """
+    touch heterozygousDensity.bw
+    """
 }
 
 

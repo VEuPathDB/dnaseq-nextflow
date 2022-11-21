@@ -12,6 +12,11 @@ process checkUniqueIds {
 
   script:
     template 'checkUniqueIds.bash'
+
+  stub:
+    """
+    touch stdout
+    """
 }
 
 
@@ -27,6 +32,13 @@ process mergeVcfs {
 
   script:
     template 'mergeVcfs.bash'
+
+  stub:
+    """
+    touch merged.vcf.gz
+    touch merge.vcf
+    """
+
 }
 
 
@@ -43,6 +55,12 @@ process makeSnpFile {
     """
     perl /usr/bin/makeSnpFile.pl --vcf merged.vcf --output snpFile.tsv
     """
+
+  stub:
+    """
+    touch snpFile.tsv
+    """
+
 }
 
 
@@ -70,6 +88,16 @@ process processSeqVars {
   
   script:
     template 'processSeqVars.bash'
+
+
+  stub:
+    """
+    touch cache.txt
+    touch snpFeature.dat
+    touch allele.dat
+    touch product.dat
+    """
+
 }
 
 
@@ -86,6 +114,12 @@ process snpEff {
 
   script:
     template 'snpEff.bash'    
+
+  stub:
+    """
+    touch merged.ann.vcf
+    """
+
 }
 
 

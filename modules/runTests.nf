@@ -15,6 +15,11 @@ process runTest {
     """
     prove -l $test > check.txt
     """
+
+  stub:
+    """
+    touch check.txt
+    """
 }
 
 
