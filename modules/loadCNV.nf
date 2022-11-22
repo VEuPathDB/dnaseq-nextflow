@@ -113,7 +113,7 @@ process loadGeneCNV {
 }
 
 
-workflow loadCNV {
+workflow lc {
 
   take:
     tpm_qch

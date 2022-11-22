@@ -5,7 +5,7 @@ nextflow.enable.dsl=2
 process checkUniqueIds {
 
   input:
-    path fastaDir
+    path 'consensus.fa.gz'
 
   output:
     stdout
@@ -123,18 +123,18 @@ process snpEff {
 }
 
 
-workflow mergeExperiments {
-
+workflow me {
+ 
   take:
 
     fastas_qch
     vcfs_qch
-    
+
   main:
-    
-    checkResults = checkUniqueIds(params.fastaDir) 
 
     combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz', storeDir: params.outputDir )
+
+    checkUniqueIds(combinedFastagz) 
 
     allvcfs = vcfs_qch.collect()
 
@@ -142,7 +142,7 @@ workflow mergeExperiments {
     
     makeSnpFileResults = makeSnpFile(mergeVcfsResults.mergedVcf)
     
-    processSeqVars(makeSnpFileResults.snpFile, params.gusConfig, params.cacheFile, params.undoneStrains, params.transcript_extdb_spec, params.organism_abbrev, params.reference_strain, params.extdb_spec, params.varscan_directory, params.genomeFasta, combinedFastagz)
+    processSeqVars(makeSnpFileResults.snpFile, params.gusConfig, params.cacheFile, params.undoneStrains, params.transcript_extdb_spec, params.organism_abbrev, params.reference_strain, params.extdb_spec, params.varscan_directory, params.genomeFastaFile, combinedFastagz)
 
     snpEff(mergeVcfsResults.mergedVcf, params.databaseFile, params.sequenceFile)
 

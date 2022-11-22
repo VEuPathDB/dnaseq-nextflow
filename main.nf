@@ -5,17 +5,18 @@ nextflow.enable.dsl=2
 // Including Workflows
 //---------------------------------------------------------------
 
-include { processSingleExperiment } from './modules/processSingleExperiment.nf'
-include { loadSingleExperiment } from './modules/loadSingleExperiment.nf'
-include { loadCNV } from './modules/loadCNV.nf'
-include { mergeExperiments } from './modules/mergeExperiments.nf'
-include { runTests } from './modules/runTests.nf'
+include { ps } from './modules/processSingleExperiment.nf'
+include { ls } from './modules/loadSingleExperiment.nf'
+include { lc } from './modules/loadCNV.nf'
+include { me } from './modules/mergeExperiments.nf'
+include { tests } from './modules/runTests.nf'
 
 //---------------------------------------------------------------
-// PARAM CHECKING processSingleExperiment 
+// processSingleExperiment
 //---------------------------------------------------------------
 
-if(params.workflow == 'processSingleExperiment') {
+workflow processSingleExperiment {
+
   if(!params.inputDir) {
     throw new Exception("Missing parameter params.inputDir")
   }
@@ -50,43 +51,15 @@ if(params.workflow == 'processSingleExperiment') {
                                                                                              .map { file -> tuple(file.baseName, [file]) }
   }
 
-}
+  ps(samples_qch)
 
-
-//---------------------------------------------------------------
-// PARAM CHECKING loadSingleExperiment 
-//---------------------------------------------------------------
-
-if(params.workflow == 'loadSingleExperiment') {
-    if(!params.inputDir) {
-        throw new Exception("Missing parameter params.inputDir")
-    }
-    else {
-        indels_qch = Channel.fromPath([params.inputDir + '/*.indel.tsv'], checkIfExists: true)
-        bam_qch = Channel.fromPath([params.inputDir + '/*.bam'], checkIfExists: true)
-        bw_qch = Channel.fromPath([params.inputDir + '/*.bw'], checkIfExists: true)
-    }
-}
-
-
-//---------------------------------------------------------------
-// PARAM CHECKING loadPloidyAndCNV 
-//---------------------------------------------------------------
-
-if(params.workflow == 'loadCNV') {
-    if(!params.inputDir) {
-        throw new Exception("Missing parameter params.inputDir")
-    }
-    else {
-        tpm_qch = Channel.fromPath([params.inputDir + '/CNVs/*.tpm'], checkIfExists: true).map { file -> tuple(file.baseName, [file]) }
-    }
 }
 
 //---------------------------------------------------------------
-// PARAM CHECKING mergeExperiments
+// mergeExperiments
 //---------------------------------------------------------------
 
-if(params.workflow == 'mergeExperiments') {
+workflow mergeExperiments {
 
   if(params.fastaDir) {
     fastas_qch = Channel.fromPath(params.fastaDir + '*.fa.gz')
@@ -104,13 +77,53 @@ if(params.workflow == 'mergeExperiments') {
     throw new Exception("Missing parameter params.vcfDir")
   }
 
+  me(fastas_qch, vcfs_qch)
+
 }
 
 //---------------------------------------------------------------
-// PARAM CHECKING testExperiments
+// loadSingleExperiment
 //---------------------------------------------------------------
 
-if(params.workflow == 'test') {
+workflow loadSingleExperiment {
+
+  if(!params.inputDir) {
+    throw new Exception("Missing parameter params.inputDir")
+  }
+
+  else {
+    indels_qch = Channel.fromPath([params.inputDir + '/*.indel.tsv'], checkIfExists: true)
+    bam_qch = Channel.fromPath([params.inputDir + '/*.bam'], checkIfExists: true)
+    bw_qch = Channel.fromPath([params.inputDir + '/*.bw'], checkIfExists: true)
+  }
+
+  ls(indels_qch, bam_qch, bw_qch)
+  
+}
+
+//---------------------------------------------------------------
+// loadCNV
+//---------------------------------------------------------------
+
+workflow loadCNV {
+
+  if(!params.inputDir) {
+    throw new Exception("Missing parameter params.inputDir")
+  }
+
+  else {
+    tpm_qch = Channel.fromPath([params.inputDir + '/CNVs/*.tpm'], checkIfExists: true).map { file -> tuple(file.baseName, [file]) }
+  }
+
+  lc(tpm_qch)
+  
+}
+
+//---------------------------------------------------------------
+// runTests
+//---------------------------------------------------------------
+
+workflow runTests {
 
   if(params.testDir) {
     tests_qch = Channel.fromPath([params.testDir + '*.t'])
@@ -119,37 +132,52 @@ if(params.workflow == 'test') {
   else {
     throw new Exception("Missing parameter params.testDir")
   }
-   
+
+  tests(tests_qch)
+  
 }
 
 //---------------------------------------------------------------
-// WORKFLOW
+// DEFAULT - processSingleExperiment
 //---------------------------------------------------------------
 
 workflow {
 
-  if(params.workflow == 'processSingleExperiment') {
-    processSingleExperiment(samples_qch)
+  if(!params.inputDir) {
+    throw new Exception("Missing parameter params.inputDir")
   }
-
-  else if(params.workflow == 'loadSingleExperiment') {
-    loadSingleExperiment(indels_qch, bam_qch, bw_qch)
+   
+  if(!params.genomeFastaFile) {
+    throw new Exception("Missing parameter params.genomeFastaFile")
   }
-
-  else if(params.workflow == 'loadCNV') {
-    loadCNV(tpm_qch)
+  
+  if(!params.gtfFile) {
+    throw new Exception("Missing parameter params.gtfFile")
   }
-
-  else if (params.workflow == 'mergeExperiments') {
-    mergeExperiments(fastas_qch, vcfs_qch)
+  
+  if(!params.geneFootprintFile) {
+    throw new Exception("Missing parameter params.geneFootprintFile")
   }
-
-  else if (params.workflow == 'test') {
-    runTests(tests_qch)
+  
+  if(!params.trimmomaticAdaptorsFile) {
+    throw new Exception("Missing parameter params.trimmomaticAdaptorsFile")
+  }
+  
+  if(params.fromBAM) {
+    samples_qch = Channel.fromPath([params.inputDir + '/**/*.bam'])
+                    .map { file -> tuple(file.baseName, [file]) }
+  }
+  
+  else if(params.isPaired) {
+    samples_qch = Channel.fromFilePairs([params.inputDir + '/**/*_{1,2}.fastq', params.inputDir + '/**/*_{1,2}.fastq.gz', params.inputDir + '/**/*_{1,2}.fq.gz'])
   }
   
   else {
-    throw new Exception("Invalid value for workflow parameter")
+    samples_qch = Channel.fromPath([params.inputDir + '/**/*.fastq', params.inputDir + '/**/*.fastq.gz', params.inputDir + '/**/*.fq.gz'])
+                                                                                             .map { file -> tuple(file.baseName, [file]) }
   }
 
+  ps(samples_qch)
+
 }
+

@@ -23,7 +23,7 @@ process runTest {
 }
 
 
-workflow runTests {
+workflow tests {
 
   take:
 

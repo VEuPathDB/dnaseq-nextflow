@@ -20,7 +20,7 @@ process loadIndels {
 }
 
 
-workflow loadSingleExperiment {
+workflow ls {
 
   take:
     indels_qch

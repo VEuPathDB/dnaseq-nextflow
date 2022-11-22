@@ -727,7 +727,7 @@ process makeHeterozygousDensityBigwig {
 }
 
 
-workflow processSingleExperiment {
+workflow ps {
 
   take:
 
