@@ -2,11 +2,10 @@
 
 set -euo pipefail
 
-mkdir FASTAS;
-cp $1/*.fa.gz FASTAS;
-gunzip FASTAS/*.gz;
+cp consensus.fa.gz con.fa.gz
+gunzip con.fa.gz;
 
-if [ `grep '>' FASTAS/*.fa | wc -l` -eq `grep '>' FASTAS/*.fa | sort -u | wc -l` ];
+if [ `grep '>' con.fa | wc -l` -eq `grep '>' con.fa | sort -u | wc -l` ];
 then
      echo 'Checked all deflines... no repeats';
 else
