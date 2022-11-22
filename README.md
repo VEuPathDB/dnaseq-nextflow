@@ -178,14 +178,14 @@ flowchart TD
 flowchart TD
     p0((Channel.fromPath))
     p1((Channel.fromPath))
-    p2(( ))
+    p2([collectFile])
     p3[mergeExperiments:checkUniqueIds]
     p4(( ))
-    p5([collectFile])
-    p6([collect])
-    p7[mergeExperiments:mergeVcfs]
-    p8(( ))
-    p9[mergeExperiments:makeSnpFile]
+    p5([collect])
+    p6[mergeExperiments:mergeVcfs]
+    p7(( ))
+    p8[mergeExperiments:makeSnpFile]
+    p9(( ))
     p10(( ))
     p11(( ))
     p12(( ))
@@ -194,42 +194,42 @@ flowchart TD
     p15(( ))
     p16(( ))
     p17(( ))
-    p18(( ))
-    p19[mergeExperiments:processSeqVars]
+    p18[mergeExperiments:processSeqVars]
+    p19(( ))
     p20(( ))
     p21(( ))
     p22(( ))
     p23(( ))
     p24(( ))
-    p25(( ))
-    p26[mergeExperiments:snpEff]
-    p27(( ))
-    p0 -->|fastas_qch| p5
-    p1 -->|vcfs_qch| p6
-    p2 -->|fastaDir| p3
+    p25[mergeExperiments:snpEff]
+    p26(( ))
+    p0 -->|fastas_qch| p2
+    p1 -->|vcfs_qch| p5
+    p2 -->|combinedFastagz| p3
     p3 -->|-| p4
-    p5 -->|combinedFastagz| p19
-    p6 -->|allvcfs| p7
-    p7 --> p8
-    p7 --> p9
-    p9 --> p19
-    p10 -->|gusConfig.txt| p19
-    p11 -->|cache.txt| p19
-    p12 -->|undoneStrains.txt| p19
-    p13 -->|transcript_extdb_spec| p19
-    p14 -->|organism_abbrev| p19
-    p15 -->|reference_strain| p19
-    p16 -->|extdb_spec| p19
-    p17 -->|varscan_directory| p19
-    p18 -->|genome.fa| p19
-    p19 --> p23
-    p19 --> p22
-    p19 --> p21
-    p19 --> p20
-    p7 -->|merged.vcf| p26
-    p24 -->|genes.gtf.gz| p26
-    p25 -->|sequences.fa.gz| p26
-    p26 --> p27
+    p5 -->|allvcfs| p6
+    p6 --> p7
+    p6 --> p8
+    p8 --> p18
+    p9 -->|gusConfig.txt| p18
+    p10 -->|cache.txt| p18
+    p11 -->|undoneStrains.txt| p18
+    p12 -->|transcript_extdb_spec| p18
+    p13 -->|organism_abbrev| p18
+    p14 -->|reference_strain| p18
+    p15 -->|extdb_spec| p18
+    p16 -->|varscan_directory| p18
+    p17 -->|genome.fa| p18
+    p2 -->|combinedFastagz| p18
+    p18 --> p22
+    p18 --> p21
+    p18 --> p20
+    p18 --> p19
+    p6 -->|merged.vcf| p25
+    p23 -->|genes.gtf.gz| p25
+    p24 -->|sequences.fa.gz| p25
+    p25 --> p26
+
 ```
 
 
