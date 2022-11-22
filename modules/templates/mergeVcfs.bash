@@ -7,3 +7,4 @@ bcftools merge \
       -O z *.vcf.gz
 cp merged.vcf.gz merge.vcf.gz
 gunzip merge.vcf.gz
+mv merge.vcf merged.vcf

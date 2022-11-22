@@ -28,7 +28,7 @@ process mergeVcfs {
 
   output:
     path 'merged.vcf.gz'
-    path 'merge.vcf', emit: mergedVcf
+    path 'merged.vcf', emit: mergedVcf
 
   script:
     template 'mergeVcfs.bash'
@@ -36,7 +36,7 @@ process mergeVcfs {
   stub:
     """
     touch merged.vcf.gz
-    touch merge.vcf
+    touch merged.vcf
     """
 
 }
