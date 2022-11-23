@@ -72,12 +72,12 @@ process processSeqVars {
     path 'gusConfig.txt'
     path 'cache.txt'
     path 'undoneStrains.txt'
-    val  transcript_extdb_spec
+    val  genomeExtDbRlsSpec
     val  organism_abbrev
     val  reference_strain
     val  extdb_spec
     path 'varscan_directory'
-    path 'genome.fa'
+    path 'genome.fa.gz'
     path 'consensus.fa.gz'
   
   output:
@@ -106,7 +106,7 @@ process snpEff {
 
   input:
     path 'merged.vcf'
-    path 'genes.gtf.gz'
+    path 'genes.gtf'
     path 'sequences.fa.gz'
 
   output:
@@ -142,8 +142,8 @@ workflow me {
     
     makeSnpFileResults = makeSnpFile(mergeVcfsResults.mergedVcf)
     
-    processSeqVars(makeSnpFileResults.snpFile, params.gusConfig, params.cacheFile, params.undoneStrains, params.transcript_extdb_spec, params.organism_abbrev, params.reference_strain, params.extdb_spec, params.varscan_directory, params.genomeFastaFile, combinedFastagz)
+    processSeqVars(makeSnpFileResults.snpFile, params.gusConfig, params.cacheFile, params.undoneStrains, params.genomeExtDbRlsSpec, params.organism_abbrev, params.reference_strain, params.extDbRlsSpec, params.varscan_directory, params.genomeFastaFile, combinedFastagz)
 
-    snpEff(mergeVcfsResults.mergedVcf, params.databaseFile, params.sequenceFile)
+    snpEff(mergeVcfsResults.mergedVcf, params.gtfFile, params.genomeFastaFile)
 
 }

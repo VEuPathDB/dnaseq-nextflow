@@ -29,8 +29,8 @@ workflow processSingleExperiment {
     throw new Exception("Missing parameter params.gtfFile")
   }
   
-  if(!params.geneFootprintFile) {
-    throw new Exception("Missing parameter params.geneFootprintFile")
+  if(!params.footprintFile) {
+    throw new Exception("Missing parameter params.footprintFile")
   }
   
   if(!params.trimmomaticAdaptorsFile) {
@@ -155,8 +155,8 @@ workflow {
     throw new Exception("Missing parameter params.gtfFile")
   }
   
-  if(!params.geneFootprintFile) {
-    throw new Exception("Missing parameter params.geneFootprintFile")
+  if(!params.footprintFile) {
+    throw new Exception("Missing parameter params.footprintFile")
   }
   
   if(!params.trimmomaticAdaptorsFile) {

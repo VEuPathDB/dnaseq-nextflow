@@ -6,7 +6,7 @@ process hisat2Index {
   container = 'veupathdb/shortreadaligner'
 
   input:
-   path 'genome.fa'  
+   path 'genome.fa.gz'  
     
   output:
    path 'genomeIndex*.ht2', emit: ht2_files
@@ -129,7 +129,7 @@ process reorderFasta {
    
   input:
     tuple val(sampleName), path('result_sorted.bam')
-    path 'genome.fa'
+    path 'genome.fa.gz'
 
   output:
     tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
@@ -788,7 +788,7 @@ workflow ps {
 
     htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
 
-    calculateTPMResults = calculateTPM(htseqCountResults, params.geneFootprintFile)
+    calculateTPMResults = calculateTPM(htseqCountResults, params.footprintFile)
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 

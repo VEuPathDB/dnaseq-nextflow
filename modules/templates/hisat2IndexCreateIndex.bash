@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-hisat2-build genome.fa genomeIndex
-samtools faidx genome.fa
+cp genome.fa.gz hold.fa.gz
+gunzip hold.fa.gz
+hisat2-build hold.fa genomeIndex
+samtools faidx hold.fa
