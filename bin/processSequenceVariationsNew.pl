@@ -3,24 +3,24 @@
 use File::Basename;
 use Data::Dumper;
 use Getopt::Long;
-use VEuPath::DbiDatabase;
-use VEuPath::GusConfig;
-use VEuPath::SequenceUtils;
+use GUS::ObjRelP::DbiDatabase;
+use GUS::Supported::GusConfig;
+use CBIL::Bio::SequenceUtils;
 use Bio::Seq;
 use Bio::Tools::GFF;
 use Bio::Coordinate::GeneMapper;
 use Bio::Coordinate::Pair;
 use Bio::Location::Simple;
 use Bio::Tools::CodonTable;
-use VEuPath::GeneModelLocations;
+use GUS::Community::GeneModelLocations;
 use VEuPath::SnpUtils  qw(sampleCacheFileColumnNames snpFileColumnNames alleleFileColumnNames productFileColumnNames);
 use DBI;
 use DBD::Oracle;
 use VEuPath::MergeSortedSeqVariations;
-use VEuPath::FileReader;
+use ApiCommonData::Load::FileReader;
 use locale;
 use Sort::Naturally;
-use Set::CrossProduct; 
+use Set::CrossProduct;
 
 my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
@@ -93,7 +93,7 @@ my $CODON_TABLE = Bio::Tools::CodonTable->new( -id => 1); #standard codon table
 my $totalTime;
 my $totalTimeStart = time();
 
-my $gusConfig = VEuPath::GusConfig->new($gusConfigFile);
+my $gusConfig = GUS::Supported::GusConfig->new($gusConfigFile);
 
 my ($dbiDsn, $login, $password, $core);
 
@@ -139,7 +139,7 @@ my $strainExtDbRlsAndProtocolAppNodeIds = &queryExtDbRlsAndProtocolAppNodeIdsFor
 my $transcriptExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $transcriptExtDbRlsSpec);
 my $thisExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $extDbRlsSpec);
 
-my $geneModelLocations = VEuPath::GeneModelLocations->new($dbh, $transcriptExtDbRlsId, 1);
+my $geneModelLocations = GUS::Community::GeneModelLocations->new($dbh, $transcriptExtDbRlsId, 1);
 my $agpMap = $geneModelLocations->getAgpMap();
 
 my $transcriptSummary = &getTranscriptLocations($dbh, $transcriptExtDbRlsId, $agpMap);
@@ -681,10 +681,10 @@ sub openVarscanFiles {
       if($file =~ /\.gz$/) {
         print STDERR "OPEN GZ FILE: $file for Strain $strain\n" if($debug);
 
-        $reader = VEuPath::FileReader->new("zcat $fullPath |", [], qr/\t/);
+        $reader = ApiCommonData::Load::FileReader->new("zcat $fullPath |", [], qr/\t/);
     } 
       else {
-        $reader = VEuPath::FileReader->new($fullPath, [], qr/\t/);
+        $reader = ApiCommonData::Load::FileReader->new($fullPath, [], qr/\t/);
       }
 
       $rv{$strain} = $reader;
