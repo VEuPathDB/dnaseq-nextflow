@@ -980,51 +980,53 @@ sub createCurrentShifts {
     return $currentShifts;
 }
 
-
 sub addStrainExonShiftsToTranscriptSummary {
     my ($currentShifts, $transcriptSummary) = @_;
     my ($oldShift, $shiftFrame);
 
     foreach my $strain (keys %{ $currentShifts }) {
 
-	my $shiftArray = $currentShifts->{$strain};
+        my $shiftArray = $currentShifts->{$strain};
 
-	foreach my $chromosome (keys %{ $shiftArray }) {
+        foreach my $chromosome (keys %{ $shiftArray }) {
 
-	    my $chromosomeShiftArray = $shiftArray->{$chromosome};
-	    my $indexedArray = $chromosomeShiftArray[0][0];
+            my $chromosomeShiftArray = $shiftArray->{$chromosome};
+            my $indexedArray = $chromosomeShiftArray[0][0];
             my $shiftArrayLen = scalar @{ $indexedArray };
             my $shiftFrameLimit = $shiftArrayLen - 1;
             $oldShift = 0;
-	    $shiftFrame = 0;
+            $shiftFrame = 0;
             my ($exon_start, $exon_end);
             my $startIndicator = "start";
             my $endIndicator = "end";
-	    my @sorted_keys = nsort keys %{ $transcriptSummary };
+            my @sorted_keys = nsort keys %{ $transcriptSummary };
 
-	    foreach my $transcript (@sorted_keys) {
+            foreach my $transcript (@sorted_keys) {
 
-		my ($shifted_start, $shifted_end);
-		$exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
-		$exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
-
-		if ($transcript !~ /$chromosome/) {
-                    $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $exon_start;
-                    $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $exon_end;
-		    next;
-		}
-
-		($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, $chromosomeShiftArray);
-		($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, $chromosomeShiftArray);
-		#print "$transcript\t$exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\n";
-		$$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
-		$$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
-	    }
+                my ($shifted_start, $shifted_end);
+                $exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
+                $exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
+                # This makes sure that we are correctly setting shifted starts and ends                                                                                                                    
+                if ($transcript !~ /$chromosome/) {
+                    if ($$transcriptSummary{$transcript}->{$strain}->{shifted_start}) {
+                        next;
+                    }
+                    else {
+                        $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $exon_start;
+                        $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $exon_end;
+                        next;
+                    }
+                }
+                ($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, $chromosomeShiftArray);
+                ($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, $chromosomeShiftArray);
+                #print "$transcript\t$exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\n";                                                                                                   
+                $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
+                $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
+            }
         }
     }
     return $transcriptSummary;
 }
-
 
 sub calcCoordinates {
     my ($shiftFrame, $shiftFrameLimit, $oldShift, $coordinate, $indicator, $shiftArray) = @_;
