@@ -132,7 +132,7 @@ my @fixStrains = ("LV39cl5_chr1");
 $|=1; #autoflush                                                                                                                                                                                          
 print "\033[JCreating CurrentShifts Object"."\033[G";
 
-my $currentShifts = &createCurrentShifts(\@fixStrains, $dbh);
+my $currentShifts = &createCurrentShifts(\@allStrains, $dbh);
 
 my $strainExtDbRlsAndProtocolAppNodeIds = &queryExtDbRlsAndProtocolAppNodeIdsForStrains(\@allStrains, $dbh, $organismAbbrev);
 
@@ -144,12 +144,18 @@ my $agpMap = $geneModelLocations->getAgpMap();
 
 my $transcriptSummary = &getTranscriptLocations($dbh, $transcriptExtDbRlsId, $agpMap);
 
+#print Dumper $transcriptSummary;
+#die;
+
 my $geneLocations = &getGeneLocations($transcriptSummary);
 
 $|=1; #autoflush 
 print "\033[JShifting Exon Locations"."\033[G";        
 
 $transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
+
+#print Dumper $transcriptSummary;
+#die;
 
 open(UNDONE, $undoneStrainsFile) or die "Cannot open file $undoneStrainsFile for reading: $!";
 my @undoneStrains =  map { chomp; $_ } <UNDONE>;
@@ -187,8 +193,8 @@ while($merger->hasNext()) {
 
   ($variations, $strainFrame) = &addShiftedLocation($variations, $strainFrame);
   # Uncomment these to see how this works
-  #print Dumper $variations;                                                                                                                                                             
-  #print Dumper $strainFrame;
+  # print Dumper $variations;                                                                                                                                                             
+  # print Dumper $strainFrame;
   
   my $naSequenceId = $naSequenceIds->{$sequenceId};
   die "Could not find na_sequence_id for sequence source id: $sequenceId" unless($naSequenceId);
@@ -957,28 +963,36 @@ sub getAminoAcidSequenceOfSnp {
 
 sub createCurrentShifts {
     my ($strains, $dbh) = @_;
-    my $currentShifts;
-
+    my $currentShifts;                                                                                                                                                      
     foreach my $strain (@$strains) {
 
-	my $INDEL_QUERY = "SELECT i.location, i.shift FROM apidb.indel i WHERE sample_name = '$strain'";
-	my $INDEL_QUERY_SH = $dbh->prepare($INDEL_QUERY);
-        $INDEL_QUERY_SH->execute();
+        my $NASEQID_QUERY = "SELECT DISTINCT s.source_id FROM dots.nasequence s, apidb.indel i WHERE i.sample_name = '$strain' and s.na_sequence_id = i.na_sequence_id";
+        my $NASEQID_QUERY_SH = $dbh->prepare($NASEQID_QUERY);
+        $NASEQID_QUERY_SH->execute();
+        
+        while (my $sourceId = $NASEQID_QUERY_SH->fetchrow_array()) {
 
-	my @locationshifts = ();
-	my $counter = 0;
-        my $currentShift = 0;
+            my $INDEL_QUERY = "SELECT i.location, i.shift FROM apidb.indel i, dots.nasequence s WHERE s.na_sequence_id = i.na_sequence_id and i.sample_name = '$strain'";
+            my $INDEL_QUERY_SH = $dbh->prepare($INDEL_QUERY);
+            $INDEL_QUERY_SH->execute();
 
-	while (my ($location, $shift) = $INDEL_QUERY_SH->fetchrow_array()) {
-            push ( @{$locationshifts[$counter]}, ($location, $shift + $currentShift));
-            $counter++;
-            $currentShift = $shift + $currentShift;
-	}
+            my @locationshifts = ();
+            my $counter = 0;
+            my $currentShift = 0;
 
-	push @{ $currentShifts->{$strain}->{'LmjF.01'}}, \@locationshifts;
+            while (my ($location, $shift) = $INDEL_QUERY_SH->fetchrow_array()) {
+                push ( @{$locationshifts[$counter]}, ($location, $shift + $currentShift));
+                $counter++;
+                $currentShift = $shift + $currentShift;
+            }
+
+            push @{ $currentShifts->{$strain}->{$sourceId}}, \@locationshifts;
+            
+        }
     }
     return $currentShifts;
 }
+
 
 sub addStrainExonShiftsToTranscriptSummary {
     my ($currentShifts, $transcriptSummary) = @_;
@@ -986,47 +1000,48 @@ sub addStrainExonShiftsToTranscriptSummary {
 
     foreach my $strain (keys %{ $currentShifts }) {
 
-        my $shiftArray = $currentShifts->{$strain};
+	my $shiftArray = $currentShifts->{$strain};
 
-        foreach my $chromosome (keys %{ $shiftArray }) {
+	foreach my $chromosome (keys %{ $shiftArray }) {
 
-            my $chromosomeShiftArray = $shiftArray->{$chromosome};
-            my $indexedArray = $chromosomeShiftArray[0][0];
+	    my $chromosomeShiftArray = $shiftArray->{$chromosome};
+	    my $indexedArray = $chromosomeShiftArray[0][0];
             my $shiftArrayLen = scalar @{ $indexedArray };
             my $shiftFrameLimit = $shiftArrayLen - 1;
             $oldShift = 0;
-            $shiftFrame = 0;
+	    $shiftFrame = 0;
             my ($exon_start, $exon_end);
             my $startIndicator = "start";
             my $endIndicator = "end";
-            my @sorted_keys = nsort keys %{ $transcriptSummary };
+	    my @sorted_keys = nsort keys %{ $transcriptSummary };
 
-            foreach my $transcript (@sorted_keys) {
+	    foreach my $transcript (@sorted_keys) {
 
-                my ($shifted_start, $shifted_end);
-                $exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
-                $exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
-                # This makes sure that we are correctly setting shifted starts and ends                                                                                                                    
-                if ($transcript !~ /$chromosome/) {
-                    if ($$transcriptSummary{$transcript}->{$strain}->{shifted_start}) {
-                        next;
-                    }
-                    else {
-                        $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $exon_start;
-                        $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $exon_end;
-                        next;
-                    }
-                }
-                ($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, $chromosomeShiftArray);
-                ($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, $chromosomeShiftArray);
-                #print "$transcript\t$exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\n";                                                                                                   
-                $$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
-                $$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
-            }
+		my ($shifted_start, $shifted_end);
+		$exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
+		$exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
+                # This makes sure that we are correctly setting shifted starts and ends  
+		if ($transcript !~ /$chromosome/) {
+		    if ($$transcriptSummary{$transcript}->{$strain}->{shifted_start}) {
+			next;
+		    }
+		    else {
+			$$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $exon_start;
+			$$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $exon_end;
+			next;
+		    }
+		}
+		($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, $chromosomeShiftArray);
+		($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, $chromosomeShiftArray);
+		#print "$transcript\t$exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\n";
+		$$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
+		$$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
+	    }
         }
     }
     return $transcriptSummary;
 }
+
 
 sub calcCoordinates {
     my ($shiftFrame, $shiftFrameLimit, $oldShift, $coordinate, $indicator, $shiftArray) = @_;
