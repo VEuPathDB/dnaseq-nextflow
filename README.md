@@ -172,6 +172,29 @@ flowchart TD
     p9 -->|geneCNVFile| p11
 ```
 
+***<p align=center>loadSingleExperiment</p>***  
+```mermaid
+flowchart TD
+    p0((Channel.fromPath))
+    p1((Channel.fromPath))
+    p2((Channel.fromPath))
+    p3(( ))
+    p4(( ))
+    p5[loadSingleExperiment:loadIndels]
+    p6([collectFile])
+    p7(( ))
+    p8([collectFile])
+    p9(( ))
+    p0 -->|indels_qch| p5
+    p1 -->|bam_qch| p8
+    p2 -->|bw_qch| p6
+    p3 -->|extDbRlsSpec| p5
+    p4 -->|genomeExtDbRlsSpec| p5
+    p6 --> p7
+    p8 --> p9
+```
+This work flow will run after processSingleExperiment. This workflow requires a gus environment to run. It will take the strain specific vcfs and consensus sequences output from the processSingleExperiment workflow. The strain specific vcfs will be merged together to create a merged vcf. This will be sent to webservices, along with being sent to snpEff to generate an annotated vcf file. The consensus sequences will be combined and sent to web services. These masked consensus sequences, along with various information queried from our databases will be used to generate a transcript fasta file that is indel and coverage aware. This will be used in downstream processes that still need to be generated.
+
 ***<p align=center>mergeExperiments</p>***  
 
 ```mermaid
@@ -231,30 +254,6 @@ flowchart TD
     p25 --> p26
 
 ```
-
-
-***<p align=center>loadSingleExperiment</p>***  
-```mermaid
-flowchart TD
-    p0((Channel.fromPath))
-    p1((Channel.fromPath))
-    p2((Channel.fromPath))
-    p3(( ))
-    p4(( ))
-    p5[loadSingleExperiment:loadIndels]
-    p6([collectFile])
-    p7(( ))
-    p8([collectFile])
-    p9(( ))
-    p0 -->|indels_qch| p5
-    p1 -->|bam_qch| p8
-    p2 -->|bw_qch| p6
-    p3 -->|extDbRlsSpec| p5
-    p4 -->|genomeExtDbRlsSpec| p5
-    p6 --> p7
-    p8 --> p9
-```
-This work flow will run after processSingleExperiment. This workflow requires a gus environment to run. It will take the strain specific vcfs and consensus sequences output from the processSingleExperiment workflow. The strain specific vcfs will be merged together to create a merged vcf. This will be sent to webservices, along with being sent to snpEff to generate an annotated vcf file. The consensus sequences will be combined and sent to web services. These masked consensus sequences, along with various information queried from our databases will be used to generate a transcript fasta file that is indel and coverage aware. This will be used in downstream processes that still need to be generated.
 
 **<p align=center>Explanation of Config File Parameters</p>**
 ---
