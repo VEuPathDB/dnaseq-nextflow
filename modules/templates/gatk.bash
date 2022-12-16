@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-if [$params.gatkJar -ne "NA"]; then
-  JARPATH=$params.gatkJar
-else 
-  JARPATH="/usr/GenomeAnalysisTK.jar"
-fi
+JARPATH="/usr/GenomeAnalysisTK.jar"
 java -jar \$JARPATH \
   -I picard.bam \
   -R genome_reordered.fa \

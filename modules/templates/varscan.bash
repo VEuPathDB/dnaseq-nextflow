@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-if [$params.varscanJar -ne "NA"]; then
-  JARPATH=$params.varscanJar
-else 
-  JARPATH="/usr/local/VarScan.jar"
-fi
+JARPATH="/usr/local/VarScan.jar"
 echo $sampleName >vcf_sample_name
 java -jar \$JARPATH mpileup2snp result.pileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqSnp >varscan.snps.vcf  2>varscan_snps.err
 java -jar \$JARPATH mpileup2indel result.pileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqCons >varscan.indels.vcf  2> varscan_indels.err

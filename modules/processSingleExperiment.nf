@@ -170,7 +170,6 @@ process picard {
 
   input:
     tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
-    path picardJar
     tuple val(sampleName), path('result_sorted_ds.bam') 
 
   output:
@@ -198,7 +197,6 @@ process gatk {
   publishDir "$params.outputDir", pattern: "*.bai", mode: "copy", saveAs: { filename -> "${sampleName}.bam.bai" }
 
   input:
-    path gatkJar 
     tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
     tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai')
 
@@ -246,7 +244,6 @@ process varscan {
 
   input:
     tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai'), path('result.pileup') 
-    path varscanJar
     tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
 
   output:
@@ -735,10 +732,6 @@ workflow ps {
 
   main:
  
-    gatk_jar_path = file(params.gatkJar)
-    picard_jar_path = file(params.picardJar)
-    varscan_jar_path = file(params.varscanJar)
-
     genome_fasta_file = file(params.genomeFastaFile)
 
     hisat2IndexResults = hisat2Index(genome_fasta_file)
@@ -755,13 +748,13 @@ workflow ps {
 
     subsampleResults = subsample(hisat2Results)
 
-    picardResults = picard(reorderFastaResults, picard_jar_path, subsampleResults)
+    picardResults = picard(reorderFastaResults, subsampleResults)
 
-    gatkResults = gatk(gatk_jar_path, reorderFastaResults, picardResults.bam_and_dict )
+    gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
     mpileupResults = mpileup(gatkResults, reorderFastaResults)
 
-    varscanResults = varscan(gatkResults.join(mpileupResults), varscan_jar_path, reorderFastaResults)
+    varscanResults = varscan(gatkResults.join(mpileupResults), reorderFastaResults)
   
     concatSnpsAndIndelsResults = concatSnpsAndIndels(varscanResults.vcf_files)
 
