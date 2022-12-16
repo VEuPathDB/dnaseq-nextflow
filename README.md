@@ -279,9 +279,6 @@ Workflows: processSingleExperiment=ps; loadSingleExperiment=ls; loadCNV=lc; merg
 | X |   |   |   | varscanMinVarFreqSnp | int | Sets the --min-var-freq argument used in varscan mpileup2snp |
 | X |   |   |   | varscanMinVarFreqCons | int | Sets the --min-var-freq argument used in varscan mpileup2indel and mpileup2cns |
 | X |   |   |   | maxNumberOfReads | int | Used in subSample process to limit total number of reads | 
-| X |   |   |   | gatkJar | string path | Path to gatk Jar. If defined as 'NA', jar path will be defined to work inside of the container |
-| X |   |   |   | picardJar | string path | Path to picard Jar. If defined as 'NA', jar path will be defined to work inside of the container  |
-| X |   |   |   | varscanJar | string path | Path to varscan Jar. If defined as 'NA', jar path will be defined to work inside of the container  |
 | X |   | X |   | footprintFile | path | Path to gene footprints file |
 |   |   |   | X | fastaDir | string path | Path to directory that contains the consensus fasta files output from processSingleExperiment |
 |   |   |   | X | vcfDir | string path | Path to directory that contains the strain specific vcf files output from processSingleExperiment |
