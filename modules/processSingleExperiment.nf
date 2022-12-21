@@ -77,8 +77,7 @@ process trimmomatic {
 
   input:
     tuple val(sampleName), path(sampleFile), path('mateAEncoding') 
-    path adaptorsFile 
-
+    
   output:
     tuple val(sampleName), path('sample_1P'), path('sample_2P') 
 
@@ -740,7 +739,7 @@ workflow ps {
 
     fastqc_checkResults = fastqc_check(samples_qch.join(fastqcResults))
 
-    trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults), params.trimmomaticAdaptorsFile)
+    trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults))
 
     hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
 
