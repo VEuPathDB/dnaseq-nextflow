@@ -1,5 +1,18 @@
 #!/usr/bin/env nextflow
+import nextflow.splitter.CsvSplitter
 nextflow.enable.dsl=2
+
+def fetchRunAccessions( tsv ) {
+    def splitter = new CsvSplitter().options( header:true, sep:'\t' )
+    def reader = new BufferedReader( new FileReader( tsv ) )
+    splitter.parseHeader( reader )
+    List<String> run_accessions = []
+    Map<String,String> row
+    while( row = splitter.fetchRecord( reader ) ) {
+       run_accessions.add( row['run_accession'] )
+    }
+    return run_accessions
+}
 
 //---------------------------------------------------------------
 // Including Workflows
@@ -17,8 +30,8 @@ include { tests } from './modules/runTests.nf'
 
 workflow processSingleExperiment {
 
-  if(!params.inputDir) {
-    throw new Exception("Missing parameter params.inputDir")
+  if(!params.input) {
+    throw new Exception("Missing parameter params.input")
   }
    
   if(!params.genomeFastaFile) {
@@ -37,23 +50,29 @@ workflow processSingleExperiment {
     throw new Exception("Missing parameter params.trimmomaticAdaptorsFile")
   }
   
-  if(params.fromBAM) {
-    samples_qch = Channel.fromPath([params.inputDir + '/**/*.bam'])
+  if(params.fromBAM && params.local) {
+    samples_qch = Channel.fromPath([params.input + '/**/*.bam'])
                     .map { file -> tuple(file.baseName, [file]) }
   }
-  
-  else if(params.isPaired) {
-    samples_qch = Channel.fromFilePairs([params.inputDir + '/**/*_{1,2}.fastq', params.inputDir + '/**/*_{1,2}.fastq.gz', params.inputDir + '/**/*_{1,2}.fq.gz'])
+
+  else if(params.isPaired && params.local) {
+    samples_qch = Channel.fromFilePairs([params.input + '/**/*_{1,2}.fastq', params.input + '/**/*_{1,2}.fastq.gz', params.input + '/**/*_{1,2}.fq.gz'])
   }
-  
+
+  else if(!params.local) {
+    input = fetchRunAccessions(params.input)
+    samples_qch = Channel.fromList(input)
+  }
+
   else {
-    samples_qch = Channel.fromPath([params.inputDir + '/**/*.fastq', params.inputDir + '/**/*.fastq.gz', params.inputDir + '/**/*.fq.gz'])
+    samples_qch = Channel.fromPath([params.input + '/**/*.fastq', params.input + '/**/*.fastq.gz', params.input + '/**/*.fq.gz'])
                                                                                              .map { file -> tuple(file.baseName, [file]) }
   }
 
   ps(samples_qch)
 
 }
+
 
 //---------------------------------------------------------------
 // mergeExperiments
@@ -87,14 +106,14 @@ workflow mergeExperiments {
 
 workflow loadSingleExperiment {
 
-  if(!params.inputDir) {
-    throw new Exception("Missing parameter params.inputDir")
+  if(!params.input) {
+    throw new Exception("Missing parameter params.input")
   }
 
   else {
-    indels_qch = Channel.fromPath([params.inputDir + '/*.indel.tsv'], checkIfExists: true)
-    bam_qch = Channel.fromPath([params.inputDir + '/*.bam'], checkIfExists: true)
-    bw_qch = Channel.fromPath([params.inputDir + '/*.bw'], checkIfExists: true)
+    indels_qch = Channel.fromPath([params.input + '/*.indel.tsv'], checkIfExists: true)
+    bam_qch = Channel.fromPath([params.input + '/*.bam'], checkIfExists: true)
+    bw_qch = Channel.fromPath([params.input + '/*.bw'], checkIfExists: true)
   }
 
   ls(indels_qch, bam_qch, bw_qch)
@@ -107,12 +126,12 @@ workflow loadSingleExperiment {
 
 workflow loadCNV {
 
-  if(!params.inputDir) {
-    throw new Exception("Missing parameter params.inputDir")
+  if(!params.input) {
+    throw new Exception("Missing parameter params.input")
   }
 
   else {
-    tpm_qch = Channel.fromPath([params.inputDir + '/CNVs/*.tpm'], checkIfExists: true).map { file -> tuple(file.baseName, [file]) }
+    tpm_qch = Channel.fromPath([params.input + '/CNVs/*.tpm'], checkIfExists: true).map { file -> tuple(file.baseName, [file]) }
   }
 
   lc(tpm_qch)
@@ -143,8 +162,8 @@ workflow runTests {
 
 workflow {
 
-  if(!params.inputDir) {
-    throw new Exception("Missing parameter params.inputDir")
+  if(!params.input) {
+    throw new Exception("Missing parameter params.input")
   }
    
   if(!params.genomeFastaFile) {
@@ -164,16 +183,16 @@ workflow {
   }
   
   if(params.fromBAM) {
-    samples_qch = Channel.fromPath([params.inputDir + '/**/*.bam'])
+    samples_qch = Channel.fromPath([params.input + '/**/*.bam'])
                     .map { file -> tuple(file.baseName, [file]) }
   }
   
   else if(params.isPaired) {
-    samples_qch = Channel.fromFilePairs([params.inputDir + '/**/*_{1,2}.fastq', params.inputDir + '/**/*_{1,2}.fastq.gz', params.inputDir + '/**/*_{1,2}.fq.gz'])
+    samples_qch = Channel.fromFilePairs([params.input + '/**/*_{1,2}.fastq', params.input + '/**/*_{1,2}.fastq.gz', params.input + '/**/*_{1,2}.fq.gz'])
   }
   
   else {
-    samples_qch = Channel.fromPath([params.inputDir + '/**/*.fastq', params.inputDir + '/**/*.fastq.gz', params.inputDir + '/**/*.fq.gz'])
+    samples_qch = Channel.fromPath([params.input + '/**/*.fastq', params.input + '/**/*.fastq.gz', params.input + '/**/*.fq.gz'])
                                                                                              .map { file -> tuple(file.baseName, [file]) }
   }
 

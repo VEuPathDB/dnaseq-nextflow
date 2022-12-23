@@ -1,6 +1,29 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
+process downloadBAMFromEBI {
+  container = 'veupathdb/dnaseqanalysis'
+  input:
+    val id
+
+  output:
+    tuple val(id), path("${id}.bam")         
+
+  script:
+    template 'downloadBAMFromEBI.bash'
+}
+
+process downloadFiles {
+  container = 'veupathdb/humann'
+  input:
+    val id
+
+  output:
+    tuple val(id), path("${id}**.fastq")
+
+  script:
+    template 'downloadFiles.bash'
+}
 
 process hisat2Index {
   container = 'veupathdb/shortreadaligner'
@@ -94,7 +117,7 @@ process trimmomatic {
     touch sample_1P
     touch sample_2P
     """
-
+    
 }
 
 
@@ -288,14 +311,14 @@ process concatSnpsAndIndels {
 process makeCombinedVarscanIndex {
   container = 'veupathdb/dnaseqanalysis'
   
-   publishDir "$params.outputDir", pattern: "varscan.concat.vcf.gz", mode: "copy", saveAs: { filename -> "${sampleName}.concat.vcf.gz" }
-   publishDir "$params.outputDir", pattern: "varscan.concat.vcf.gz.tbi", mode: "copy", saveAs: { filename -> "${sampleName}.concat.vcf.gz.tbi" }
+   publishDir "$params.outputDir", pattern: "*.concat.vcf.gz", mode: "copy"
+   publishDir "$params.outputDir", pattern: "*.concat.vcf.gz.tbi", mode: "copy"
 
   input:
     tuple val(sampleName), path('varscan.concat.vcf'), path('genome_masked.fa') 
 
   output:
-    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa')
+    tuple val(sampleName), path('*.concat.vcf.gz'), path('*.concat.vcf.gz.tbi'), path('genome_masked.fa')
 
   script:
     template 'makeCombinedVarscanIndex.bash'
@@ -358,7 +381,7 @@ process mergeVcfs {
 
   input:
     val vcfCount
-    tuple path('*.vcf.gz'), path('*.vcf.gz.tbi'), val(key)
+    tuple path(samplevcfzip), path(samplevcfzipindex), val(key)
 
   output:
     path('result.vcf.gz') 
@@ -730,19 +753,50 @@ workflow ps {
     samples_qch
 
   main:
- 
+
     genome_fasta_file = file(params.genomeFastaFile)
 
     hisat2IndexResults = hisat2Index(genome_fasta_file)
 
-    fastqcResults = fastqc(samples_qch)
+    if(!params.local && !params.fromBAM) {
 
-    fastqc_checkResults = fastqc_check(samples_qch.join(fastqcResults))
+        files = downloadFiles(samples_qch)
 
-    trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults))
+        fastqcResults = fastqc(files)
 
-    hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
+        fastqc_checkResults = fastqc_check(files.join(fastqcResults))
 
+        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults))
+
+        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
+    }
+
+    else if(!params.local && params.fromBAM) {
+
+        files = downloadBAMFromEBI(samples_qch)
+
+        fastqcResults = fastqc(files)
+
+        fastqc_checkResults = fastqc_check(files.join(fastqcResults))
+
+        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults))
+
+        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
+    
+    }
+
+    else {
+
+        fastqcResults = fastqc(samples_qch)
+
+        fastqc_checkResults = fastqc_check(samples_qch.join(fastqcResults))
+
+        trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults))
+
+        hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
+
+    }
+    
     reorderFastaResults = reorderFasta(hisat2Results.first(), genome_fasta_file)
 
     subsampleResults = subsample(hisat2Results)

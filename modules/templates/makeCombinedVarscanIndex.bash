@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-bgzip varscan.concat.vcf
-tabix -fp vcf varscan.concat.vcf.gz
+mv varscan.concat.vcf ${sampleName}.concat.vcf
+bgzip ${sampleName}.concat.vcf
+tabix -fp vcf ${sampleName}.concat.vcf.gz
