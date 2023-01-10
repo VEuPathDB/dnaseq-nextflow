@@ -14,7 +14,7 @@ process downloadBAMFromEBI {
 }
 
 process downloadFiles {
-  container = 'veupathdb/bowtiemapping'
+  container = 'veupathdb/humann'
   input:
     val id
 
