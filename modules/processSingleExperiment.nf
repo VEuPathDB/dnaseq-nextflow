@@ -29,7 +29,7 @@ process hisat2Index {
   container = 'veupathdb/shortreadaligner'
 
   input:
-   path 'genome.fa.gz'  
+   path 'genome.fa'  
     
   output:
    path 'genomeIndex*.ht2', emit: ht2_files
