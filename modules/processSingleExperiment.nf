@@ -151,7 +151,7 @@ process reorderFasta {
    
   input:
     tuple val(sampleName), path('result_sorted.bam')
-    path 'genome.fa.gz'
+    path 'genome.fa'
 
   output:
     tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
