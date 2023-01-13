@@ -2,5 +2,5 @@
 
 set -euo pipefail
 makeWindowedBed.pl \
-  --samtoolsIndex genome_reordered.fa.fai \
+  --samtoolsIndex $genomeReorderedFastaIndex \
   --winLen $winLen

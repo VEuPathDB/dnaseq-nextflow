@@ -6,4 +6,4 @@ htseq-count \
   -s no \
   -t CDS \
   -i gene_id \
-  -a 0 result_sortByName.bam gtfFile > counts.txt
+  -a 0 $resultSortByNameBam $gtfFile > counts.txt

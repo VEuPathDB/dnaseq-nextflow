@@ -2,7 +2,7 @@
 
 set -euo pipefail
 addSampleToDefline.pl \
-     -i cons.fa \
+     -i $consFasta \
      -o unique_ids.fa \
      -s $sampleName
 gzip unique_ids.fa

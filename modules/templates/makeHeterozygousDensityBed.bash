@@ -2,8 +2,8 @@
 
 set -euo pipefail
 bedtools coverage \
-  -a windows.bed \
-  -b heterozygousSNPs.vcf \
+  -a $windows \
+  -b $heterozygousSNPs \
   -sorted \
-  -g genome.txt \
+  -g $genome \
   -counts > heterozygousDensity.bed

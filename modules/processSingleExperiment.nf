@@ -29,7 +29,7 @@ process hisat2Index {
   container = 'veupathdb/shortreadaligner'
 
   input:
-   path 'genome.fa'  
+   path genomeFasta  
     
   output:
    path 'genomeIndex*.ht2', emit: ht2_files
@@ -76,7 +76,7 @@ process fastqc_check {
   container = 'veupathdb/shortreadaligner'
 
   input:
-    tuple val(sampleName), path(sampleFile), path('fastqc_output') 
+    tuple val(sampleName), path(sampleFile), path(fastqc_output) 
 
   output:
     tuple val(sampleName), path('mateAEncoding') 
@@ -125,7 +125,7 @@ process hisat2 {
     container = 'veupathdb/shortreadaligner'
 
     input:
-      tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path('sample_1p'), path('sample_2p') 
+      tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p) 
       val hisat2_index 
       path 'genomeIndex.*.ht2' 
 
@@ -150,8 +150,8 @@ process reorderFasta {
   container = 'veupathdb/shortreadaligner'
    
   input:
-    tuple val(sampleName), path('result_sorted.bam')
-    path 'genome.fa'
+    tuple val(sampleName), path(resultSortedBam)
+    path genomeFasta
 
   output:
     tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
@@ -172,7 +172,7 @@ process subsample {
   container = 'veupathdb/shortreadaligner'
 
   input:
-    tuple val(sampleName), path('result_sorted.bam')
+    tuple val(sampleName), path(resultSortedBam)
 
   output:
     tuple val(sampleName), path('result_sorted_ds.bam')
@@ -191,8 +191,8 @@ process picard {
   container = 'broadinstitute/picard:2.25.0'
 
   input:
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
-    tuple val(sampleName), path('result_sorted_ds.bam') 
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+    tuple val(sampleName), path(resultSortedDsBam) 
 
   output:
     tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai'), emit: bam_and_dict
@@ -219,8 +219,8 @@ process gatk {
   publishDir "$params.outputDir", pattern: "*.bai", mode: "copy", saveAs: { filename -> "${sampleName}.bam.bai" }
 
   input:
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
-    tuple val(sampleName), path('genome_reordered.dict'), path('picard.bam'), path('picard.bai')
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+    tuple val(sampleName), path(genomeReorderedDict), path(picardBam), path(picardBamIndex)
 
   output:
     tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai')
@@ -242,8 +242,8 @@ process mpileup {
   publishDir "$params.outputDir", pattern: "result.pileup", mode: "copy", saveAs: { filename -> "${sampleName}.result.pileup" }
 
   input:
-    tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai')
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple val(sampleName), path (resultSortedGatkBam), path(resultSortedGatkBamIndex)
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
     tuple val(sampleName), path('result.pileup') 
@@ -265,8 +265,8 @@ process varscan {
   publishDir "$params.outputDir", pattern: "varscan.cons.gz", mode: "copy", saveAs: { filename -> "${sampleName}.varscan.cons.gz" }
 
   input:
-    tuple val(sampleName), path ('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai'), path('result.pileup') 
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple val(sampleName), path (resultSortedGatkBam), path(resultSortedGatkBamIndex), path(resultPileup) 
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
     tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
@@ -291,7 +291,7 @@ process concatSnpsAndIndels {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa')
+    tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta)
 
   output:
     tuple val(sampleName), path('varscan.concat.vcf'), path('genome_masked.fa')
@@ -315,7 +315,7 @@ process makeCombinedVarscanIndex {
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz.tbi", mode: "copy"
 
   input:
-    tuple val(sampleName), path('varscan.concat.vcf'), path('genome_masked.fa') 
+    tuple val(sampleName), path(varscanConcatVcf), path(genomeMaskedFasta) 
 
   output:
     tuple val(sampleName), path('*.concat.vcf.gz'), path('*.concat.vcf.gz.tbi'), path('genome_masked.fa')
@@ -337,7 +337,7 @@ process filterIndels {
   container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa')
+    tuple val(sampleName), path(varscanConcatVcfGz), path(varscanConcatVcfGzTbi), path(genomeMaskedFasta)
 
   output:
     tuple val(sampleName), path('output.recode.vcf')
@@ -360,7 +360,7 @@ process makeIndelTSV {
   publishDir "$params.outputDir", pattern: "output.tsv", mode: "copy", saveAs: { filename -> "${sampleName}.indel.tsv" }
 
   input:
-    tuple val(sampleName), path('output.recode.vcf')
+    tuple val(sampleName), path(outputRecodeVcf)
 
   output:
     path('output.tsv')
@@ -406,7 +406,7 @@ process makeMergedVarscanIndex {
   publishDir "$params.outputDir", mode: "copy"
 
   input:
-    path('result.vcf.gz') 
+    path(resultVcfGz) 
 
   output:
     tuple path('result.vcf.gz'), path('result.vcf.gz.tbi')
@@ -427,8 +427,8 @@ process bcftoolsConsensus {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path('varscan.concat.vcf.gz'), path('varscan.concat.vcf.gz.tbi'), path('genome_masked.fa')
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple val(sampleName), path(varscanConcatVcfGz), path(varscanConcatVcfGzTbi), path(genomeMaskedFasta)
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
     tuple val(sampleName), path('cons.fa')
@@ -450,7 +450,7 @@ process addSampleToDefline {
   publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
 
   input:
-  tuple val(sampleName), path('cons.fa')
+  tuple val(sampleName), path(consFasta)
 
   output:
     path 'unique_ids.fa.gz'
@@ -470,8 +470,8 @@ process genomecov {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bai') 
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkIndex) 
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
     tuple val(sampleName), path('coverage.bed')
@@ -494,8 +494,8 @@ process bedGraphToBigWig {
   publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}.bw" }
 
   input:
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
-    tuple val(sampleName), path('coverage.bed') 
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+    tuple val(sampleName), path(coverageBed) 
 
   output:
     path 'coverage.bw'
@@ -515,7 +515,7 @@ process sortForCounting {
   container = 'veupathdb/shortreadaligner'
 
     input:
-    tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai')
+    tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
 
   output:
     tuple val(sampleName), path('result_sortByName.bam') 
@@ -537,8 +537,8 @@ process htseqCount {
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.counts" }
 
   input:
-    tuple val(sampleName), path('result_sortByName.bam') 
-    path 'gtfFile' 
+    tuple val(sampleName), path(resultSortByNameBam) 
+    path gtfFile 
 
   output: 
     tuple val(sampleName), path('counts.txt') 
@@ -559,8 +559,8 @@ process calculateTPM {
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.tpm" }
 
   input:
-    tuple val(sampleName), path('counts.txt') 
-    path 'geneFootprintFile' 
+    tuple val(sampleName), path(counts) 
+    path geneFootprintFile 
 
   output:
     path('tpm.txt')
@@ -580,7 +580,7 @@ process makeWindowFile {
   container = 'veupathdb/shortreadaligner'
 
   input:
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
     val winLen 
 
   output:
@@ -602,8 +602,8 @@ process bedtoolsWindowed {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple path('windows.bed'), path('genome.txt') 
-    tuple val(sampleName), path('result_sorted_gatk.bam'), path('result_sorted_gatk.bam.bai') 
+    tuple path(windows), path(genome) 
+    tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex) 
 
   output:
     tuple val(sampleName), path('windowedCoverage.bed') 
@@ -625,7 +625,7 @@ process normaliseCoverage {
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
   input:
-    tuple val(sampleName), path('windowedCoverage.bed'), path('summaryMetrics.txt') 
+    tuple val(sampleName), path(windowedCoverage), path(summaryMetrics) 
    
   output:
     path 'normalisedCoverage.bed'
@@ -644,8 +644,8 @@ process makeSnpDensity {
   container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa') 
-    tuple path('windows.bed'), path('genome.txt') 
+    tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta) 
+    tuple path(windows), path(genome) 
 
   output:
     tuple val(sampleName), path('snpDensity.bed'), path('indelDensity.bed')
@@ -667,8 +667,8 @@ process makeDensityBigwigs {
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
   input:
-    tuple val(sampleName), path('snpDensity.bed'), path('indelDensity.bed')
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple val(sampleName), path(snpDensity), path(indelDensity)
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
     tuple path('snpDensity.bw'), path('indelDensity.bw')
@@ -688,7 +688,7 @@ process getHeterozygousSNPs {
   container = 'veupathdb/vcf_parser_cnv'
 
   input:
-    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa')
+    tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta)
 
   output:
     tuple val(sampleName), path('heterozygousSNPs.vcf')
@@ -707,8 +707,8 @@ process makeHeterozygousDensityBed {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple path('windows.bed'), path('genome.txt') 
-    tuple val(sampleName), path('heterozygousSNPs.vcf')
+    tuple path(windows), path(genome) 
+    tuple val(sampleName), path(heterozygousSNPs)
 
   output:
     tuple val(sampleName), path('heterozygousDensity.bed')
@@ -729,8 +729,8 @@ process makeHeterozygousDensityBigwig {
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
 
   input:
-    tuple val(sampleName), path('heterozygousDensity.bed') 
-    tuple path('genome_reordered.fa'), path('genome_reordered.fa.fai')
+    tuple val(sampleName), path(heterozygousDensityBed) 
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
     path('heterozygousDensity.bw') 

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-zcat varscan.snps.vcf.gz | bedtools coverage \
-  -a windows.bed \
+zcat $varscanSnpsVcfGz | bedtools coverage \
+  -a $windows \
   -b stdin -sorted \
-  -g genome.txt \
+  -g $genome \
   -counts > snpDensity.bed
-zcat varscan.indels.vcf.gz | bedtools coverage \
-  -a windows.bed \
+zcat $varscanIndelsVcfGz | bedtools coverage \
+  -a $windows \
   -b stdin -sorted \
-  -g genome.txt \
+  -g $genome \
   -counts > indelDensity.bed

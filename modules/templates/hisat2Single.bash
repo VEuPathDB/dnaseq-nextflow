@@ -7,7 +7,7 @@ hisat2 --no-spliced-alignment \
   -p $params.hisat2Threads \
   -q --\$mateAEncoding \
   -x $hisat2_index \
-  -U sample_1p \
+  -U $sample_1p \
 | samtools collate -@ $params.samtoolsThreads -o output.bam -
 samtools fixmate -@ $params.samtoolsThreads -m output.bam fix.bam
 samtools sort -@ $params.samtoolsThreads -o sort.bam fix.bam

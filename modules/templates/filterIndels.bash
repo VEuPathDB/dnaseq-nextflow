@@ -2,7 +2,7 @@
 
 set -euo pipefail
 vcftools \
-    --gzvcf varscan.concat.vcf.gz \
+    --gzvcf $varscanConcatVcfGz \
     --keep-only-indels \
     --out output \
     --recode

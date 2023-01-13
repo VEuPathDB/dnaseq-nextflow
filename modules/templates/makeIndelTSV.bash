@@ -2,6 +2,6 @@
 
 set -euo pipefail
 findValues.pl \
-   -i output.recode.vcf \
+   -i $outputRecodeVcf \
    -s ${sampleName} \
    -o output.tsv
