@@ -93,7 +93,7 @@ $dbiDsn = $gusConfig->getDbiDsn();
 $login = $gusConfig->getDatabaseLogin();
 $password = $gusConfig->getDatabasePassword();
 $core = $gusConfig->getCoreSchemaName();
-my $dbh = DBI->connect('dbi:Oracle:database=tryp-inc;SERVICE_NAME=trypbl8n.upenn.edu;host=localhost;port=1528', $login, $password);
+my $dbh = DBI->connect($dbiDsn, $login, $password);
 
 my $orthoMclStmt = $dbh->prepare($sql);
 $orthoMclStmt->execute();
