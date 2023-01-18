@@ -9,8 +9,6 @@ use GUS::Supported::GusConfig;
 use DBI;
 use DBD::Oracle;
 
-our @ISA = qw(VEuPath::CalculationsForCNVs);
-
 my ($gusConfigFile, $chrPloidyFile, $fpkmFile, $outputDir, $sampleName, $taxonId, $geneFootprintFile);
 my $ploidy = 2;
 &GetOptions("gusConfigFile=s" => \$gusConfigFile,
@@ -75,12 +73,12 @@ my $sql = "with sequence as (
             where s.na_feature_id = o.na_feature_id";
 
 #get hashrefs of chromosome data
-my $chrs = ApiCommonData::Load::getChrsForCalcs($taxonId);
-my $geneData = ApiCommonData::Load::getGeneInfo($geneFootprintFile, $chrs);
-my $chrValues = ApiCommonData::Load::getChrFPKMVals($fpkmFile, $chrs, $geneData);
-my $chrMedians = ApiCommonData::Load::getChrMedians($chrValues, $chrs);
-my $allChrMedian = ApiCommonData::Load::getMedianAcrossChrs($chrValues, $chrs);
-my $chrPloidies = ApiCommonData::Load::getChrPloidies($chrMedians, $allChrMedian, $ploidy, $chrs);
+my $chrs = ApiCommonData::Load::CalculationsForCNVs::getChrsForCalcs($taxonId);
+my $geneData = ApiCommonData::Load::CalculationsForCNVs::getGeneInfo($geneFootprintFile, $chrs);
+my $chrValues = ApiCommonData::Load::CalculationsForCNVs::getChrFPKMVals($fpkmFile, $chrs, $geneData);
+my $chrMedians = ApiCommonData::Load::CalculationsForCNVs::getChrMedians($chrValues, $chrs);
+my $allChrMedian = ApiCommonData::Load::CalculationsForCNVs::getMedianAcrossChrs($chrValues, $chrs);
+my $chrPloidies = ApiCommonData::Load::CalculationsForCNVs::getChrPloidies($chrMedians, $allChrMedian, $ploidy, $chrs);
 
 # get OrthoMCL IDs from DB
 if (!$gusConfigFile) {
