@@ -39,12 +39,12 @@ close OUT;
 
 sub calculateChrPloidies {
     my ($geneFootprintFile, $fpkmFile, $ploidy, $taxonId) = @_;
-    my $chrs = VEuPath::CalculationsForCNVs::getChrsForCalcs($taxonId);
-    my $geneData = VEuPath::CalculationsForCNVs::getGeneInfo($geneFootprintFile, $chrs);
-    my $chrValues = VEuPath::CalculationsForCNVs::getChrFPKMVals($fpkmFile, $chrs, $geneData);
-    my $chrMedians = VEuPath::CalculationsForCNVs::getChrMedians($chrValues, $chrs);
-    my $allChrMedian = VEuPath::CalculationsForCNVs::getMedianAcrossChrs($chrValues, $chrs);
-    my $chrPloidies = VEuPath::CalculationsForCNVs::getChrPloidies ($chrMedians, $allChrMedian, $ploidy, $chrs);
+    my $chrs = ApiCommonData::Load::getChrsForCalcs($taxonId);
+    my $geneData = ApiCommonData::Load::getGeneInfo($geneFootprintFile, $chrs);
+    my $chrValues = ApiCommonData::Load::getChrFPKMVals($fpkmFile, $chrs, $geneData);
+    my $chrMedians = ApiCommonData::Load::getChrMedians($chrValues, $chrs);
+    my $allChrMedian = ApiCommonData::Load::getMedianAcrossChrs($chrValues, $chrs);
+    my $chrPloidies = ApiCommonData::Load::getChrPloidies ($chrMedians, $allChrMedian, $ploidy, $chrs);
     return $chrPloidies;
 }
     
