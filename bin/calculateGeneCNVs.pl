@@ -3,9 +3,9 @@
 use strict;
 use warnings;
 use Getopt::Long;
-use VEuPath::CalculationsForCNVs;
+use ApiCommonData::Load::CalculationsForCNVs;
 use Data::Dumper;
-use VEuPath::GusConfig;
+use GUS::Supported::GusConfig;
 use DBI;
 use DBD::Oracle;
 

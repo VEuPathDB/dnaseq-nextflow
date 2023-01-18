@@ -1,12 +1,10 @@
 #!/usr/bin/perl
 
-use VEuPath::CalculationsForCNVs;
+use ApiCommonData::Load::CalculationsForCNVs;
 use strict;
 use warnings;
 use Getopt::Long;
 use Data::Dumper;
-
-our @ISA = qw(VEuPath::CalculationsForCNVs);
 
 # get parameter values
 my $outputDir;
