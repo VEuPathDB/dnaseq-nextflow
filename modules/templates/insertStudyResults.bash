@@ -6,7 +6,7 @@ ga ApiCommonData::Load::Plugin::InsertStudyResults \\
   --inputDir \'.\' \\
   --configFile \'configFile\' \\
   --extDbSpec \'$extDbSpec\' \\
-  --studyName \'$studyName\' \\
+  --studyName \'$sampleName\' \\
   --commit   
 
 echo "DONE"
