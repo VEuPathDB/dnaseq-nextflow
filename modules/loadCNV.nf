@@ -83,8 +83,8 @@ process loadPloidy {
   tag "plugin"
   
   input:
-    path 'ploidyFile'
-    path 'configFile'
+    path ploidyFile
+    path configFile
     val sampleName
     val extDbSpec
 
@@ -102,8 +102,8 @@ process loadGeneCNV {
   tag "plugin"
   
   input:
-    path 'geneCNVFile'
-    path 'configFile'
+    path geneCNVFile
+    path configFile
     val sampleName
     val extDbSpec
 
