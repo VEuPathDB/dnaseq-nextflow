@@ -2,10 +2,10 @@
 
 set -euo pipefail
 
-ga ApiCommonWorkflow::Main::WorkflowSteps::InsertStudyResults \\
+ga ApiCommonData::Load::Plugin::InsertStudyResults \\
   --inputDir \'.\' \\
   --configFile \'$configFile\' \\
-  --extDbRlsSpec \'$extDbSpec\' \\
+  --extDbSpec \'$extDbSpec\' \\
   --studyName \'$sampleName\' \\
   --commit   
 
