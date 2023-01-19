@@ -7,7 +7,6 @@ ga ApiCommonData::Load::Plugin::InsertStudyResults \\
   --configFile \'configFile\' \\
   --extDbSpec \'$extDbSpec\' \\
   --studyName \'$studyName\' \\
-  --platformExtDbSpec \'$platformExtDbSpec\' \\
   --commit   
 
 echo "DONE"

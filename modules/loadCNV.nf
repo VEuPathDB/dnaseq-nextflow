@@ -41,6 +41,7 @@ process writePloidyConfigFile {
   output:
     path "${sampleName}_ploidyConfig.txt", emit: ploidyConfig
     path ploidyFile, emit: ploidyFile
+    val(sampleName), emit: sampleName
 
   script:
     template 'writePloidyConfigFile.bash'
@@ -65,6 +66,7 @@ process writeCNVConfigFile {
   output:
     path "${sampleName}_geneCNVConfig.txt", emit: cnvConfig
     path geneCNVFile, emit: cnvFile
+    val(sampleName), emit: sampleName
 
   script:
     template 'writeCNVConfigFile.bash'
@@ -83,6 +85,8 @@ process loadPloidy {
   input:
     path 'ploidyFile'
     path 'configFile'
+    val sampleName
+    val extDbSpec
 
   script:
     template 'insertStudyResults.bash'
@@ -100,6 +104,8 @@ process loadGeneCNV {
   input:
     path 'geneCNVFile'
     path 'configFile'
+    val sampleName
+    val extDbSpec
 
   script:
     template 'insertStudyResults.bash'
@@ -124,7 +130,7 @@ workflow lc {
     writePloidyConfigFileResults = writePloidyConfigFile(calcPloidyCNVResults.ploidy) 
     writeCNVConfigFileResults = writeCNVConfigFile(calcPloidyCNVResults.geneCNV)
     
-    loadPloidy(writePloidyConfigFileResults.ploidyFile, writePloidyConfigFileResults.ploidyConfig)
-    loadGeneCNV(writeCNVConfigFileResults.cnvFile, writeCNVConfigFileResults.cnvConfig)
+    loadPloidy(writePloidyConfigFileResults.ploidyFile, writePloidyConfigFileResults.ploidyConfig, writePloidyConfigFileResults.sampleName, params.extDbSpec)
+    loadGeneCNV(writeCNVConfigFileResults.cnvFile, writeCNVConfigFileResults.cnvConfig, writeCNVConfigFileResults.sampleName, params.extDbSpec)
 
 }
