@@ -3,7 +3,6 @@ nextflow.enable.dsl=2
 
 
 process calculatePloidyAndGeneCNV {
-  container 'veupathdb/dnaseqanalysis'
 
   publishDir "$params.outputDir", pattern: "*_CNVestimations.tsv"
   

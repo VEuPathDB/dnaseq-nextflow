@@ -93,7 +93,8 @@ $dbiDsn = $gusConfig->getDbiDsn();
 $login = $gusConfig->getDatabaseLogin();
 $password = $gusConfig->getDatabasePassword();
 $core = $gusConfig->getCoreSchemaName();
-my $dbh = DBI->connect($dbiDsn, $login, $password);
+
+my $dbh = DBI->connect($dbiDsn, $login, $password, $core);
 
 my $orthoMclStmt = $dbh->prepare($sql);
 $orthoMclStmt->execute();
