@@ -4,7 +4,7 @@ set -euo pipefail
 
 writeStudyConfig.pl \
   --outputFile ${sampleName}_geneCNVConfig.txt \
-  --file geneCNVFile \
+  --file $geneCNVFile \
   --name "${sampleName}_geneCNV (CNV)" \
   --protocol geneCNV \
   --sourceIdType gene \
