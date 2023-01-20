@@ -3,7 +3,7 @@
 set -euo pipefail
 
 writeStudyConfig.pl \
-  --name "${sampleName}_ploidy (CNV)" \
+  --name $params.experimentName \
   --file $ploidyFile \
   --outputFile ${sampleName}_ploidyConfig.txt \
   --sourceIdType NASequence \
