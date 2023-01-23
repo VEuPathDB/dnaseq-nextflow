@@ -80,22 +80,15 @@ workflow processSingleExperiment {
 
 workflow mergeExperiments {
 
-  if(params.fastaDir) {
-    fastas_qch = Channel.fromPath(params.fastaDir + '*.fa.gz')
-  }
-  
-  else {
-    throw new Exception("Missing parameter params.fastaDir")
-  }
-   
-  if(params.vcfDir) {
+  if(params.inputDir) {
+    fastas_qch = Channel.fromPath(params.inputDir + '*.fa.gz')
     vcfs_qch = Channel.fromPath(params.vcfDir + '*.vcf.gz')
   }
-   
-  else {
-    throw new Exception("Missing parameter params.vcfDir")
-  }
 
+  else {
+    throw new Exception("Missing parameter params.inputDir")
+  }
+   
   me(fastas_qch, vcfs_qch)
 
 }

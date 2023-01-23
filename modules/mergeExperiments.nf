@@ -3,7 +3,8 @@ nextflow.enable.dsl=2
 
 
 process checkUniqueIds {
-
+  container = 'veupathdb/dnaseqanalysis'
+  
   input:
     path 'consensus.fa.gz'
 
@@ -21,6 +22,7 @@ process checkUniqueIds {
 
 
 process mergeVcfs {
+  container = 'veupathdb/dnaseqanalysis'
   publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
 
   input:
@@ -43,6 +45,7 @@ process mergeVcfs {
 
 
 process makeSnpFile {
+  container = 'veupathdb/dnaseqanalysis'
   publishDir "$params.outputDir", mode: "copy"
 
   input:
@@ -65,6 +68,7 @@ process makeSnpFile {
 
 
 process processSeqVars {
+  container = 'veupathdb/dnaseqanalysis'
   publishDir "$params.outputDir", mode: "copy"
 
   input:
@@ -102,6 +106,7 @@ process processSeqVars {
 
 
 process snpEff {
+  container = 'veupathdb/dnaseqanalysis'
   publishDir "$params.outputDir", mode: "copy"
 
   input:
