@@ -82,7 +82,7 @@ workflow mergeExperiments {
 
   if(params.inputDir) {
     fastas_qch = Channel.fromPath(params.inputDir + '/*.fa.gz')
-    vcfs_qch = Channel.fromPath(params.inputDir + '/*.vcf.gz')
+    vcfs_qch = Channel.fromPath(params.inputDir + '/result.vcf.gz')
   }
 
   else {

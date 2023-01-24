@@ -49,14 +49,16 @@ process makeSnpFile {
   publishDir "$params.outputDir", mode: "copy"
 
   input:
-    path 'merged.vcf'
+    path 'merged.vcf.gz'
 
   output: 
     path 'snpFile.tsv', emit: snpFile
 
   script:
     """
-    perl /usr/bin/makeSnpFile.pl --vcf merged.vcf --output snpFile.tsv
+    cp merged.vcf.gz hold.vcf.gz
+    gunzip hold.vcf.gz
+    perl /usr/bin/makeSnpFile.pl --vcf hold.vcf --output snpFile.tsv
     """
 
   stub:
@@ -141,14 +143,14 @@ workflow me {
 
     checkUniqueIds(combinedFastagz) 
 
-    allvcfs = vcfs_qch.collect()
+    mergedVcf = vcfs_qch.collect()
 
-    mergeVcfsResults = mergeVcfs(allvcfs)
+    //mergeVcfsResults = mergeVcfs(allvcfs)
     
-    makeSnpFileResults = makeSnpFile(mergeVcfsResults.mergedVcf)
+    makeSnpFileResults = makeSnpFile(mergedVcf)
     
     processSeqVars(makeSnpFileResults.snpFile, params.gusConfig, params.cacheFile, params.undoneStrains, params.genomeExtDbRlsSpec, params.organism_abbrev, params.reference_strain, params.extDbRlsSpec, params.varscan_directory, params.genomeFastaFile, combinedFastagz)
 
-    snpEff(mergeVcfsResults.mergedVcf, params.gtfFile, params.genomeFastaFile)
+    snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
 
 }
