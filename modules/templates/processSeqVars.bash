@@ -3,10 +3,7 @@
 set -euo pipefail
 
 cp consensus.fa.gz unzipped.fa.gz;
-cp genome.fa.gz hold.fa.gz
-
 gunzip unzipped.fa.gz;
-gunzip hold.fa.gz;
 
 processSequenceVariationsNew.pl \
   --new_sample_file snpFile.tsv \
@@ -18,5 +15,5 @@ processSequenceVariationsNew.pl \
   --extdb_spec $extdb_spec \
   --varscan_directory varscan_directory/ \
   --gusConfigFile gusConfig.txt \
-  --genome hold.fa \
+  --genome genome.fa \
   --consensus unzipped.fa

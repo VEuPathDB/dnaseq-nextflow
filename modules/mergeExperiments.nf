@@ -83,7 +83,7 @@ process processSeqVars {
     val  reference_strain
     val  extdb_spec
     path 'varscan_directory'
-    path 'genome.fa.gz'
+    path 'genome.fa'
     path 'consensus.fa.gz'
   
   output:
