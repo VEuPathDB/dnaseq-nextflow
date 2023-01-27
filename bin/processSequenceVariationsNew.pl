@@ -22,7 +22,7 @@ use locale;
 use Sort::Naturally;
 use Set::CrossProduct;
 
-my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta);
+my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
             "cache_file=s"=> \$cacheFile,
             "clean_cache"=> \$cleanCache,
@@ -39,6 +39,8 @@ my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismA
             "help|h" => \$help,
 	    "consensus=s"=> \$consensusFasta,
 	    "genome=s"=> \$genomeFasta,
+	    "indelFile=s"=> \$indelFile,
+	    "gtfFile=s"=> \$gtfFile,
     );
 
 if($help) {
@@ -95,20 +97,6 @@ my $totalTimeStart = time();
 
 my $gusConfig = GUS::Supported::GusConfig->new($gusConfigFile);
 
-my ($dbiDsn, $login, $password, $core);
-
-$dbiDsn = $gusConfig->getDbiDsn();
-$login = $gusConfig->getDatabaseLogin();
-$password = $gusConfig->getDatabasePassword();
-$core = $gusConfig->getCoreSchemaName();
-
-my $dbh = DBI->connect('$dbiDsn;host=localhost;', $login, $password);
-
-my $SEQUENCE_QUERY = "select substr(s.sequence, ?, ?) as base
-                      from dots.nasequence s
-                     where s.source_id = ?";
-my $SEQUENCE_QUERY_SH = $dbh->prepare($SEQUENCE_QUERY);
-
 my $dirname = dirname($cacheFile);
 
 my $tempCacheFile = $dirname . "/cache.tmp";
@@ -126,26 +114,12 @@ my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVar
 
 my @allStrains = keys %{$strainVarscanFileHandles};
 
-# Current Fix because there is only a single Strain in apidb.indel. Will be patched.
-my @fixStrains = ("LV39cl5_chr1");
-
 $|=1; #autoflush                                                                                                                                                                                          
 print "\033[JCreating CurrentShifts Object"."\033[G";
 
-my $currentShifts = &createCurrentShifts(\@allStrains, $dbh);
+my $currentShifts = &createCurrentShifts($indelFile);
 
-my $strainExtDbRlsAndProtocolAppNodeIds = &queryExtDbRlsAndProtocolAppNodeIdsForStrains(\@allStrains, $dbh, $organismAbbrev);
-
-my $transcriptExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $transcriptExtDbRlsSpec);
-my $thisExtDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $extDbRlsSpec);
-
-my $geneModelLocations = GUS::Community::GeneModelLocations->new($dbh, $transcriptExtDbRlsId, 1);
-my $agpMap = $geneModelLocations->getAgpMap();
-
-my $transcriptSummary = &getTranscriptLocations($dbh, $transcriptExtDbRlsId, $agpMap);
-
-#print Dumper $transcriptSummary;
-#die;
+my $transcriptSummary = &makeTranscriptSummary($gtfFile);
 
 my $geneLocations = &getGeneLocations($transcriptSummary);
 
@@ -153,9 +127,6 @@ $|=1; #autoflush
 print "\033[JShifting Exon Locations"."\033[G";        
 
 $transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
-
-#print Dumper $transcriptSummary;
-#die;
 
 open(UNDONE, $undoneStrainsFile) or die "Cannot open file $undoneStrainsFile for reading: $!";
 my @undoneStrains =  map { chomp; $_ } <UNDONE>;
@@ -165,12 +136,8 @@ if($forcePositionCompute) {
   push @undoneStrains, $referenceStrain;
 }
 
-my $naSequenceIds;
-
 $|=1; #autoflush 
 print "\033[JQuerying NaSequenceIds"."\033[G";        
-
-my $naSequenceIds = &queryNaSequenceIds($dbh);
 
 my $merger = VEuPath::MergeSortedSeqVariations->new($newSampleFile, $cacheFile, \@undoneStrains, qr/\t/);
 
@@ -196,23 +163,18 @@ while($merger->hasNext()) {
   # print Dumper $variations;                                                                                                                                                             
   # print Dumper $strainFrame;
   
-  my $naSequenceId = $naSequenceIds->{$sequenceId};
-  die "Could not find na_sequence_id for sequence source id: $sequenceId" unless($naSequenceId);
-
   my ($referenceAllele, $positionsInCds, $positionsInProtein, $referenceVariation, $isCoding);
 
   my $geneLocation = &lookupByLocation($sequenceId, $location, $geneLocations);
 
-  my ($transcripts, $geneNaFeatureId);
+  my $transcripts;
 
   if($geneLocation) {
     $transcripts = $geneLocation->{transcripts};
-    $geneNaFeatureId = $geneLocation->{na_feature_id};
   }
 
   my $hasTranscripts = defined($transcripts) ? 1 : 0;
 
-  print STDERR "GENE_NA_FEATURE_ID=$geneNaFeatureId\n"  if($debug);
   print STDERR "HAS TRANSCRIPTS=$hasTranscripts\n"  if($debug);
   print STDERR "TRANSCRIPTS=" . join(",", @$transcripts) . "\n" if($debug && $hasTranscripts);
 
@@ -231,7 +193,6 @@ while($merger->hasNext()) {
   }
   
   my $cachedReferenceVariation = &cachedReferenceVariation($variations, $referenceStrain);
-  my $referenceProtocolAppNodeId = &queryProtocolAppNodeIdFromExtDbRlsId($dbh, $thisExtDbRlsId);
 
   if($cachedReferenceVariation && !$isLegacyVariations) {
 
@@ -245,17 +206,12 @@ while($merger->hasNext()) {
 
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
 
-      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
+      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
 
-      $referenceVariation->{'protocol_app_node_id'} = $referenceProtocolAppNodeId;
       $referenceVariation->{'ref_codon'} = $refCodon;
       $referenceVariation->{'reference_aa_full'} = $reference_aa_full;
       $referenceVariation->{'has_nonsynonomous'} = $adjacentSnpCausesProductDifference;
       $referenceVariation->{'product'} = $refProduct;
-      $referenceVariation->{'snp_external_database_release_id'} = $thisExtDbRlsId;
-      $referenceVariation->{'external_database_release_id'} = $transcriptExtDbRlsId;
-      $referenceVariation->{'na_sequence_id'} = $naSequenceId;
-      $referenceVariation->{'ref_na_sequence_id'} = $naSequenceId;
       $referenceVariation->{'matches_reference'} = 1;
       
   }
@@ -268,11 +224,10 @@ while($merger->hasNext()) {
 
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
     
-      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($extDbRlsId, $transcriptExtDbRlsId, $sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
+      my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
 
       $referenceVariation = {'base' => $referenceAllele,
 			     'reference' => $referenceAllele,    
-                             'external_database_release_id' => $transcriptExtDbRlsId,
                              'location' => $location,
                              'sequence_source_id' => $sequenceId,
                              'matches_reference' => 1,
@@ -280,10 +235,6 @@ while($merger->hasNext()) {
                              'strain' => $referenceStrain,
                              'product' => $refProduct,
                              'position_in_protein' => $refPositionInProtein,
-                             'na_sequence_id' => $naSequenceId,
-                             'ref_na_sequence_id' => $naSequenceId,
-                             'snp_external_database_release_id' => $thisExtDbRlsId,
-                             'protocol_app_node_id' => $referenceProtocolAppNodeId,
                              'is_coding' => $isCoding,
                              'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
 			     'ref_codon' => $refCodon,
@@ -318,41 +269,11 @@ while($merger->hasNext()) {
       my $strain = $variation->{strain};
       my ($protocolAppNodeId, $extDbRlsId);
 
-      if($strain ne $referenceStrain) {
-          $extDbRlsId = $strainExtDbRlsAndProtocolAppNodeIds->{$strain}->{ext_db_rls_id}; # this will be null if skip_coverage is turned on                                                             
-          $protocolAppNodeId = $strainExtDbRlsAndProtocolAppNodeIds->{$strain}->{protocol_app_node_id}; # this will be null if skip_coverage is turned on                                                
-      }
-
-      if(my $cachedExtDbRlsId = $variation->{external_database_release_id}) {
-
-	  die "cachedExtDbRlsId did not match" if($strain ne $referenceStrain && $extDbRlsId != $cachedExtDbRlsId);
-
-	  my $cachedNaSequenceId = $variation->{ref_na_sequence_id};
-
-	  if($naSequenceId != $cachedNaSequenceId) {
-              print Dumper $variations;
-              die "cachedNaSequenceId [$cachedNaSequenceId] did not match [$naSequenceId]" ;
-          }
-
-	  $variation->{snp_external_database_release_id} = $thisExtDbRlsId;
-
-	  if(!$forcePositionCompute || $strain eq $referenceStrain) {
+      if(!$forcePositionCompute || $strain eq $referenceStrain) {
               &printVariation($variation, $cacheFh);
               next;
-          }
-
       }
 
-      $variation->{ref_na_sequence_id} = $naSequenceId;
-      my $varSequenceSourceId = "$sequenceId.$strain";
-      my $varNaSequenceId = $naSequenceIds->{$varSequenceSourceId};
-
-      #if(!$varNaSequenceId && !$isLegacyVariations) {
-      #	  die "Didn't find an na_sequence_id for source_id $varSequenceSourceId";
-      #}
-
-      $variation->{na_sequence_id} = $varNaSequenceId ? $varNaSequenceId : $naSequenceId;	
-	
       my $allele = $variation->{base};
 
       if($allele eq $referenceAllele) {
@@ -363,13 +284,10 @@ while($merger->hasNext()) {
 	  $variation->{matches_reference} = 0;
       }
 
-      $variation->{external_database_release_id} = $extDbRlsId;
-      $variation->{snp_external_database_release_id} = $thisExtDbRlsId;
-      $variation->{protocol_app_node_id} = $protocolAppNodeId;
       &printVariation($variation, $cacheFh);
   }  
 
-  my $snpFeature = &makeSNPFeatureFromVariations($variations, $referenceVariation, $geneNaFeatureId, $thisExtDbRlsId);
+  my $snpFeature = &makeSNPFeatureFromVariations($variations, $referenceVariation);
 
   &printSNPFeature($snpFeature, $snpFh);
 
@@ -421,7 +339,6 @@ unless($isLegacyVariations) {
 open(TRUNCATE, ">$undoneStrainsFile") or die "Cannot open file $undoneStrainsFile for writing: $!";
 close(TRUNCATE);
 
-$dbh->disconnect();
 close OUT;
 
 $totalTime += time() - $totalTimeStart;
@@ -430,31 +347,6 @@ print STDERR "Total Time:  $totalTime Seconds\n";
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
 #--------------------------------------------------------------------------------
-
-
-sub queryNaSequenceIds {
-  my ($dbh) = @_;
-
-  my $sql = "select s.na_sequence_id, s.source_id
-from dots.nasequence s, sres.ontologyterm o
-where s.sequence_ontology_id = o.ontology_term_id
-and o.name in ('random_sequence', 'chromosome', 'contig', 'supercontig','mitochondrial_chromosome','plastid_sequence','cloned_genomic','apicoplast_chromosome', 'variant_genome','maxicircle')
-";
-
-  my $sh = $dbh->prepare($sql);
-  $sh->execute();
-
-  my %naSequences;
-
-  while(my ($naSequenceId, $sourceId) = $sh->fetchrow_array()) {
-    $naSequences{$sourceId} = $naSequenceId;
-  }
-
-  $sh->finish();
-
-  return \%naSequences;
-}
-
 
 sub usage {
   my ($m) = @_;
@@ -575,20 +467,6 @@ sub hasVariation {
   return scalar(keys(%alleles)) > 1;
 }
 
-
-sub querySequenceSubstring {
-  my ($dbh, $sequenceId, $start, $end) = @_;
-
-  my $length = $end - $start + 1;
-
-  $SEQUENCE_QUERY_SH->execute($start, $length, $sequenceId);
-  my ($base) = $SEQUENCE_QUERY_SH->fetchrow_array();
-
-  $SEQUENCE_QUERY_SH->finish();
-  return $base;
-}
-
-
 sub cachedReferenceVariation {
     my ($variations, $referenceStrain) = @_;
 
@@ -628,45 +506,6 @@ sub closeVarscanFiles {
     $fhHash->{$_}->closeFileHandle();
   }
 }
-
-
-sub queryExtDbRlsAndProtocolAppNodeIdsForStrains {
-  my ($strains, $dbh, $organismAbbrev) = @_;
-
-  my $sql = "select d.name, d.external_database_name, d.version
-from apidb.organism o, apidb.datasource d 
-where o.abbrev = ?
-and o.taxon_id = d.taxon_id
-and d.name like ?
-";
-
-  my $sh = $dbh->prepare($sql);
-
-  my %rv;
-
-  foreach my $strain (@$strains) {
-
-    my $match = "\%_${strain}_HTS_SNPSample_RSRC";
-    $sh->execute($organismAbbrev, $match);
-
-    my $ct;
-    while(my ($name, $extDbName, $extDbVersion) = $sh->fetchrow_array()) {
-      my $spec = "$extDbName|$extDbVersion";
-      my $extDbRlsId = &queryExtDbRlsIdFromSpec($dbh, $spec);
-
-      $rv{$strain}->{ext_db_rls_id} = $extDbRlsId;
-      my $protocolAppNodeId = &queryProtocolAppNodeIdFromExtDbRlsId($dbh, $extDbRlsId);
-      $rv{$strain}->{protocol_app_node_id} = $protocolAppNodeId;
-      $ct++;
-    }
-
-    $sh->finish();
-    die "Expected Exactly one hts snp sample row for organism=$organismAbbrev and strain=$strain" unless $ct = 1;
-  }
-
-  return \%rv;
-}
-
 
 sub openVarscanFiles {
   my ($varscanDirectory, $isLegacyVariations) = @_;
@@ -709,44 +548,6 @@ sub cleanCdsCache {
   }
 }
 
-
-sub queryExtDbRlsIdFromSpec {
-  my ($dbh, $extDbRlsSpec) = @_;
-
-  my $sql = "select r.external_database_release_id
-from sres.externaldatabaserelease r, sres.externaldatabase d
-where d.external_database_id = r.external_database_id
-and d.name || '|' || r.version = '$extDbRlsSpec'";
-
-
-  my $sh = $dbh->prepare($sql);
-  $sh->execute();
-
-  my ($extDbRlsId) = $sh->fetchrow_array();
-
-  $sh->finish();
-  die "Could not find ext db rls id for spec: $extDbRlsSpec" unless($extDbRlsId);
-
-  return $extDbRlsId;
-}
-
-
-sub queryProtocolAppNodeIdFromExtDbRlsId {
-  my ($dbh, $extDbRlsId) = @_;
-
-  my $sql = "select protocol_app_node_id from study.protocolappnode where external_database_release_id = $extDbRlsId and name like '%Sequence Variation%'";
-
-  my $sh = $dbh->prepare($sql);
-  $sh->execute();
-
-  my ($panId) = $sh->fetchrow_array();
-
-  $sh->finish();
-
-  return $panId;
-}
-
-
 sub lookupByLocation {
   my ($sequenceId, $l, $geneLocs) = @_;
 
@@ -780,7 +581,6 @@ sub lookupByLocation {
   return(undef);
 }
 
-
 sub getGeneLocations {
   my ($transcriptSummary) = @_;
 
@@ -789,30 +589,15 @@ sub getGeneLocations {
   my %sortedGeneLocs;
 
   foreach my $transcriptId (keys %$transcriptSummary) {
-    my $geneId = $transcriptSummary->{$transcriptId}->{gene_na_feature_id};
     my $sequenceSourceId = $transcriptSummary->{$transcriptId}->{sequence_source_id};
     my $transcriptMinStart = $transcriptSummary->{$transcriptId}->{min_exon_start};
     my $transcriptMaxEnd = $transcriptSummary->{$transcriptId}->{max_exon_end};
 
-    if(!{$geneSummary{$geneId}->{max_end}} || $transcriptMaxEnd > $geneSummary{$geneId}->{max_end}) {
-      $geneSummary{$geneId}->{max_end} = $transcriptMaxEnd;
-    }
-
-    if(!{$geneSummary{$geneId}->{min_start}} || $transcriptMinStart > $geneSummary{$geneId}->{min_start}) {
-      $geneSummary{$geneId}->{min_start} = $transcriptMinStart;
-    }
-
-    $geneSummary{$geneId}->{sequence_source_id} = $sequenceSourceId;
-    push @{$geneSummary{$geneId}->{transcripts}}, $transcriptId;
-  }
-
-  foreach my $geneId (keys %geneSummary) {
-    my $sequenceSourceId = $geneSummary{$geneId}->{sequence_source_id};
-
-    my $location = { transcripts => $geneSummary{$geneId}->{transcripts},
-                     start => $geneSummary{$geneId}->{min_start},
-                     end => $geneSummary{$geneId}->{max_end},
-                     na_feature_id => $geneId,
+    push @{$geneSummary{$transcriptId}->{transcripts}}, $transcriptId;
+    
+    my $location = { transcripts => $geneSummary{$transcriptId}->{transcripts},
+                     start => $transcriptMinStart,
+                     end => $transcriptMaxEnd,
     };
 
     push(@{$geneLocations{$sequenceSourceId}}, $location);
@@ -826,106 +611,79 @@ sub getGeneLocations {
 
   return \%sortedGeneLocs;
 }
-  
+ 
 
-sub getTranscriptLocations {
-  my ($dbh, $transcriptExtDbRlsId, $agpMap) = @_;
-
-  my %transcriptSummary;
-
-my $sql = "select listagg(taf.source_id, ',') WITHIN GROUP (ORDER BY taf.aa_feature_id) as transcripts,
-       s.source_id, 
-       tf.parent_id as gene_na_feature_id, 
-       el.start_min as exon_start, 
-       el.end_max as exon_end,
-       decode(el.is_reversed, 1, afe.coding_end, afe.coding_start) as cds_start,
-       decode(el.is_reversed, 1, afe.coding_start, afe.coding_end) as cds_end,
-       el.is_reversed
-from dots.transcript tf
-   , dots.translatedaafeature taf
-   , dots.aafeatureexon afe
-   , dots.exonfeature ef
-   , dots.nalocation el
-   , dots.nasequence s
-where tf.na_feature_id = taf.na_feature_id
- and taf.aa_feature_id = afe.aa_feature_id
- and afe.exon_feature_id = ef.na_feature_id
- and ef.na_feature_id = el.na_feature_id
- and ef.na_sequence_id = s.na_sequence_id
- and tf.external_database_release_id = $transcriptExtDbRlsId
-group by s.source_id, tf.parent_id, el.start_min, el.end_max, afe.coding_start, afe.coding_end, el.is_reversed
-order by s.source_id, el.start_min
-";
-
-  my $sh = $dbh->prepare($sql);
-  $sh->execute();
-
-  while(my ($transcripts, $sequenceSourceId, $geneNaFeatureId, $exonStart, $exonEnd, $cdsStart, $cdsEnd, $isReversed) = $sh->fetchrow_array()) {
-    my @transcripts = split(",", $transcripts);
-
-    my $strand = $isReversed ? -1 : +1;
-
-    my $agpArray = $agpMap->{$sequenceSourceId};
-
-    if($agpArray) {
-      my $agp = GUS::Community::GeneModelLocations::findAgpFromPieceLocation($agpArray, $exonStart, $exonEnd, $sequenceSourceId);
-
-      # if this sequence is a PIECE in another sequence... lookup the higher level sequence
-      if($agp) {
-        my $exonMatch = Bio::Location::Simple->
-            new( -seq_id => 'exon', -start => $exonStart  , -end => $exonEnd , -strand => $strand );
-
-        if($cdsStart && $cdsEnd) {
-          my $cdsMatch = Bio::Location::Simple->
-              new( -seq_id => 'cds', -start => $cdsStart  , -end => $cdsEnd , -strand => $strand );
-          my $cdsMatchOnVirtual = $agp->map( $cdsMatch );
-          $cdsStart = $cdsMatchOnVirtual->start();
-          $cdsEnd = $cdsMatchOnVirtual->end();
-        }
-
-        my $matchOnVirtual = $agp->map( $exonMatch );
-     
-        $sequenceSourceId = $matchOnVirtual->seq_id();
-        $exonStart = $matchOnVirtual->start();
-        $exonEnd = $matchOnVirtual->end();
-        $strand = $matchOnVirtual->strand();
-      }
+sub getValues {
+    my ($file) = @_;
+    my @values = ();
+    open(my $data, '<', $file) || die "Could not open file $file: $!";
+    my $counter = 0;
+    while (my $line = <$data>) {
+        chomp $line;
+        my ($seqName, $source, $feature, $start, $end, $score, $strand, $frame, $attribute) = split(/\t/, $line);
+	my ($transcriptId, $geneId, $geneName) = split(/;/, $attribute);
+        $transcriptId = $transcriptId =~ s/transcript_id //gr;
+	$transcriptId = $transcriptId =~ s/"//gr;
+        $geneId = $geneId =~ s/gene_id //gr;
+        $geneId = $geneId =~ s/"//gr;		
+        $geneName = $geneName =~ s/gene_name //gr;
+        $geneName = $geneName =~ s/"//gr;		
+	push ( @{$values[$counter]}, ($seqName, $feature, $start, $end, $strand, $transcriptId, $geneId, $geneName));
+	$counter++;
     }
-
-
-    my $loc = Bio::Location::Simple->new( -seq_id => $sequenceSourceId, -start => $exonStart  , -end => $exonEnd , -strand => $strand);
-
-
-    foreach my $transcriptId (@transcripts) {
-      push @{$transcriptSummary{$transcriptId}->{exons}}, $loc;
-      $transcriptSummary{$transcriptId}->{gene_na_feature_id} = $geneNaFeatureId;
-      $transcriptSummary{$transcriptId}->{sequence_source_id} = $sequenceSourceId;
-
-      if($cdsStart && $cdsEnd) {
-        $transcriptSummary{$transcriptId}->{cds_strand} = $strand;
-        if(!{$transcriptSummary{$transcriptId}->{max_cds_end}} || $cdsEnd > $transcriptSummary{$transcriptId}->{max_cds_end}) {
-          $transcriptSummary{$transcriptId}->{max_cds_end} = $cdsEnd;
-        }
-        if(!$transcriptSummary{$transcriptId}->{min_cds_start} || $cdsStart < $transcriptSummary{$transcriptId}->{min_cds_start}) {
-          $transcriptSummary{$transcriptId}->{min_cds_start} = $cdsStart;
-        }
-      }
-
-      if(!$transcriptSummary{$transcriptId}->{max_exon_end} || $exonEnd > $transcriptSummary{$transcriptId}->{max_exon_end}) {
-        $transcriptSummary{$transcriptId}->{max_exon_end} = $exonEnd;
-      }
-
-      if(!$transcriptSummary{$transcriptId}->{min_exon_start} || $exonStart < $transcriptSummary{$transcriptId}->{min_exon_start}) {
-        $transcriptSummary{$transcriptId}->{min_exon_start} = $exonStart;
-      }
-
-    }
-  }
-
-  $sh->finish();
-
-  return \%transcriptSummary;
+    return @values;
 }
+
+sub makeTranscriptSummary {
+    my ($file) = @_;
+    my @values = &getValues($file);
+    my %transcriptSummary;
+    my $valueLen = @values;
+    my $valueLenIndex = $valueLen - 1;
+    my $currentFrame = 0;
+    my $counter = 0;
+    my ($seqName, $exonStart, $exonEnd, $strand, $transcriptId, $geneId, $geneName, $cdsFrame, $cdsStart, $cdsEnd, $cdsStrand);
+    while ($currentFrame <= $valueLenIndex) {
+	if ($values[$currentFrame][1] eq "exon") {
+            $seqName = $values[$currentFrame][0];
+	    $exonStart = $values[$currentFrame][2];
+	    $exonEnd = $values[$currentFrame][3];
+	    $strand = $values[$currentFrame][4];
+	    if ($strand eq "-") {
+		$strand = -1;
+	    }
+	    else {
+		$strand = 1;
+	    }
+	    $transcriptId = $values[$currentFrame][5];
+	    $geneId = $values[$currentFrame][6];
+	    $geneName = $values[$currentFrame][7];
+	    $counter = $currentFrame + 1;
+	    until($values[$counter][5] eq $transcriptId || $counter > $valueLenIndex) {
+                $counter++;
+	    }
+	    if ($counter < $valueLenIndex) {
+	        $cdsStart = $values[$counter][2];
+		$cdsEnd = $values[$counter][3];
+		$cdsStrand = $values[$counter][4];
+		$transcriptSummary{$transcriptId}->{cds_strand} = $strand;
+		$transcriptSummary{$transcriptId}->{max_cds_end} = $cdsEnd;
+		$transcriptSummary{$transcriptId}->{min_cds_start} = $cdsStart;
+	    }
+	    my $loc = Bio::Location::Simple->new( -seq_id => $seqName, -start => $exonStart  , -end => $exonEnd , -strand => $strand);
+	    push @{$transcriptSummary{$transcriptId}->{exons}}, $loc;
+	    $transcriptSummary{$transcriptId}->{sequence_source_id} = $seqName;
+            $transcriptSummary{$transcriptId}->{max_exon_end} = $exonEnd;
+            $transcriptSummary{$transcriptId}->{min_exon_start} = $exonStart;
+	    $currentFrame++;
+       	}
+	else {
+            $currentFrame++;
+	}
+    }
+    return \%transcriptSummary;
+}
+
 
 
 sub calculateAminoAcidPosition {
@@ -960,37 +718,43 @@ sub getAminoAcidSequenceOfSnp {
   return $codon, $products;
 }
 
-
 sub createCurrentShifts {
-    my ($strains, $dbh) = @_;
-    my $currentShifts;                                                                                                                                                      
-    foreach my $strain (@$strains) {
-
-        my $NASEQID_QUERY = "SELECT DISTINCT s.source_id FROM dots.nasequence s, apidb.indel i WHERE i.sample_name = '$strain' and s.na_sequence_id = i.na_sequence_id";
-        my $NASEQID_QUERY_SH = $dbh->prepare($NASEQID_QUERY);
-        $NASEQID_QUERY_SH->execute();
-        
-        while (my $sourceId = $NASEQID_QUERY_SH->fetchrow_array()) {
-
-            my $INDEL_QUERY = "SELECT i.location, i.shift FROM apidb.indel i, dots.nasequence s WHERE s.na_sequence_id = i.na_sequence_id and i.sample_name = '$strain'";
-            my $INDEL_QUERY_SH = $dbh->prepare($INDEL_QUERY);
-            $INDEL_QUERY_SH->execute();
-
-            my @locationshifts = ();
-            my $counter = 0;
-            my $currentShift = 0;
-
-            while (my ($location, $shift) = $INDEL_QUERY_SH->fetchrow_array()) {
-                push ( @{$locationshifts[$counter]}, ($location, $shift + $currentShift));
-                $counter++;
+    my ($file) = @_;
+    my @strains = &getDistinctStrains($file);
+    my $currentShifts;
+    foreach my $strain (@strains) {
+	my @locationshifts = ();
+        my $counter = 0;
+        my $currentShift = 0;
+	my $sourceId;
+        open(my $data, '<', $file) || die "Could not open file $file: $!";
+	while (my $line = <$data>) {
+	    chomp $line;
+	    my ($name, $seqId, $refpos, $shift) = split(/\t/, $line);
+	    if ( $name eq $strain ) {
+		push ( @{$locationshifts[$counter]}, ($refpos, $shift + $currentShift));
+		$counter++;
+		$sourceId = $seqId;
                 $currentShift = $shift + $currentShift;
-            }
-
-            push @{ $currentShifts->{$strain}->{$sourceId}}, \@locationshifts;
-            
-        }
+	    }	
+	}
+	push @{ $currentShifts->{$strain}->{$sourceId}}, \@locationshifts;
     }
     return $currentShifts;
+}
+
+sub getDistinctStrains {
+    my ($file) = @_;
+    my @strains = ();
+    open(my $data, '<', $file) || die "Could not open file $file: $!";
+    while (my $line = <$data>) {
+        chomp $line;
+        my ($name, $seqId, $refpos, $shift) = split(/\t/, $line);
+	if (!grep(/^$name$/,@strains)) {
+            push (@strains, $name);
+        }
+    }
+    return @strains;
 }
 
 
@@ -1033,7 +797,6 @@ sub addStrainExonShiftsToTranscriptSummary {
 		}
 		($shifted_start, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_start, $startIndicator, $chromosomeShiftArray);
 		($shifted_end, $shiftFrame, $oldShift) = &calcCoordinates($shiftFrame, $shiftFrameLimit, $oldShift, $exon_end, $endIndicator, $chromosomeShiftArray);
-		#print "$transcript\t$exon_start\t$exon_end\t$shifted_start\t$shifted_end\t$oldShift\n";
 		$$transcriptSummary{$transcript}->{$strain}->{shifted_start} = $shifted_start;
 		$$transcriptSummary{$transcript}->{$strain}->{shifted_end} = $shifted_end;
 	    }
@@ -1304,7 +1067,7 @@ sub calculateReferenceCdsPosition {
 
 
 sub variationAndRefProduct {
-    my ($extDbRlsId, $refExtDbRlsId, $sequenceId, $refSequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) = @_;
+    my ($sequenceId, $refSequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) = @_;
     my ($product, $refProduct, $codon, $refCodon);
     my $adjacentSnpCausesProductDifference = 0;
     my $refConsensusCodingSequence;    
@@ -1531,7 +1294,7 @@ sub makeProductFeatureFromVariations {
 
 
 sub makeSNPFeatureFromVariations {
-  my ($variations, $referenceVariation, $geneNaFeatureId, $extDbRlsId) = @_;
+  my ($variations, $referenceVariation) = @_;
   my $sequenceSourceId = $referenceVariation->{sequence_source_id};
   my $location = $referenceVariation->{location};
   my $snpSourceId = $referenceVariation->{snp_source_id} ? $referenceVariation->{snp_source_id} : "NGS_SNP.$sequenceSourceId.$location";
@@ -1567,14 +1330,12 @@ sub makeSNPFeatureFromVariations {
   my $minorProduct = $sortedProducts[1];
   my $majorAlleleCount = $sortedAlleleCounts[0];
   my $minorAlleleCount = $sortedAlleleCounts[1];
-  my $snp = {     "gene_na_feature_id" => $geneNaFeatureId,
-                  "source_id" => $snpSourceId,
+  my $snp = {     "source_id" => $snpSourceId,
 	          "na_sequence_id" => $referenceVariation->{na_sequence_id},
 	          "location" => $location,
 	          "reference_strain" => $referenceStrain,
 	          "reference_na" => $referenceVariation->{base},
 	          "reference_aa" => $referenceVariation->{product}->[0],
-		  "external_database_release_id" => $extDbRlsId,
 		  "has_nonsynonymous_allele" => $hasNonSynonymousAllele,
 		  "major_allele" => $majorAllele,
 		  "minor_allele" => $minorAllele,
