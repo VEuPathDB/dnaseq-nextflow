@@ -2,18 +2,26 @@
 
 set -euo pipefail
 
-cp consensus.fa.gz unzipped.fa.gz;
+cp $consensusFasta unzipped.fa.gz;
 gunzip unzipped.fa.gz;
 
-processSequenceVariationsNew.pl \
-  --new_sample_file snpFile.tsv \
-  --cache_file cache.txt \
-  --undone_strains_file undoneStrains.txt \
-  --transcript_extdb_spec "$genomeExtDbRlsSpec" \
+cp $snpFile snp.tsv
+cp $cacheFile cf.txt
+cp $undoneStrainsFile us.txt
+mkdir varCons
+cp $varscanDir/* varCons
+cp $genomeFasta genome.fasta
+cp $indelFile if.tsv
+cp $gtfFile gtf.gtf
+
+perl /usr/bin/processSequenceVariationsNew.pl \
+  --new_sample_file snp.tsv \
+  --cache_file cf.txt \
+  --undone_strains_file us.txt \
   --organism_abbrev $organism_abbrev \
   --reference_strain $reference_strain  \
-  --extdb_spec "$extdb_spec" \
-  --varscan_directory varscan_directory/ \
-  --gusConfigFile gusConfig.txt \
-  --genome genome.fa \
-  --consensus unzipped.fa
+  --varscan_directory ./varCons \
+  --genome genome.fasta \
+  --consensus unzipped.fa \
+  --indelFile if.tsv \
+  --gtfFile gtf.gtf

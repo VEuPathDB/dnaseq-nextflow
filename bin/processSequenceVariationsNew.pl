@@ -22,16 +22,13 @@ use locale;
 use Sort::Naturally;
 use Set::CrossProduct;
 
-my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismAbbrev, $undoneStrainsFile, $gusConfigFile, $varscanDirectory, $referenceStrain, $help, $debug, $extDbRlsSpec, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile);
+my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile, $varscanDirectory, $referenceStrain, $help, $debug, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
             "cache_file=s"=> \$cacheFile,
             "clean_cache"=> \$cleanCache,
-            "gusConfigFile|gc=s"=> \$gusConfigFile,
             "undone_strains_file=s" => \$undoneStrainsFile,
             "varscan_directory=s" => \$varscanDirectory,
             "is_legacy_variations" => \$isLegacyVariations,
-            "transcript_extdb_spec=s" => \$transcriptExtDbRlsSpec,
-            "extdb_spec=s" => \$extDbRlsSpec,
             "organism_abbrev=s" =>\$organismAbbrev,
             "reference_strain=s" => \$referenceStrain,
             "force_position_compute" => \$forcePositionCompute,
@@ -46,8 +43,6 @@ my ($newSampleFile, $cacheFile, $cleanCache, $transcriptExtDbRlsSpec, $organismA
 if($help) {
   &usage();
 }
-
-$gusConfigFile = $ENV{GUS_HOME} . "/config/gus.config" unless(-e $gusConfigFile);
 
 my $cacheFileExists = -e $cacheFile;
 
@@ -70,19 +65,8 @@ if(!$cacheFileExists || $cleanCache) {
 my $initialCacheCount = `cat $cacheFile | wc -l`;
 chomp($initialCacheCount);
 
-$|=1; #autoflush                                                                                                                                                                                   
-print "\033[JStarting with cache file of ${initialCacheCount} records"."\033[G";
-
-unless(-e $newSampleFile && -e $gusConfigFile) {
-  &usage("Required File Missing");
-}
-
 unless(-d $varscanDirectory) {
   &usage("Required Directory Missing") unless($isLegacyVariations);
-}
-
-unless($transcriptExtDbRlsSpec && $organismAbbrev && $referenceStrain && $extDbRlsSpec) {
- &usage("Missing Required param value");
 }
 
 unless(-e $undoneStrainsFile) {
@@ -94,8 +78,6 @@ my $CODON_TABLE = Bio::Tools::CodonTable->new( -id => 1); #standard codon table
 
 my $totalTime;
 my $totalTimeStart = time();
-
-my $gusConfig = GUS::Supported::GusConfig->new($gusConfigFile);
 
 my $dirname = dirname($cacheFile);
 
@@ -114,17 +96,11 @@ my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVar
 
 my @allStrains = keys %{$strainVarscanFileHandles};
 
-$|=1; #autoflush                                                                                                                                                                                          
-print "\033[JCreating CurrentShifts Object"."\033[G";
-
 my $currentShifts = &createCurrentShifts($indelFile);
 
 my $transcriptSummary = &makeTranscriptSummary($gtfFile);
 
 my $geneLocations = &getGeneLocations($transcriptSummary);
-
-$|=1; #autoflush 
-print "\033[JShifting Exon Locations"."\033[G";        
 
 $transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
 
@@ -136,18 +112,12 @@ if($forcePositionCompute) {
   push @undoneStrains, $referenceStrain;
 }
 
-$|=1; #autoflush 
-print "\033[JQuerying NaSequenceIds"."\033[G";        
-
 my $merger = VEuPath::MergeSortedSeqVariations->new($newSampleFile, $cacheFile, \@undoneStrains, qr/\t/);
 
 my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscript);
 
 my $strainFrame;
 my $count = 0;
-
-$|=1; #autoflush 
-print "\033[JProcessing Snps"."\033[G";        
 
 my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscripts, $counter);
 
@@ -305,12 +275,6 @@ while($merger->hasNext()) {
   $count++;
 }
 
-$|=1; #autoflush                                                                                                                                                                                          
-print "\033[JCOMPLETE"."\033[G";
-sleep 1;
-
-print "Processed $count Snps\n";
-
 close $cacheFh;
 close $snpFh;
 close $alleleFh;
@@ -323,7 +287,7 @@ chomp($newCacheCount);
 
 my $skipCount = $merger->getSkipCount();
 
-print STDERR "NEWCACHECOUNT=$newCacheCount, INITIALCACHECOUNT=$initialCacheCount, SKIPCOUNT=$skipCount\n";
+#print STDERR "NEWCACHECOUNT=$newCacheCount, INITIALCACHECOUNT=$initialCacheCount, SKIPCOUNT=$skipCount\n";
 
 # Rename the output file to full cache file
 unlink $cacheFile or warn "Could not unlink $cacheFile: $!";
@@ -342,7 +306,7 @@ close(TRUNCATE);
 close OUT;
 
 $totalTime += time() - $totalTimeStart;
-print STDERR "Total Time:  $totalTime Seconds\n";
+#print STDERR "Total Time:  $totalTime Seconds\n";
 
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
@@ -1153,10 +1117,14 @@ sub getCodingSequence {
 
 sub calculatePossibleCodons {
     my ($codon) = @_;
+    my $codonList;
+    if (!$codon) {
+        return $codonList;
+    }
+    else {
+        my @codonArray=split(//, $codon);
 
-    my @codonArray=split(//, $codon);
-
-    my %translate = (A => ['A'],
+        my %translate = (A => ['A'],
     		     G => ['G'],
 		     C => ['C'],
 		     T => ['T'],
@@ -1172,19 +1140,18 @@ sub calculatePossibleCodons {
 		     V => ['G','C','A'],
 		     N => ['A','G','C','T']
                      );
-    my @expanded = map { $translate{$_} } @codonArray;
+        my @expanded = map { $translate{$_} } @codonArray;
 
-    my $iterator = Set::CrossProduct->new(\@expanded);
+        my $iterator = Set::CrossProduct->new(\@expanded);
 
-    my $codonList;
+        foreach my $codon ($iterator->combinations) {
+            my $string = join(",", @$codon);
+            $string = $string =~ s/,//gr;
+	    push @{ $codonList }, $string;
+        }
 
-    foreach my $codon ($iterator->combinations) {
-        my $string = join(",", @$codon);
-        $string = $string =~ s/,//gr;
-	push @{ $codonList }, $string;
+	return $codonList;
     }
-
-    return $codonList;
 }
 
 

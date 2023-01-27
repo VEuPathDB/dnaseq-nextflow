@@ -83,13 +83,14 @@ workflow mergeExperiments {
   if(params.inputDir) {
     fastas_qch = Channel.fromPath(params.inputDir + '/*.fa.gz')
     vcfs_qch = Channel.fromPath(params.inputDir + '/result.vcf.gz')
+    indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv')
   }
 
   else {
     throw new Exception("Missing parameter params.inputDir")
   }
    
-  me(fastas_qch, vcfs_qch)
+  me(fastas_qch, vcfs_qch, indels_qch)
 
 }
 
@@ -104,12 +105,11 @@ workflow loadSingleExperiment {
   }
 
   else {
-    indels_qch = Channel.fromPath([params.input + '/*.indel.tsv'], checkIfExists: true)
     bam_qch = Channel.fromPath([params.input + '/*.bam'], checkIfExists: true)
     bw_qch = Channel.fromPath([params.input + '/*.bw'], checkIfExists: true)
   }
 
-  ls(indels_qch, bam_qch, bw_qch)
+  ls(bam_qch, bw_qch)
   
 }
 
