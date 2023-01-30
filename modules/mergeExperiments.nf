@@ -68,7 +68,7 @@ process makeSnpFile {
 }
 
 process processSeqVars {
-  container = 'test'
+  container = 'veupathdb/dnaseqanalysis'
   publishDir "$params.outputDir", mode: "copy"
 
   input:
