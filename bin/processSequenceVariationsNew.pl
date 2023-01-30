@@ -1122,6 +1122,7 @@ sub calculatePossibleCodons {
         return $codonList;
     }
     else {
+	$codon = uc($codon);
         my @codonArray=split(//, $codon);
 
         my %translate = (A => ['A'],
