@@ -84,13 +84,14 @@ workflow mergeExperiments {
     fastas_qch = Channel.fromPath(params.inputDir + '/*.fa.gz')
     vcfs_qch = Channel.fromPath(params.inputDir + '/result.vcf.gz')
     indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv')
+    coverage_qch = Channel.fromPath(params.varscanFilePath + '/*.coverage.txt')
   }
 
   else {
     throw new Exception("Missing parameter params.inputDir")
   }
    
-  me(fastas_qch, vcfs_qch, indels_qch)
+  me(fastas_qch, vcfs_qch, indels_qch, coverage_qch)
 
 }
 

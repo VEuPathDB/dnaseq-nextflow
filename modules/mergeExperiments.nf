@@ -46,7 +46,6 @@ process mergeVcfs {
 
 process makeSnpFile {
   container = 'veupathdb/dnaseqanalysis'
-  publishDir "$params.outputDir", mode: "copy"
 
   input:
     path 'merged.vcf.gz'
@@ -83,6 +82,7 @@ process processSeqVars {
     path consensusFasta
     path indelFile
     path gtfFile
+    path coverageComplete
   
   output:
     path 'cache.txt'
@@ -135,10 +135,12 @@ workflow me {
     fastas_qch
     vcfs_qch
     indels_qch
+    coverage_qch
 
   main:
+    coverages = coverage_qch.collectFile(storeDir: params.varscan_directory)
 
-    combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz', storeDir: params.outputDir )
+    combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
     combinedIndels = indels_qch.collectFile(name: 'indel.tsv')
 
     checkUniqueIds(combinedFastagz) 
@@ -149,7 +151,7 @@ workflow me {
     
     makeSnpFileResults = makeSnpFile(mergedVcf)
     
-    processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile)
+    processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages)
 
     //snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
 
