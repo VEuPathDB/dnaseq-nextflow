@@ -10,7 +10,7 @@ bgzip varscan.snps.vcf
 tabix -fp vcf varscan.snps.vcf.gz
 bgzip varscan.indels.vcf
 tabix -fp vcf varscan.indels.vcf.gz
-bgzip varscan.cons
+mv varscan.cons varscan.coverage.txt
 maskGenome.pl \
   -p $resultPileup \
   -f $genomeReorderedFastaIndex \

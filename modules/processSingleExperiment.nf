@@ -262,7 +262,7 @@ process mpileup {
 process varscan {
   container = 'veupathdb/dnaseqanalysis'
 
-  publishDir "$params.outputDir", pattern: "varscan.cons.gz", mode: "copy", saveAs: { filename -> "${sampleName}.varscan.cons.gz" }
+  publishDir "$params.outputDir/varscanCons", pattern: "varscan.coverage.txt", mode: "copy", saveAs: { filename -> "${sampleName}.coverage.txt" }
 
   input:
     tuple val(sampleName), path (resultSortedGatkBam), path(resultSortedGatkBamIndex), path(resultPileup) 
@@ -270,7 +270,7 @@ process varscan {
 
   output:
     tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
-    path 'varscan.cons.gz'
+    path 'varscan.coverage.txt'
 
   script:
     template 'varscan.bash'
