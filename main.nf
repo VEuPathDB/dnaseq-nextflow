@@ -19,7 +19,6 @@ def fetchRunAccessions( tsv ) {
 //---------------------------------------------------------------
 
 include { ps } from './modules/processSingleExperiment.nf'
-include { ls } from './modules/loadSingleExperiment.nf'
 include { lc } from './modules/loadCNV.nf'
 include { me } from './modules/mergeExperiments.nf'
 include { tests } from './modules/runTests.nf'
@@ -84,6 +83,8 @@ workflow mergeExperiments {
     fastas_qch = Channel.fromPath(params.inputDir + '/*.fa.gz')
     vcfs_qch = Channel.fromPath(params.inputDir + '/result.vcf.gz')
     indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv')
+    bam_qch = Channel.fromPath(params.inputDir + '/*.bam')
+    bw_qch = Channel.fromPath(params.inputDir + '/*.bw')
     coverage_qch = Channel.fromPath(params.varscanFilePath + '/*.coverage.txt')
   }
 
@@ -91,27 +92,8 @@ workflow mergeExperiments {
     throw new Exception("Missing parameter params.inputDir")
   }
    
-  me(fastas_qch, vcfs_qch, indels_qch, coverage_qch)
+  me(fastas_qch, vcfs_qch, indels_qch, coverage_qch, bam_qch, bw_qch)
 
-}
-
-//---------------------------------------------------------------
-// loadSingleExperiment
-//---------------------------------------------------------------
-
-workflow loadSingleExperiment {
-
-  if(!params.input) {
-    throw new Exception("Missing parameter params.input")
-  }
-
-  else {
-    bam_qch = Channel.fromPath([params.input + '/*.bam'], checkIfExists: true)
-    bw_qch = Channel.fromPath([params.input + '/*.bw'], checkIfExists: true)
-  }
-
-  ls(bam_qch, bw_qch)
-  
 }
 
 //---------------------------------------------------------------

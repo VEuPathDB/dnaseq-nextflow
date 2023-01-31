@@ -83,6 +83,8 @@ process processSeqVars {
     path indelFile
     path gtfFile
     path coverageComplete
+    path bigwigsComplete
+    path bamsComplete
   
   output:
     path 'cache.txt'
@@ -136,8 +138,14 @@ workflow me {
     vcfs_qch
     indels_qch
     coverage_qch
+    bw_qch
+    bam_qch
 
   main:
+
+    bigwigs = bw_qch.collectFile(storeDir: params.webServicesDir)
+    bams = bam_qch.collectFile(storeDir: params.webServicesDir)
+
     coverages = coverage_qch.collectFile(storeDir: params.varscan_directory)
 
     combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
@@ -151,7 +159,7 @@ workflow me {
     
     makeSnpFileResults = makeSnpFile(mergedVcf)
     
-    processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages)
+    processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
     //snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
 
