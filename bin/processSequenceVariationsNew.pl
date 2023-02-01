@@ -1315,7 +1315,7 @@ sub makeSNPFeatureFromVariations {
 		  "distinct_allele_count" => $distinctAlleleCount,
 		  "has_coding_mutation" => $referenceVariation->{is_coding},
 		  "total_allele_count" => $totalAlleleCount,
-		  "has_stop_codon" => $has_stop_codon,
+		  "has_stop_codon" => $hasStopCodon,
 		  "ref_codon" => $referenceVariation->{ref_codon},
 		  "reference_aa_full" => $referenceVariation->{reference_aa_full}    
             };
