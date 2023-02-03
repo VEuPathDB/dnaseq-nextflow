@@ -106,57 +106,6 @@ process processSeqVars {
 
 }
 
-process loadAlleles {
-  tag "plugin"
-
-  input:
-    path alleleFile
-    val extDbRlsSpec
-    val genomeExtDbRlsSpec
-
-  script:
-    template 'loadAlleles.bash'
-
-  stub:
-    """
-    touch stdout
-    """
-}
-
-process loadProducts {
-  tag "plugin"
-
-  input:
-    path productFile
-    val extDbRlsSpec
-    val genomeExtDbRlsSpec
-
-  script:
-    template 'loadProducts.bash'
-
-  stub:
-    """
-    touch stdout
-    """
-}
-
-process loadSnps {
-  tag "plugin"
-
-  input:
-    path snpFile 
-    val extDbRlsSpec
-    val genomeExtDbRlsSpec
-
-  script:
-    template 'loadSnps.bash'
-
-  stub:
-    """
-    touch stdout
-    """
-}
-
 process snpEff {
   container = 'veupathdb/dnaseqanalysis'
   publishDir "$params.outputDir", mode: "copy"
@@ -208,10 +157,6 @@ workflow me {
     makeSnpFileResults = makeSnpFile(mergedVcf)
     
     processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
-
-    loadAlleles(processSeqVarsResults.alleleFile, params.genomeExtDbRlsSpec, params.extDbRlsSpec)
-    loadProducts(processSeqVarsResults.productFile, params.genomeExtDbRlsSpec, params.extDbRlsSpec)
-    loadSnps(processSeqVarsResults.snpFile, params.genomeExtDbRlsSpec, params.extDbRlsSpec)
 
     //mergeVcfsResults = mergeVcfs(allvcfs)
     //snpEff(mergedVcfResults, params.gtfFile, params.genomeFastaFile)

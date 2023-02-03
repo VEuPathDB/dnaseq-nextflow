@@ -4,7 +4,7 @@ nextflow.enable.dsl=2
 
 process calculatePloidyAndGeneCNV {
 
-  publishDir "$params.outputDir", pattern: "*_CNVestimations.tsv"
+  publishDir "$params.outputDir"
   
   input:
     tuple val(sampleName), path(sampleFile)
