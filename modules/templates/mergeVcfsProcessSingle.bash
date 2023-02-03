@@ -2,11 +2,9 @@
 
 set -euo pipefail
 
-if [ $vcfCount > 1 ]; then
+if [ $vcfCount -gt 1 ]; then
 
-    bcftools merge \
-        -o result.vcf.gz \
-        -O z *.vcf.gz
+    bcftools merge -o result.vcf.gz -O z *.vcf.gz
     
 else
 
