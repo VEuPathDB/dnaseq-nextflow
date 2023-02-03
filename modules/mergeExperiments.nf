@@ -33,7 +33,7 @@ process mergeVcfs {
     path 'merged.vcf', emit: mergedVcf
 
   script:
-    template 'mergeVcfs.bash'
+    template 'mergeVcfsMergeExperiments.bash'
 
   stub:
     """
@@ -88,9 +88,9 @@ process processSeqVars {
   
   output:
     path 'cache.txt'
-    path 'snpFeature.dat'
-    path 'allele.dat'
-    path 'product.dat'
+    path 'snpFeature.dat', emit: snpFile
+    path 'allele.dat', emit: alleleFile
+    path 'product.dat', emit: productFile
   
   script:
     template 'processSeqVars.bash'
@@ -106,6 +106,56 @@ process processSeqVars {
 
 }
 
+process loadAlleles {
+  tag "plugin"
+
+  input:
+    path alleleFile
+    val extDbRlsSpec
+    val genomeExtDbRlsSpec
+
+  script:
+    template 'loadAlleles.bash'
+
+  stub:
+    """
+    touch stdout
+    """
+}
+
+process loadProducts {
+  tag "plugin"
+
+  input:
+    path productFile
+    val extDbRlsSpec
+    val genomeExtDbRlsSpec
+
+  script:
+    template 'loadProducts.bash'
+
+  stub:
+    """
+    touch stdout
+    """
+}
+
+process loadSnps {
+  tag "plugin"
+
+  input:
+    path snpFile 
+    val extDbRlsSpec
+    val genomeExtDbRlsSpec
+
+  script:
+    template 'loadSnps.bash'
+
+  stub:
+    """
+    touch stdout
+    """
+}
 
 process snpEff {
   container = 'veupathdb/dnaseqanalysis'
@@ -154,13 +204,18 @@ workflow me {
     checkUniqueIds(combinedFastagz) 
 
     mergedVcf = vcfs_qch.collect()
-
-    //mergeVcfsResults = mergeVcfs(allvcfs)
-    
+  
     makeSnpFileResults = makeSnpFile(mergedVcf)
     
-    processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
+    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
-    //snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
+    loadAlleles(processSeqVarsResults.alleleFile, params.genomeExtDbRlsSpec, params.extDbRlsSpec)
+    loadProducts(processSeqVarsResults.productFile, params.genomeExtDbRlsSpec, params.extDbRlsSpec)
+    loadSnps(processSeqVarsResults.snpFile, params.genomeExtDbRlsSpec, params.extDbRlsSpec)
+
+    //mergeVcfsResults = mergeVcfs(allvcfs)
+    //snpEff(mergedVcfResults, params.gtfFile, params.genomeFastaFile)
+
+    
 
 }

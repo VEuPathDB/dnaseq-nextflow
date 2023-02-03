@@ -30,18 +30,15 @@ process hisat2Index {
 
   input:
    path genomeFasta  
-    
+   val fromBam
+   val createIndex
+
   output:
    path 'genomeIndex*.ht2', emit: ht2_files
    val 'genomeIndex' , emit: genome_index_name
 
-  script: 
-    if(params.fromBAM)
-      template 'hisat2IndexFromBam.bash'
-    else if( params.createIndex )
-      template 'hisat2IndexCreateIndex.bash'
-    else
-      template 'hisat2IndexNoBamNoIndex.bash'
+  script:
+    template 'hisat2Index.bash'
 
   stub:
     """
@@ -55,15 +52,13 @@ process fastqc {
 
   input:
     tuple val(sampleName), path(sampleFile)
+    val fromBam
 
   output:
     tuple val(sampleName), path('fastqc_output', type:'dir')
 
   script:
-    if(params.fromBAM)
-      template 'fastqcBam.bash'
-    else 
-      template 'fastqcNoBam.bash'
+      template 'fastqc.bash'
 
   stub:
     """
@@ -76,16 +71,14 @@ process fastqc_check {
   container = 'veupathdb/shortreadaligner'
 
   input:
-    tuple val(sampleName), path(sampleFile), path(fastqc_output) 
+    tuple val(sampleName), path(sampleFile), path(fastqc_output)
+    val fromBam
 
   output:
     tuple val(sampleName), path('mateAEncoding') 
 
   script:
-    if(params.fromBAM)
-      template 'fastqc_checkBam.bash'
-    else 
-      template 'fastqc_checkNoBam.bash'            
+    template 'fastqcCheck.bash'
 
   stub:
     """
@@ -100,17 +93,14 @@ process trimmomatic {
 
   input:
     tuple val(sampleName), path(sampleFile), path('mateAEncoding') 
-    
+    val fromBam
+    val isPaired
+
   output:
     tuple val(sampleName), path('sample_1P'), path('sample_2P') 
 
   script:
-    if(params.fromBAM)
-      template 'trimmomaticBam.bash'      
-    else if( params.isPaired )
-      template 'trimmomaticPaired.bash'
-    else 
-      template 'trimmomaticSingle.bash'
+    template 'trimmomatic.bash'
 
   stub:
     """
@@ -127,18 +117,16 @@ process hisat2 {
     input:
       tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p) 
       val hisat2_index 
-      path 'genomeIndex.*.ht2' 
+      path 'genomeIndex.*.ht2'
+      val fromBam
+      val isPaired
 
     output:
       tuple val(sampleName), path('result_sorted.bam')
 
     script:
-      if(params.fromBAM)
-        template 'hisat2Bam.bash'
-      else if( params.isPaired )
-        template 'hisat2Paired.bash'
-      else 
-        template 'hisat2Single.bash'
+      template 'hisat2.bash'
+      
   stub:
     """
     touch result_sorted.bam
@@ -387,10 +375,7 @@ process mergeVcfs {
     path('result.vcf.gz') 
     
   script:
-    if (vcfCount > 1)
-      template 'mergeVcfsCount.bash'
-    else
-      template 'mergeVcfsNoCount.bash'
+    template 'mergeVcfsProcessSingle.bash'
 
   stub:
     """
@@ -756,44 +741,44 @@ workflow ps {
 
     genome_fasta_file = file(params.genomeFastaFile)
 
-    hisat2IndexResults = hisat2Index(genome_fasta_file)
+    hisat2IndexResults = hisat2Index(genome_fasta_file, params.fromBAM, params.createIndex)
 
     if(!params.local && !params.fromBAM) {
 
         files = downloadFiles(samples_qch)
 
-        fastqcResults = fastqc(files)
+        fastqcResults = fastqc(files, params.fromBAM)
 
-        fastqc_checkResults = fastqc_check(files.join(fastqcResults))
+        fastqc_checkResults = fastqc_check(files.join(fastqcResults), params.fromBAM)
 
-        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults))
+        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults), params.fromBAM, params.isPaired)
 
-        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
+        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, params.isPaired)
     }
 
     else if(!params.local && params.fromBAM) {
 
         files = downloadBAMFromEBI(samples_qch)
 
-        fastqcResults = fastqc(files)
+        fastqcResults = fastqc(files, params.fromBAM)
 
-        fastqc_checkResults = fastqc_check(files.join(fastqcResults))
+        fastqc_checkResults = fastqc_check(files.join(fastqcResults), params.fromBAM)
 
-        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults))
+        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults), params.fromBAM, params.isPaired)
 
-        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
+        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, params.isPaired)
     
     }
 
     else {
 
-        fastqcResults = fastqc(samples_qch)
+        fastqcResults = fastqc(samples_qch, params.fromBAM)
 
-        fastqc_checkResults = fastqc_check(samples_qch.join(fastqcResults))
+        fastqc_checkResults = fastqc_check(samples_qch.join(fastqcResults), params.fromBAM)
 
-        trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults))
+        trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults), params.fromBAM, params.isPaired)
 
-        hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files)
+        hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, params.isPaired)
 
     }
     
