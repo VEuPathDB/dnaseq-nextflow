@@ -69,7 +69,9 @@ process makeSnpFile {
 
 process processSeqVars {
   container = 'veupathdb/dnaseqanalysis'
-  publishDir "$params.outputDir", mode: "copy"
+  publishDir "$params.outputDir", mode: "copy", pattern: 'cache.txt'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
 
   input:
     path snpFile
@@ -88,13 +90,12 @@ process processSeqVars {
   
   output:
     path 'cache.txt'
-    path 'snpFeature.dat', emit: snpFile
-    path 'allele.dat', emit: alleleFile
-    path 'product.dat', emit: productFile
+    path 'snpFeature.dat', emit: variationFile
+    path 'allele.dat'
+    path 'product.dat'
   
   script:
     template 'processSeqVars.bash'
-
 
   stub:
     """
@@ -105,6 +106,29 @@ process processSeqVars {
     """
 
 }
+
+
+process addExtDbRlsIdToVariation {
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    path variationFile
+    val extDbSpec
+    path gusConfig
+  
+  output:
+    path 'variationFeature.dat'
+
+  
+  script:
+    template 'addExtDbRlsId.bash'
+
+  stub:
+    """
+    touch variationFeature.dat
+    """
+}
+
 
 process snpEff {
   container = 'veupathdb/dnaseqanalysis'
@@ -157,6 +181,8 @@ workflow me {
     makeSnpFileResults = makeSnpFile(mergedVcf)
     
     processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
+
+    addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
 
     //mergeVcfsResults = mergeVcfs(allvcfs)
     //snpEff(mergedVcfResults, params.gtfFile, params.genomeFastaFile)
