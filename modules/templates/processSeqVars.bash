@@ -16,3 +16,4 @@ perl /usr/bin/processSequenceVariationsNew.pl \
   --consensus unzipped.fa \
   --indelFile $indelFile \
   --gtfFile $gtfFile
+cp $cacheFile cache.txt

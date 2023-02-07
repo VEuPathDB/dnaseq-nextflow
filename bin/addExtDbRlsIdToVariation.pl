@@ -1,7 +1,8 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 use strict;
 use warnings;
+use lib "$ENV{GUS_HOME}/lib/perl";
 use Getopt::Long;
 use GUS::ObjRelP::DbiDatabase;
 use GUS::Supported::GusConfig;
