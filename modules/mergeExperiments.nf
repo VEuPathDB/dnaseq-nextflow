@@ -69,7 +69,7 @@ process makeSnpFile {
 
 process processSeqVars {
   container = 'veupathdb/dnaseqanalysis'
-  publishDir "$params.cacheFileDir", mode: "copy", pattern: 'cache.txt', saveAs: "$params.cacheFile" 
+  publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
 
@@ -89,7 +89,7 @@ process processSeqVars {
     path bamsComplete
   
   output:
-    path 'cache.txt'
+    path cacheFile
     path 'snpFeature.dat', emit: variationFile
     path 'allele.dat'
     path 'product.dat'
