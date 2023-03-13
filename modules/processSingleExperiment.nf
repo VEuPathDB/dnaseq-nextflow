@@ -733,7 +733,7 @@ process makeHeterozygousDensityBigwig {
 process calculatePloidyAndGeneCNV {
   container = 'veupathdb/dnaseqanalysis'
 
-  publishDir "$params.outputDir"
+  publishDir "$params.outputDir", mode: "copy"
   
   input:
     tuple val(sampleName), path(sampleFile)
