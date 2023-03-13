@@ -46,7 +46,9 @@ RUN export APICOMMONDATA_GIT_COMMIT_SHA=cf3e3daf2337a88462060439bd1fcf3a4b714c34
     && git checkout $APICOMMONDATA_GIT_COMMIT_SHA \
     && mkdir -p $GUS_HOME/lib/perl/ApiCommonData/Load/Plugin \
     && cp $PROJECT_HOME/ApiCommonData/Load/plugin/perl/*.pm $GUS_HOME/lib/perl/ApiCommonData/Load/Plugin/ \
-    && cp $PROJECT_HOME/ApiCommonData/Load/lib/perl/*.pm $GUS_HOME/lib/perl/ApiCommonData/Load/
+    && cp $PROJECT_HOME/ApiCommonData/Load/lib/perl/*.pm $GUS_HOME/lib/perl/ApiCommonData/Load/ \
+    && rm $GUS_HOME/lib/perl/ApiCommonData/Load/CalculationsForCNVs.pm
+ADD /lib/perl/CalculationsForCNVs.pm $GUS_HOME/lib/perl/ApiCommonData/Load/
 
 RUN mkdir /gusApp/gus_home/lib/perl/GUS/Community \
     mkdir /gusApp/gus_home/lib/perl/VEuPath \

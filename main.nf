@@ -19,7 +19,6 @@ def fetchRunAccessions( tsv ) {
 //---------------------------------------------------------------
 
 include { ps } from './modules/processSingleExperiment.nf'
-include { lc } from './modules/loadCNV.nf'
 include { me } from './modules/mergeExperiments.nf'
 include { tests } from './modules/runTests.nf'
 
@@ -96,23 +95,6 @@ workflow mergeExperiments {
 
 }
 
-//---------------------------------------------------------------
-// loadCNV
-//---------------------------------------------------------------
-
-workflow loadCNV {
-
-  if(!params.input) {
-    throw new Exception("Missing parameter params.input")
-  }
-
-  else {
-    tpm_qch = Channel.fromPath([params.input + '/CNVs/*.tpm'], checkIfExists: true).map { file -> tuple(file.baseName, [file]) }
-  }
-
-  lc(tpm_qch)
-  
-}
 
 //---------------------------------------------------------------
 // runTests

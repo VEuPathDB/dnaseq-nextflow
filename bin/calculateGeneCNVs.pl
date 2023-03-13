@@ -4,112 +4,62 @@ use strict;
 use warnings;
 use Getopt::Long;
 use ApiCommonData::Load::CalculationsForCNVs;
-use Data::Dumper;
-use GUS::Supported::GusConfig;
-use DBI;
-use DBD::Oracle;
 
-my ($gusConfigFile, $chrPloidyFile, $fpkmFile, $outputDir, $sampleName, $taxonId, $geneFootprintFile);
+my ($chrPloidyFile, $fpkmFile, $outputDir, $sampleName, $taxonId, $geneFootprintFile, $geneSourceIdOrthologFile, $chrsForCalcsFile);
 my $ploidy = 2;
-&GetOptions("gusConfigFile=s" => \$gusConfigFile,
-            "fpkmFile=s" => \$fpkmFile,
+&GetOptions("fpkmFile=s" => \$fpkmFile,
             "ploidy=i" => \$ploidy,
             "outputDir=s" => \$outputDir,
             "sampleName=s" => \$sampleName,
             "taxonId=i"=> \$taxonId,
             "geneFootPrints=s" => \$geneFootprintFile,
+            "geneSourceIdOrthologFile=s" => \$geneSourceIdOrthologFile,
+            "chrsForCalcsFile=s" => \$chrsForCalcsFile,
             );
  
 &usage() unless ($fpkmFile && $outputDir && $sampleName && $taxonId && $geneFootprintFile);
 
-my $sql = "with sequence as (
-                select gf.source_id as gene_source_id
-                , gf.na_feature_id
-                , ns.source_id as contig_source_id
-                , ns.source_id as sequence_source_id
-                , ns.TAXON_ID
-                from dots.genefeature gf
-                , DOTS.NASEQUENCE ns
-                , SRES.ONTOLOGYTERM ot
-                where gf.na_sequence_id = ns.na_sequence_id
-                and ot.name = 'chromosome'
-                and ns.SEQUENCE_ONTOLOGY_ID = ot.ONTOLOGY_TERM_ID
-                and ns.taxon_id = $taxonId
-                union
-                select gf.SOURCE_ID AS gene_source_id
-                , gf.na_feature_id
-                , contig.source_id as contig_source_id
-                , scaffold.SOURCE_ID as chromosome_source_id
-                , scaffold.TAXON_ID
-                from dots.genefeature gf
-                , dots.nasequence contig
-                , dots.nasequence scaffold
-                , dots.sequencepiece sp
-                , SRES.ONTOLOGYTERM ot
-                where gf.na_sequence_id = sp.PIECE_NA_SEQUENCE_ID
-                and gf.na_sequence_id = contig.na_sequence_id
-                and sp.VIRTUAL_NA_SEQUENCE_ID = scaffold.NA_SEQUENCE_ID
-                and ot.name = 'chromosome'
-                and scaffold.SEQUENCE_ONTOLOGY_ID = ot.ONTOLOGY_TERM_ID
-                and scaffold.taxon_id = $taxonId
-            )
-  
-            , orthologs as (
-                select gf.na_feature_id, sg.name
-                from dots.genefeature gf
-                , dots.SequenceSequenceGroup ssg
-                , dots.SequenceGroup sg
-                , core.TableInfo ti
-                where gf.na_feature_id = ssg.sequence_id
-                and ssg.sequence_group_id = sg.sequence_group_id
-                and ssg.source_table_id = ti.table_id
-                and ti.name = 'GeneFeature'
-            )
-
-            select s.gene_source_id
-            , o.name
-            from sequence s
-            , orthologs o
-            where s.na_feature_id = o.na_feature_id";
-
 #get hashrefs of chromosome data
-my $chrs = ApiCommonData::Load::CalculationsForCNVs::getChrsForCalcs($taxonId);
+my $chrs = getChrsForCalcs($chrsForCalcsFile, $taxonId);
 my $geneData = ApiCommonData::Load::CalculationsForCNVs::getGeneInfo($geneFootprintFile, $chrs);
 my $chrValues = ApiCommonData::Load::CalculationsForCNVs::getChrFPKMVals($fpkmFile, $chrs, $geneData);
 my $chrMedians = ApiCommonData::Load::CalculationsForCNVs::getChrMedians($chrValues, $chrs);
 my $allChrMedian = ApiCommonData::Load::CalculationsForCNVs::getMedianAcrossChrs($chrValues, $chrs);
 my $chrPloidies = ApiCommonData::Load::CalculationsForCNVs::getChrPloidies($chrMedians, $allChrMedian, $ploidy, $chrs);
 
-# get OrthoMCL IDs from DB
-if (!$gusConfigFile) {
-    $gusConfigFile = $ENV{GUS_HOME}."/config/gus.config";
-}
-
-die "Config file $gusConfigFile does not exist" unless -e $gusConfigFile;
-
-my $gusConfig = GUS::Supported::GusConfig->new($gusConfigFile);
-my ($dbiDsn, $login, $password, $core);
-$dbiDsn = $gusConfig->getDbiDsn();
-$login = $gusConfig->getDatabaseLogin();
-$password = $gusConfig->getDatabasePassword();
-$core = $gusConfig->getCoreSchemaName();
-
-my $dbh = DBI->connect($dbiDsn, $login, $password, $core);
-
-my $orthoMclStmt = $dbh->prepare($sql);
-$orthoMclStmt->execute();
 my $geneOrthoMclIds = {};
-while (my @row = $orthoMclStmt->fetchrow_array()){
-    $geneOrthoMclIds->{$row[0]} = $row[1];
+open(my $data, '<', $geneSourceIdOrthologFile) || die "Could not open file $geneSourceIdOrthologFile: $!";
+while (my $line = <$data>) {
+    chomp $line;
+    my ($geneSourceId,$ortholog) = split(/\t/, $line);
+    $geneOrthoMclIds->{$geneSourceId} = $ortholog;
 }
+close($data);
 die "ERROR:\tNo orthologs can be found for genes in the organism with taxon id $taxonId. Ortholog data is required to run this script.\n\n
          DATA LOADERS: Please undo this step and re-run after orthologs have been loaded in this database.\n"
          unless scalar keys %$geneOrthoMclIds > 0;
-$dbh->disconnect();
 
 my $allGenesData = &geneCopyNumberCalc($fpkmFile, $chrPloidies, $chrMedians, $geneOrthoMclIds, $chrs, $geneData);
 &calcCnvForOrthologGroups($allGenesData, $chrPloidies, $outputDir, $sampleName);
+
+#==================================== Subroutines =======================================================================
  
+sub getChrsForCalcs {
+    my ($file, $taxonid) = @_;
+    my $chrs = {};
+    open(my $data, '<', $file) || die "Could not open file $file: $!";
+    while (my $line = <$data>) {
+      chomp $line;
+      my ($sourceId) = split(/\t/, $line);
+      $chrs->{$sourceId} = 0;
+    }
+    die "ERROR:\tThe organism with taxon id $taxonid does not have any sequences annotated with the SO term \"chromosome\".
+         We cannot calculate copy number variations for this organism.\n\nDATA LOADERS: Please undo this dataset and remove the dataset class.\n"
+         unless scalar keys %$chrs > 0;
+    close $data;
+    return $chrs;
+}
+
 sub geneCopyNumberCalc {
     my ($fpkmFile, $chrPloidies, $chrMedians, $geneOrthoMclIds, $chrs, $geneInfo) = @_;
     my $allGenesData = [];
@@ -199,9 +149,9 @@ sub calcCnvForOrthologGroups {
     close (TXT);
 }
  
-       
+     
 sub usage {
-    print STDERR "calculateGeneCNVs --fpkmFile <path to genes.fpkm_tracking file generated by Cufflinks> --outputDir <Dir to write output files> --sampleName <sample name> --sql <sql statement to return a list of genes and their OrthoMCL_Ids> --geneFootPrints <gene footprint file> [--gusConfigFile <supply if not using default>] --ploidy <Base ploidy for this organism (i.e., what you expect the majority of chromosomes to be) - default is 2>";
+    print STDERR "calculateGeneCNVs --fpkmFile <path to genes.fpkm_tracking file generated by Cufflinks> --outputDir <Dir to write output files> --sampleName <sample name> --sql <sql statement to return a list of genes and their OrthoMCL_Ids> --geneFootPrints <gene footprint file> --ploidy <Base ploidy for this organism (i.e., what you expect the majority of chromosomes to be) - default is 2>";
     exit;
 }
 

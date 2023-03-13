@@ -541,14 +541,14 @@ process htseqCount {
 process calculateTPM {
   container = 'veupathdb/shortreadaligner'
 
-  publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.tpm" }
+  publishDir "$params.outputDir/CNVs", mode: "copy"
 
   input:
     tuple val(sampleName), path(counts) 
     path geneFootprintFile 
 
   output:
-    path('tpm.txt')
+    tuple val(sampleName), path('*.tpm')
 
   script:
     template 'calculateTpm.bash'
@@ -730,6 +730,34 @@ process makeHeterozygousDensityBigwig {
     """
 }
 
+process calculatePloidyAndGeneCNV {
+  container = 'veupathdb/dnaseqanalysis'
+
+  publishDir "$params.outputDir"
+  
+  input:
+    tuple val(sampleName), path(sampleFile)
+    path footprints
+    val ploidy
+    val taxonId
+    path geneSourceIdOrtholog
+    path chrsForCalc
+
+  output:
+    tuple val(sampleName), path( "${sampleName}_Ploidy.txt" ), emit: ploidy
+    tuple val(sampleName), path( "${sampleName}_geneCNVs.txt" ), emit: geneCNV
+    path "${sampleName}_CNVestimations.tsv"
+
+  script:
+    template 'calculatePloidyAndGeneCNV.bash'
+
+  stub:
+    """
+    touch ${sampleName}_Ploidy.txt
+    touch ${sampleName}_geneCNVs.txt
+    touch ${sampleName}_CNVestimations.tsv
+    """
+}
 
 workflow ps {
 
@@ -820,6 +848,8 @@ workflow ps {
     htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
 
     calculateTPMResults = calculateTPM(htseqCountResults, params.footprintFile)
+
+    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.taxonId, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
