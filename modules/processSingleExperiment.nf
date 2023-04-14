@@ -16,10 +16,10 @@ process downloadBAMFromEBI {
 process downloadFiles {
   container = 'veupathdb/humann'
   input:
-    val id
+    tuple val(strain), val(idList)
 
   output:
-    tuple val(id), path("${id}**.fastq")
+    tuple val(strain), path("${strain}**.fastq")
 
   script:
     template 'downloadFiles.bash'
