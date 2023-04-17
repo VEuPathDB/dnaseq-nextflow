@@ -176,7 +176,9 @@ workflow me {
 
     checkUniqueIds(combinedFastagz) 
 
-    mergedVcf = vcfs_qch.collect()
+    allvcfs = vcfs_qch.collect()
+
+    mergedVcf = mergeVcfs(allvcfs)    
   
     makeSnpFileResults = makeSnpFile(mergedVcf)
     
@@ -184,7 +186,7 @@ workflow me {
 
     addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
 
-    //mergeVcfsResults = mergeVcfs(allvcfs)
+
     //snpEff(mergedVcfResults, params.gtfFile, params.genomeFastaFile)
 
     
