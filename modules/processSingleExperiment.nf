@@ -19,7 +19,8 @@ process downloadFiles {
     tuple val(strain), val(idList)
 
   output:
-    tuple val(strain), path("${strain}**.fastq")
+    tuple val(strain), path("${strain}**.fastq"), emit: files
+    env isPaired, emit: isPaired
 
   script:
     template 'downloadFiles.bash'
@@ -773,15 +774,15 @@ workflow ps {
 
     if(!params.local && !params.fromBAM) {
 
-        files = downloadFiles(samples_qch)
+        downloadFilesResults = downloadFiles(samples_qch)
 
-        fastqcResults = fastqc(files, params.fromBAM)
+        fastqcResults = fastqc(downloadFilesResults.files, params.fromBAM)
 
-        fastqc_checkResults = fastqc_check(files.join(fastqcResults), params.fromBAM)
+        fastqc_checkResults = fastqc_check(downloadFilesResults.files.join(fastqcResults), params.fromBAM)
 
-        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults), params.fromBAM, params.isPaired)
+        trimmomaticResults = trimmomatic(downloadFilesResults.files.join(fastqc_checkResults), params.fromBAM, downloadFilesResults.isPaired)
 
-        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, params.isPaired)
+        hisat2Results = hisat2(downloadFilesResults.files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, downloadFilesResults.isPaired)
     }
 
     else if(!params.local && params.fromBAM) {
@@ -792,9 +793,9 @@ workflow ps {
 
         fastqc_checkResults = fastqc_check(files.join(fastqcResults), params.fromBAM)
 
-        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults), params.fromBAM, params.isPaired)
+        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults), params.fromBAM, 'NA')
 
-        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, params.isPaired)
+        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, 'NA')
     
     }
 

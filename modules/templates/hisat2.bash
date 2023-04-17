@@ -16,10 +16,10 @@ elif [ "$isPaired" = true ]; then
         -x $hisat2_index \
         -1 $sample_1p \
         -2 $sample_2p  \
-        | samtools collate -@ $params.samtoolsThreads -o output.bam -
-        samtools fixmate -@ $params.samtoolsThreads -m output.bam fix.bam
-        samtools sort -@ $params.samtoolsThreads -o sort.bam fix.bam
-        samtools markdup -@ $params.samtoolsThreads -r sort.bam result_sorted.bam
+        | samtools collate -o output.bam -
+        samtools fixmate -m output.bam fix.bam
+        samtools sort -o sort.bam fix.bam
+        samtools markdup -r sort.bam result_sorted.bam
     
 else
 
@@ -30,9 +30,9 @@ else
         -q --\$mateAEncoding \
         -x $hisat2_index \
         -U $sample_1p \
-        | samtools collate -@ $params.samtoolsThreads -o output.bam -
-        samtools fixmate -@ $params.samtoolsThreads -m output.bam fix.bam
-        samtools sort -@ $params.samtoolsThreads -o sort.bam fix.bam
-        samtools markdup -@ $params.samtoolsThreads -r sort.bam result_sorted.bam
+        | samtools collate -o output.bam -
+        samtools fixmate -m output.bam fix.bam
+        samtools sort -o sort.bam fix.bam
+        samtools markdup -r sort.bam result_sorted.bam
 
 fi
