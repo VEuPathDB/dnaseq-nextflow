@@ -30,7 +30,6 @@ process mergeVcfs {
 
   output:
     path 'merged.vcf.gz'
-    path 'merged.vcf', emit: mergedVcf
 
   script:
     template 'mergeVcfsMergeExperiments.bash'
