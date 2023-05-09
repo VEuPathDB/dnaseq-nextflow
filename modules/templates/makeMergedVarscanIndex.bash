@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
-gunzip $resultVcfGz
-sed -i 's/\\%//g' result.vcf
-cp result.vcf holf.vcf
+cp $resultVcfGz hold.vcf.gz
+gunzip hold.vcf.gz
+sed -i 's/\\%//g' hold.vcf
 bgzip hold.vcf
-rm result.vcf
-mv hold.vcf result.vcf
-tabix -fp vcf $resultVcfGz
+mv hold.vcf.gz result.vcf.gz
+tabix -fp vcf result.vcf.gz
