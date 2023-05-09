@@ -8,5 +8,5 @@ bcftools merge \
       -O z *.vcf.gz
 cp merged.vcf.gz merge.vcf.gz
 gunzip merge.vcf.gz
-sed -i 's/\%//g' merge.vcf
+sed -i 's/\\%//g' merge.vcf
 mv merge.vcf merged.vcf
