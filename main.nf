@@ -7,6 +7,7 @@ nextflow.enable.dsl=2
 
 include { ps } from './modules/processSingleExperiment.nf'
 include { me } from './modules/mergeExperiments.nf'
+include { ls } from './modules/loadSingleExperiment.nf'
 include { tests } from './modules/runTests.nf'
 
 //---------------------------------------------------------------
@@ -57,6 +58,22 @@ workflow processSingleExperiment {
 
 }
 
+//---------------------------------------------------------------
+// loadSingleExperiment
+//---------------------------------------------------------------
+
+workflow loadSingleExperiment {
+
+  if(params.indelDir) {
+    indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv')
+  }
+
+  else {
+    throw new Exception("Missing parameter params.indelDir")
+  }
+   
+  ls(indels_qch)
+}
 
 //---------------------------------------------------------------
 // mergeExperiments
