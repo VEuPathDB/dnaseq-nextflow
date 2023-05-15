@@ -65,7 +65,7 @@ workflow processSingleExperiment {
 workflow loadSingleExperiment {
 
   if(params.indelDir) {
-    indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv')
+    indels_qch = Channel.fromPath(params.indelDir + '/*.indel.tsv')
   }
 
   else {
