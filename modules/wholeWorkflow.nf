@@ -1,6 +1,9 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
+
+//-------------------- ProcessSingleExperiment --------------------------
+
 process downloadBAMFromEBI {
   container = 'veupathdb/dnaseqanalysis'
   input:
@@ -47,7 +50,6 @@ process hisat2Index {
     """
 }
 
-
 process fastqc {
   container = 'biocontainers/fastqc:v0.11.9_cv7'
 
@@ -67,7 +69,6 @@ process fastqc {
     """
 }
 
-
 process fastqc_check {
   container = 'veupathdb/shortreadaligner'
 
@@ -85,9 +86,7 @@ process fastqc_check {
     """
     touch mateAEncoding
     """
-
 }
-
 
 process trimmomatic {
   container = 'veupathdb/shortreadaligner'
@@ -107,10 +106,8 @@ process trimmomatic {
     """
     touch sample_1P
     touch sample_2P
-    """
-    
+    """    
 }
-
 
 process hisat2 {
     container = 'veupathdb/shortreadaligner'
@@ -134,7 +131,6 @@ process hisat2 {
     """
 }
 
-
 process reorderFasta {
   container = 'veupathdb/shortreadaligner'
    
@@ -147,15 +143,13 @@ process reorderFasta {
 
   script:
     template 'reorderFasta.bash'
-
+     
   stub:
     """
     touch genome_reordered.fa
     touch genome_reordered.fa.fai
     """
-
 }
-
 
 process subsample {
   container = 'veupathdb/shortreadaligner'
@@ -174,7 +168,6 @@ process subsample {
     touch result_sorted_ds.bam
     """
 }
-
 
 process picard {
   container = 'broadinstitute/picard:2.25.0'
@@ -197,9 +190,7 @@ process picard {
     touch picard.bai
     touch summaryMetrics.txt
     """
-
 }
-
 
 process gatk {
   container = 'broadinstitute/gatk3:3.8-1'
@@ -212,18 +203,17 @@ process gatk {
     tuple val(sampleName), path(genomeReorderedDict), path(picardBam), path(picardBamIndex)
 
   output:
-    tuple val(sampleName), path('${sampleName}.bam'), path('${sampleName}.bam.bai')
+    tuple val(sampleName), path('${sampleName}.bam'), path('${sampleName}.bai')
 
   script:
     template 'gatk.bash'
 
   stub:
     """
-    touch result_sorted_gatk.bam
-    touch result_sorted_gatk.bai
+    touch ${sampleName}.bam
+    touch ${sampleName}.bai
     """
 }
-
 
 process mpileup {
   container = 'veupathdb/shortreadaligner'
@@ -244,9 +234,7 @@ process mpileup {
     """
     touch result.pileup
     """
-
 }
-
 
 process varscan {
   container = 'veupathdb/dnaseqanalysis'
@@ -259,7 +247,7 @@ process varscan {
 
   output:
     tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
-    path '${sampleName}.coverage.txt'
+    path '${sampleName}.coverage.txt', emit: coverageFile
 
   script:
     template 'varscan.bash'
@@ -274,7 +262,6 @@ process varscan {
     touch varscan.cons.gz
     """
 }
-
 
 process concatSnpsAndIndels {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
@@ -293,9 +280,7 @@ process concatSnpsAndIndels {
     touch varscan.concat.vcf
     touch genome_masked.fa
     """
-
 }
-
 
 process makeCombinedVarscanIndex {
   container = 'veupathdb/dnaseqanalysis'
@@ -318,9 +303,7 @@ process makeCombinedVarscanIndex {
     touch varscan.concat.vcf.gz.tbi
     touch genome_masked.fa
     """
-
 }
-
 
 process filterIndels {
   container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
@@ -338,10 +321,7 @@ process filterIndels {
     """
     touch output.recode.vcf
     """
-
-
 }
-
 
 process makeIndelTSV {
   container = 'veupathdb/dnaseqanalysis'
@@ -361,9 +341,7 @@ process makeIndelTSV {
     """
     touch output.tsv
     """
-
 }
-
 
 process mergeVcfs {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
@@ -382,9 +360,7 @@ process mergeVcfs {
     """
     touch result.vcf.gz
     """
-
 }
-
 
 process makeMergedVarscanIndex {
   container = 'veupathdb/dnaseqanalysis'
@@ -405,9 +381,7 @@ process makeMergedVarscanIndex {
     touch result.vcf.gz
     touch result.vcf.gz.tbi
     """
-
 }
-
 
 process bcftoolsConsensus {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
@@ -426,9 +400,7 @@ process bcftoolsConsensus {
     """
     touch cons.fa
     """
-
 }
-
 
 process addSampleToDefline {
   container = 'veupathdb/dnaseqanalysis'
@@ -448,9 +420,7 @@ process addSampleToDefline {
     """
     touch unique_ids.fa.gz
     """
-
 }
-
 
 process genomecov {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
@@ -470,9 +440,7 @@ process genomecov {
     """
     touch coverage.bed
     """
-
 }
-
 
 process bedGraphToBigWig {
   container = 'veupathdb/shortreadaligner'
@@ -493,9 +461,7 @@ process bedGraphToBigWig {
     """
     touch coverage.bw
     """
-
 }
-
 
 process sortForCounting {
   container = 'veupathdb/shortreadaligner'
@@ -513,9 +479,7 @@ process sortForCounting {
     """
     touch result_sortByName.bam
     """
-
 }
-
 
 process htseqCount {
   container = 'biocontainers/htseq:v0.11.2-1-deb-py3_cv1'
@@ -538,7 +502,6 @@ process htseqCount {
     """
 }
 
-
 process calculateTPM {
   container = 'veupathdb/shortreadaligner'
 
@@ -558,9 +521,7 @@ process calculateTPM {
     """
     touch tpm.txt
     """
-
 }
-
 
 process makeWindowFile {
   container = 'veupathdb/shortreadaligner'
@@ -580,9 +541,7 @@ process makeWindowFile {
     touch windows.bed
     touch genome.txt
     """
-
 }
-
 
 process bedtoolsWindowed {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
@@ -601,9 +560,7 @@ process bedtoolsWindowed {
     """
     touch windowedCoverage.bed
     """
-
 }
-
 
 process normaliseCoverage {
   container = 'veupathdb/shortreadaligner' 
@@ -625,7 +582,6 @@ process normaliseCoverage {
     """
 }
 
-
 process makeSnpDensity {
   container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
@@ -645,7 +601,6 @@ process makeSnpDensity {
     touch indelDensity.bed
     """
 }
-
 
 process makeDensityBigwigs {
   container = 'veupathdb/shortreadaligner'
@@ -669,7 +624,6 @@ process makeDensityBigwigs {
     """
 }
 
-
 process getHeterozygousSNPs {
   container = 'veupathdb/vcf_parser_cnv'
 
@@ -687,7 +641,6 @@ process getHeterozygousSNPs {
     touch heterozygousSNPs.vcf
     """
 }
-
 
 process makeHeterozygousDensityBed {
   container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
@@ -707,7 +660,6 @@ process makeHeterozygousDensityBed {
     touch heterozygousDensity.bed
     """
 }
-
 
 process makeHeterozygousDensityBigwig {
   container = 'veupathdb/shortreadaligner'
@@ -760,7 +712,174 @@ process calculatePloidyAndGeneCNV {
     """
 }
 
-workflow ps {
+// ----------------- LoadSingleExperiment ------------------------------
+
+process loadIndels {
+  tag "plugin"
+
+  input:
+    tuple val(sampleName), path(indel)
+    val extDbRlsSpec
+    val genomeExtDbRlsSpec
+
+  output:
+    path "${sampleName}_indel.tsv"
+
+  script:
+    template 'loadIndelsUserDatasets.bash'
+
+  stub:
+    """
+    touch stdout
+    """
+}
+
+// ---------------- MergeExperiments -----------------------------------
+
+process checkUniqueIds {
+  container = 'veupathdb/dnaseqanalysis'
+  
+  input:
+    path 'consensus.fa.gz'
+
+  output:
+    stdout
+
+  script:
+    template 'checkUniqueIds.bash'
+
+  stub:
+    """
+    touch stdout
+    """
+}
+
+process mergeVcfsMergeExperiment {
+  container = 'veupathdb/dnaseqanalysis'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
+
+  input:
+    path '*.vcf.gz'
+
+  output:
+    path 'merged.vcf.gz'
+
+  script:
+    template 'mergeVcfsMergeExperiments.bash'
+
+  stub:
+    """
+    touch merged.vcf.gz
+    touch merged.vcf
+    """
+}
+
+process makeSnpFile {
+  container = 'veupathdb/dnaseqanalysis'
+
+  input:
+    path 'merged.vcf.gz'
+
+  output: 
+    path 'snpFile.tsv', emit: snpFile
+
+  script:
+    """
+    cp merged.vcf.gz hold.vcf.gz
+    gunzip hold.vcf.gz
+    perl /usr/bin/makeSnpFile.pl --vcf hold.vcf --output snpFile.tsv
+    """
+
+  stub:
+    """
+    touch snpFile.tsv
+    """
+}
+
+process processSeqVars {
+  container = 'veupathdb/dnaseqanalysis'
+  publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
+  publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
+
+  input:
+    path snpFile
+    path cacheFile
+    path undoneStrainsFile
+    val  organism_abbrev
+    val  reference_strain
+    path varscanDir
+    path genomeFasta
+    path consensusFasta
+    path indelFile
+    path gtfFile
+    path coverageComplete
+    path bigwigsComplete
+    path bamsComplete
+  
+  output:
+    path cacheFile
+    path 'snpFeature.dat', emit: variationFile
+    path 'allele.dat'
+    path 'product.dat'
+  
+  script:
+    template 'processSeqVars.bash'
+
+  stub:
+    """
+    touch cache.txt
+    touch snpFeature.dat
+    touch allele.dat
+    touch product.dat
+    """
+}
+
+process addExtDbRlsIdToVariation {
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    path variationFile
+    val extDbSpec
+    path gusConfig
+  
+  output:
+    path 'variationFeature.dat'
+
+  
+  script:
+    template 'addExtDbRlsId.bash'
+
+  stub:
+    """
+    touch variationFeature.dat
+    """
+}
+
+process snpEff {
+  container = 'veupathdb/dnaseqanalysis'
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    path 'merged.vcf'
+    path 'genes.gtf'
+    path 'sequences.fa.gz'
+
+  output:
+    path 'merged.ann.vcf'
+
+  script:
+    template 'snpEff.bash'    
+
+  stub:
+    """
+    touch merged.ann.vcf
+    """
+}
+
+// ----------------------- WORKFLOW ---------------------------
+
+workflow wf {
 
   take:
 
@@ -829,7 +948,7 @@ workflow ps {
 
     filterIndelsResults = filterIndels(makeCombinedVarscanIndexResults)
 
-    makeIndelTSV(filterIndelsResults)
+    makeIndelTSVResults = makeIndelTSV(filterIndelsResults)
 
     // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
     mergeVcfsResults = mergeVcfs(makeCombinedVarscanIndexResults.count(), makeCombinedVarscanIndexResults.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
@@ -838,7 +957,7 @@ workflow ps {
 
     bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVarscanIndexResults, reorderFastaResults)
 
-    addSampleToDefline(bcftoolsConsensusResults)
+    addSampleToDeflineResults = addSampleToDefline(bcftoolsConsensusResults)
 
     genomecovResults = genomecov(gatkResults, reorderFastaResults)
 
@@ -870,5 +989,25 @@ workflow ps {
 
       makeHeterozygousDensityBigwig(makeHeterozygousDensityBedResults, reorderFastaResults)
     }
+
+    loadIndelsResults = loadIndels(makeIndelTSVResults, params.extDbRlsSpec, params.genomeExtDbRlsSpec)
+
+    bigwigs = bedGraphToBigWigResults.collectFile()
+    bams = bam_qch.collectFile()
+
+    coverages = varscanResults.coverageFile.collectFile()
+
+    combinedFastagz = addSampleToDeflineResults.collectFile(name: 'CombinedFasta.fa.gz')
+    combinedIndels = loadIndelsResults.collectFile(name: 'indel.tsv')
+
+    checkUniqueIds(combinedFastagz) 
+
+    mergedVcf = mergeVcfsMergeExperiment(mergeVcfsResults)    
+  
+    makeSnpFileResults = makeSnpFile(mergedVcf)
+    
+    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, "params.outputDir/varscanCons/", params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
+
+    addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
 
 }

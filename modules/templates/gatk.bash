@@ -11,4 +11,4 @@ java -jar \$JARPATH \
   -I $picardBam \
   -R $genomeReorderedFasta \
   -T IndelRealigner -targetIntervals forIndelRealigner.intervals \
-  -o result_sorted_gatk.bam 2>indelRealigner.err
+  -o ${sampleName}.bam 2>indelRealigner.err
