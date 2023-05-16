@@ -132,7 +132,7 @@ workflow wholeWorkflow {
   }
 
   else if(params.isPaired && params.local) {
-    samples_qch = Channel.fromFilePairs([params.input + '/**/*_{1,2}.fastq', params.input + '/**/*_{1,2}.fastq.gz', params.input + '/**/*_{1,2}.fq.gz'])
+    samples_qch = Channel.fromFilePairs([params.input + '/*_{1,2}.fastq', params.input + '/*_{1,2}.fastq.gz', params.input + '/*_{1,2}.fq.gz'])
   }
 
   else if(!params.local) {
@@ -140,7 +140,7 @@ workflow wholeWorkflow {
   }
 
   else {
-    samples_qch = Channel.fromPath([params.input + '/**/*.fastq', params.input + '/**/*.fastq.gz', params.input + '/**/*.fq.gz'])
+    samples_qch = Channel.fromPath([params.input + '/*.fastq', params.input + '/*.fastq.gz', params.input + '/*.fq.gz'])
                                                                                              .map { file -> tuple(file.baseName, [file]) }
   }
 
