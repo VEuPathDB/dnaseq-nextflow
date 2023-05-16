@@ -203,7 +203,8 @@ process gatk {
     tuple val(sampleName), path(genomeReorderedDict), path(picardBam), path(picardBamIndex)
 
   output:
-    tuple val(sampleName), path('${sampleName}.bam'), path('${sampleName}.bai')
+    tuple val(sampleName), path('${sampleName}.bam'), path('${sampleName}.bai'), emit: bamTuple
+    path '${sampleName}.bam, emit: bamFile
 
   script:
     template 'gatk.bash'
@@ -938,9 +939,9 @@ workflow wf {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    mpileupResults = mpileup(gatkResults, reorderFastaResults)
+    mpileupResults = mpileup(gatkResults.bamTuple, reorderFastaResults)
 
-    varscanResults = varscan(gatkResults.join(mpileupResults), reorderFastaResults)
+    varscanResults = varscan(gatkResults.bamTuple.join(mpileupResults), reorderFastaResults)
   
     concatSnpsAndIndelsResults = concatSnpsAndIndels(varscanResults.vcf_files)
 
@@ -959,11 +960,11 @@ workflow wf {
 
     addSampleToDeflineResults = addSampleToDefline(bcftoolsConsensusResults)
 
-    genomecovResults = genomecov(gatkResults, reorderFastaResults)
+    genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 
     bedGraphToBigWigResults = bedGraphToBigWig(reorderFastaResults, genomecovResults)
 
-    sortForCountingResults = sortForCounting(gatkResults)
+    sortForCountingResults = sortForCounting(gatkResults.bamTuple)
 
     htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
 
@@ -973,7 +974,7 @@ workflow wf {
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
-    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults)
+    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults.bamTuple)
 
     normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics))
 
@@ -993,7 +994,7 @@ workflow wf {
     loadIndelsResults = loadIndels(makeIndelTSVResults, params.extDbRlsSpec, params.genomeExtDbRlsSpec)
 
     bigwigs = bedGraphToBigWigResults.collectFile()
-    bams = bam_qch.collectFile()
+    bams = gatkResults.bamFile.collectFile()
 
     coverages = varscanResults.coverageFile.collectFile()
 
