@@ -1007,7 +1007,7 @@ workflow wf {
   
     makeSnpFileResults = makeSnpFile(mergedVcf)
     
-    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, "params.outputDir/varscanCons/", params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
+    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organismAbbrev, params.reference_strain, "params.outputDir/varscanCons/", params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
     addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
 
