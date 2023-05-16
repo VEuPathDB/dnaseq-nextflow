@@ -144,7 +144,7 @@ workflow wholeWorkflow {
                                                                                              .map { file -> tuple(file.baseName, [file]) }
   }
 
-  ps(samples_qch)
+  wf(samples_qch)
 
 }
 
