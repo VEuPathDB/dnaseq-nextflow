@@ -204,7 +204,7 @@ process gatk {
 
   output:
     tuple val(sampleName), path('${sampleName}.bam'), path('${sampleName}.bai'), emit: bamTuple
-    path '${sampleName}.bam, emit: bamFile
+    path '${sampleName}.bam', emit: bamFile
 
   script:
     template 'gatk.bash'
