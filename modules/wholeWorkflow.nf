@@ -961,7 +961,7 @@ workflow wf {
 
     genomecovResults = genomecov(gatkResults, reorderFastaResults)
 
-    bedgraphToBigWigResults = bedGraphToBigWig(reorderFastaResults, genomecovResults)
+    bedGraphToBigWigResults = bedGraphToBigWig(reorderFastaResults, genomecovResults)
 
     sortForCountingResults = sortForCounting(gatkResults)
 
