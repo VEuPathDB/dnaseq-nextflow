@@ -195,8 +195,8 @@ process picard {
 process gatk {
   container = 'broadinstitute/gatk3:3.8-1'
 
-  publishDir "$params.outputDir", pattern: "*.bam", mode: "copy" }
-  publishDir "$params.outputDir", pattern: "*.bai", mode: "copy" }
+  publishDir "$params.outputDir", pattern: "*.bam", mode: "copy" 
+  publishDir "$params.outputDir", pattern: "*.bai", mode: "copy" 
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -239,7 +239,7 @@ process mpileup {
 process varscan {
   container = 'veupathdb/dnaseqanalysis'
 
-  publishDir "$params.outputDir/varscanCons", pattern: "${sampleName}.coverage.txt", mode: "copy" }
+  publishDir "$params.outputDir/varscanCons", pattern: "${sampleName}.coverage.txt", mode: "copy" 
 
   input:
     tuple val(sampleName), path (resultSortedGatkBam), path(resultSortedGatkBamIndex), path(resultPileup) 
@@ -445,7 +445,7 @@ process genomecov {
 process bedGraphToBigWig {
   container = 'veupathdb/shortreadaligner'
 
-  publishDir "$params.outputDir", mode: "copy" }
+  publishDir "$params.outputDir", mode: "copy" 
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
