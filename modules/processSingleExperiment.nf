@@ -212,7 +212,7 @@ process gatk {
     tuple val(sampleName), path(genomeReorderedDict), path(picardBam), path(picardBamIndex)
 
   output:
-    tuple val(sampleName), path('${sampleName}.bam'), path('${sampleName}.bam.bai')
+    tuple val(sampleName), path("${sampleName}.bam"), path("${sampleName}.bam.bai")
 
   script:
     template 'gatk.bash'
@@ -259,7 +259,7 @@ process varscan {
 
   output:
     tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
-    path '${sampleName}.coverage.txt'
+    path "${sampleName}.coverage.txt"
 
   script:
     template 'varscan.bash'
@@ -484,7 +484,7 @@ process bedGraphToBigWig {
     tuple val(sampleName), path(coverageBed) 
 
   output:
-    path '${sampleName}.bw'
+    path "${sampleName}.bw"
     
   script:
     template 'bedGraphToBigWig.bash'
