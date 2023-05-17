@@ -766,7 +766,7 @@ process mergeVcfsMergeExperiment {
     path 'merged.vcf.gz'
 
   script:
-    template 'mergeVcfsMergeExperiments.bash'
+    template 'mergeVcfsWholeWorkflow.bash'
 
   stub:
     """
