@@ -878,6 +878,28 @@ process snpEff {
     """
 }
 
+
+process retrieveGeneCNVAndPloidy {
+  input:
+    val organismAbbrev
+
+  output:
+    path 'geneSourceIdOrthologFile'
+    path 'chrsForCalcsFile'    
+
+  script:
+    template 'retrieveGeneCNVAndPloidy.bash'    
+
+  stub:
+    """
+    touch geneSourceIdOrthologFile
+    touch chrsForCalcsFile
+    """
+}
+
+
+
+
 // ----------------------- WORKFLOW ---------------------------
 
 workflow wf {
@@ -970,7 +992,9 @@ workflow wf {
 
     calculateTPMResults = calculateTPM(htseqCountResults, params.footprintFile)
 
-    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.taxonId, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
+    retrieveGeneCNVAndPloidyResults = retrieveGeneCNVAndPloidy(params.organismAbbrev)
+
+    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.taxonId, retrieveGeneCNVAndPloidyResults)
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
@@ -1006,7 +1030,7 @@ workflow wf {
     mergedVcf = mergeVcfsMergeExperiment(mergeVcfsResults)    
   
     makeSnpFileResults = makeSnpFile(mergedVcf)
-    
+
     processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organismAbbrev, params.reference_strain, params.outputDir + "/varscanCons/", params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
     addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
