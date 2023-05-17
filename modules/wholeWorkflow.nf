@@ -760,7 +760,7 @@ process mergeVcfsMergeExperiment {
   publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
 
   input:
-    path '*.vcf.gz'
+    path 'input.vcf.gz'
 
   output:
     path 'merged.vcf.gz'
