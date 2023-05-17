@@ -12,3 +12,5 @@ java -jar \$JARPATH \
   -R $genomeReorderedFasta \
   -T IndelRealigner -targetIntervals forIndelRealigner.intervals \
   -o ${sampleName}.bam 2>indelRealigner.err
+
+mv ${sampleName}.bai ${sampleName}.bam.bai
