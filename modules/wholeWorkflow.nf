@@ -333,7 +333,7 @@ process makeIndelTSV {
     tuple val(sampleName), path(outputRecodeVcf)
 
   output:
-    path('output.tsv')
+    tuple val(sampleName), path('output.tsv')
 
   script:
     template 'makeIndelTSV.bash'
