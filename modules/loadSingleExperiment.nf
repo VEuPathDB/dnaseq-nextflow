@@ -14,7 +14,6 @@ process writeIndelConfigFile {
   script:
     template 'writeIndelConfigFile.bash'
 
-  stub:
     """
     touch ${sampleName}_indelConfig.txt
     """
@@ -28,7 +27,7 @@ process writePloidyConfigFile {
     tuple val(sampleName), path(ploidyFile)
 
   output:
-    tuple val(sampleName), path "${sampleName}_ploidyConfig.txt", path(ploidyFile)
+    tuple val(sampleName), path("${sampleName}_ploidyConfig.txt"), path(ploidyFile)
     
   script:
     template 'writePloidyConfigFile.bash'
@@ -47,7 +46,7 @@ process writeCNVConfigFile {
     tuple val(sampleName), path(geneCNVFile)
 
   output:
-    tuple val(sampleName), path "${sampleName}_geneCNVConfig.txt", path(geneCNVFile)
+    tuple val(sampleName), path("${sampleName}_geneCNVConfig.txt"), path(geneCNVFile)
 
   script:
     template 'writeCNVConfigFile.bash'
