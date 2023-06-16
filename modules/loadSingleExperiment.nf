@@ -11,7 +11,7 @@ process writeIndelConfigFile {
     tuple val(sampleName), path(indelFile)
 
   output:
-    tuple val(sampleName), path "${sampleName}_indelConfig.txt", path(indelFile)
+    tuple val(sampleName), path("${sampleName}_indelConfig.txt"), path(indelFile)
     
   script:
     template 'writeIndelConfigFile.bash'
