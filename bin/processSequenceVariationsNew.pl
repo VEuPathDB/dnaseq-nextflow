@@ -1206,12 +1206,13 @@ sub makeAlleleFeatureFromVariations {
       }
       $distinctStrainCount = scalar keys %strains;
       $avg_read_percent = $avg_read_percent / $count;
+      my $rounded_avg_read_percent = sprintf("%.2f", $avg_read_percent);
       $avg_coverage = $avg_coverage / $count;
       my $all = { "allele" => $allele,
                   "distinct_strain_count" => $distinctStrainCount,
 	          "allele_count" => $count,
 	          "average_coverage" => $avg_coverage,
-	          "average_read_percent" => $avg_read_percent
+	          "average_read_percent" => $rounded_avg_read_percent
                 };
       push @$alleles, $all;
   }
