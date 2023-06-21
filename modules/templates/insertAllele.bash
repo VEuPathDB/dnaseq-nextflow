@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ga ApiCommonData::Load::Plugin::InsertVariantAlleleSummary \\
-  --variantAlleleFile \'$variantAlleleFile\' \\
+  --variantAlleleFile \'$alleleFile\' \\
   --commit   
 
 echo "DONE"

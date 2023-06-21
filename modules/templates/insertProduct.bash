@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ga ApiCommonData::Load::Plugin::InsertVariantProductSummary \\
-  --variantProductFile \'$variantProductFile\' \\
+  --variantProductFile \'$productFile\' \\
   --commit   
 
 echo "DONE"
