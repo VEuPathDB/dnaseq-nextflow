@@ -16,3 +16,5 @@ perl /usr/bin/processSequenceVariationsNew.pl \
   --consensus unzipped.fa \
   --indelFile $indelFile \
   --gtfFile $gtfFile
+
+mv snpFeature.dat variationFeature.dat
