@@ -39,7 +39,6 @@ process mergeVcfs {
     touch merged.vcf.gz
     touch merged.vcf
     """
-
 }
 
 
@@ -63,8 +62,8 @@ process makeSnpFile {
     """
     touch snpFile.tsv
     """
-
 }
+
 
 process processSeqVars {
   container = 'veupathdb/dnaseqanalysis'
@@ -90,8 +89,8 @@ process processSeqVars {
   output:
     path cacheFile
     path 'snpFeature.dat', emit: variationFile
-    path 'allele.dat'
-    path 'product.dat'
+    path 'allele.dat', emit: alleleFile
+    path 'product.dat', emit: productFile
   
   script:
     template 'processSeqVars.bash'
@@ -103,7 +102,6 @@ process processSeqVars {
     touch allele.dat
     touch product.dat
     """
-
 }
 
 
@@ -116,7 +114,7 @@ process addExtDbRlsIdToVariation {
     path gusConfig
   
   output:
-    path 'variationFeature.dat'
+    path 'variationFeature.dat', emit: variationFile
 
   
   script:
@@ -125,6 +123,64 @@ process addExtDbRlsIdToVariation {
   stub:
     """
     touch variationFeature.dat
+    """
+}
+
+
+process insertVariation {
+  tag "plugin"
+
+  input:
+    val extDbRlsSpec
+    path variationFile
+
+  output:
+    stdout
+
+  script:
+    template 'insertVariation.bash'
+
+  stub:
+    """
+    echo "insert variation"
+    """
+}
+
+
+process insertProduct {
+  tag "plugin"
+
+  input:
+    path productFile
+
+  output:
+    stdout
+
+  script:
+    template 'insertProduct.bash'
+
+  stub:
+    """
+    echo "insert product"
+    """
+}
+
+
+process insertAllele {
+  tag "plugin"
+
+  input:
+    path alleleFile
+
+  output:
+    stdout
+
+  script:
+    template 'insertAllele.bash'
+
+  stub:
+    """
+    echo "insert allele"
     """
 }
 
@@ -148,7 +204,6 @@ process snpEff {
     """
     touch merged.ann.vcf
     """
-
 }
 
 
@@ -171,7 +226,7 @@ workflow me {
     coverages = coverage_qch.collectFile(storeDir: params.varscan_directory)
 
     combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
-    combinedIndels = indels_qch.collectFile(name: 'indel.tsv')
+    combinedIndels = indels_qch.collectFile(name: 'indel.tsv') 
 
     checkUniqueIds(combinedFastagz) 
 
@@ -183,11 +238,12 @@ workflow me {
     
     processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
-    addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
+    addExtDbRlsIdToVariationResults = addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
 
+    insertVariation(params.extDbRlsSpec, addExtDbRlsIdToVariationResults.variationFile)
+    insertProduct(processSeqVarsResults.productFile)
+    insertAllele(processSeqVarsResults.alleleFile)
 
     //snpEff(mergedVcfResults, params.gtfFile, params.genomeFastaFile)
-
-    
 
 }
