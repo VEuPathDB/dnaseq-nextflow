@@ -70,6 +70,7 @@ process processSeqVars {
   publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'snpFeature.dat'
 
   input:
     path snpFile
@@ -101,28 +102,6 @@ process processSeqVars {
     touch snpFeature.dat
     touch allele.dat
     touch product.dat
-    """
-}
-
-
-process addExtDbRlsIdToVariation {
-  publishDir "$params.outputDir", mode: "copy"
-
-  input:
-    path variationFile
-    val extDbSpec
-    path gusConfig
-  
-  output:
-    path 'variationFeature.dat', emit: variationFile
-
-  
-  script:
-    template 'addExtDbRlsId.bash'
-
-  stub:
-    """
-    touch variationFeature.dat
     """
 }
 
@@ -238,9 +217,7 @@ workflow me {
     
     processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
-    addExtDbRlsIdToVariationResults = addExtDbRlsIdToVariation(processSeqVarsResults.variationFile, params.extDbRlsSpec, params.gusConfig)
-
-    insertVariation(params.extDbRlsSpec, addExtDbRlsIdToVariationResults.variationFile)
+    insertVariation(params.extDbRlsSpec, processSeqVarsResults.variationFile)
     insertProduct(processSeqVarsResults.productFile)
     insertAllele(processSeqVarsResults.alleleFile)
 
