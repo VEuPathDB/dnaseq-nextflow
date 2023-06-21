@@ -4,7 +4,7 @@ set -euo pipefail
 
 ga ApiCommonData::Load::Plugin::InsertVariant \\
   --extDbRlsSpec \'$extDbRlsSpec\' \\
-  --variantFile \'$variantFile\' \\
+  --variantFile \'$variationFile\' \\
   --commit   
 
 echo "DONE"
