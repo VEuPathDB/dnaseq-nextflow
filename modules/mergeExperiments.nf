@@ -70,7 +70,6 @@ process processSeqVars {
   publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
-  publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
 
   input:
     path snpFile
@@ -105,6 +104,26 @@ process processSeqVars {
     """
 }
 
+process addFeatureIdsToVariation {
+  container = 'veupathdb/dnaseqanalysis'
+  
+  publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeatureFinal.dat'
+  
+  input:
+    path variationFile
+    path gusConfig
+  
+  output:
+    path 'variationFeatureFinal.dat'
+  
+  script:
+    template 'addFeatureIdsToVariation.bash'
+
+  stub:
+    """
+    touch variationFeatureFinal.dat
+    """
+}
 
 process insertVariation {
   tag "plugin"
@@ -217,7 +236,9 @@ workflow me {
     
     processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
-    insertVariation(params.extDbRlsSpec, processSeqVarsResults.variationFile)
+    addFeatureIdsToVariationResults = addFeatureIdsToVariation(processSeqVarsResults.variationFile, params.gusConfig)
+    
+    insertVariation(params.extDbRlsSpec, addFeatureIdsToVariationResults)
     insertProduct(processSeqVarsResults.productFile)
     insertAllele(processSeqVarsResults.alleleFile)
 
