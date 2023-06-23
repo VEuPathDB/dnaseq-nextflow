@@ -33,9 +33,11 @@ open(my $data, '<', $variationFile) || die "Could not open file $variationFile: 
 while (my $line = <$data>) {
     chomp $line;
     my ($location, $geneNaFeatureId, $sourceId, $referenceStrain, $referenceNa, $referenceAa, $hasNonsynonymousAllele, $majorAllele, $minorAllele, $majorAlleleCount, $minorAlleleCount, $majorProduct, $minorProduct, $distinctStrainCount, $distinctAlleleCount, $hasCodingMutation, $totalAlleleCount, $hasStopCodon, $refCodon, $referenceAAFull) = split(/\t/, $line);
-    my $naFeatureId = &queryNaFeatureId($dbh, $sourceId);
-    my $naSequenceId = &queryNaSequenceId($dbh, $sourceId);
-    print $outputFile "$location\t$naFeatureId\t$naSequenceId\t$sourceId\t$referenceStrain\t$referenceNa\t$referenceAa\t$hasNonsynonymousAllele\t$majorAllele\t$minorAllele\t$majorAlleleCount\t$minorAlleleCount\t$majorProduct\t$minorProduct\t$distinctStrainCount\t$distinctAlleleCount\t$hasCodingMutation\t$totalAlleleCount\t$hasStopCodon\t$refCodon\t$referenceAAFull\n";
+    $sourceId =~ /NGS_SNP\.(.+)\.\d+/;
+    my $source_id = $1;
+    my $naFeatureId = &queryNaFeatureId($dbh, $source_id);
+    my $naSequenceId = &queryNaSequenceId($dbh, $source_id);
+    print $outputFile "$location\t$naFeatureId\t$naSequenceId\t$source_id\t$referenceStrain\t$referenceNa\t$referenceAa\t$hasNonsynonymousAllele\t$majorAllele\t$minorAllele\t$majorAlleleCount\t$minorAlleleCount\t$majorProduct\t$minorProduct\t$distinctStrainCount\t$distinctAlleleCount\t$hasCodingMutation\t$totalAlleleCount\t$hasStopCodon\t$refCodon\t$referenceAAFull\n";
 }
 
 close $outputFile;
@@ -55,7 +57,7 @@ where f.source_id = '$sourceid'";
     my ($nafeatureid) = $sh->fetchrow_array();
 
     $sh->finish();
-    die "Could not find na_feature_id for source_id: $sourceId" unless($nafeatureid);
+    die "Could not find na_feature_id for source_id: $sourceid" unless($nafeatureid);
 
     return $nafeatureid;
 }
