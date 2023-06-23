@@ -105,8 +105,6 @@ process processSeqVars {
 }
 
 process addFeatureIdsToVariation {
-  container = 'veupathdb/dnaseqanalysis'
-  
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeatureFinal.dat'
   
   input:

@@ -11,7 +11,7 @@ use GUS::Supported::GusConfig;
 my ($variationFile, $gusConfigFile, $extDbRlsSpec);
 
 &GetOptions("variationFile=s" => \$variationFile,
-            "gusConfig=s" => \$gusConfigFile,
+            "gusConfig=s" => \$gusConfigFile
            );
 
 my $gusConfig = GUS::Supported::GusConfig->new($gusConfigFile);
