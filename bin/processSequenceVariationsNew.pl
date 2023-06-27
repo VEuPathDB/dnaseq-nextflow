@@ -96,13 +96,11 @@ my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVar
 
 my @allStrains = keys %{$strainVarscanFileHandles};
 
-my $currentShifts = &createCurrentShifts($indelFile);
-
-my $transcriptSummary = &makeTranscriptSummary($gtfFile);
+my $transcriptSummary = &makeTranscriptSummary($gtfFile, $indelFile);
 
 my $geneLocations = &getGeneLocations($transcriptSummary);
 
-$transcriptSummary = &addStrainExonShiftsToTranscriptSummary($currentShifts, $transcriptSummary);
+#print Dumper $transcriptSummary;
 
 open(UNDONE, $undoneStrainsFile) or die "Cannot open file $undoneStrainsFile for reading: $!";
 my @undoneStrains =  map { chomp; $_ } <UNDONE>;
@@ -176,8 +174,11 @@ while($merger->hasNext()) {
 
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
 
+      #print Dumper $variations;
+
       my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
 
+      
       $referenceVariation->{'ref_codon'} = $refCodon;
       $referenceVariation->{'reference_aa_full'} = $reference_aa_full;
       $referenceVariation->{'has_nonsynonomous'} = $adjacentSnpCausesProductDifference;
@@ -193,9 +194,11 @@ while($merger->hasNext()) {
       my ($isCoding, $refPositionInCds, $refPositionInProtein) = &calculateReferenceCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location);
 
       $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
+
+      #print Dumper $variations;
     
       my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
-
+      
       $referenceVariation = {'base' => $referenceAllele,
 			     'reference' => $referenceAllele,    
                              'location' => $location,
@@ -599,8 +602,9 @@ sub getValues {
 }
 
 sub makeTranscriptSummary {
-    my ($file) = @_;
-    my @values = &getValues($file);
+    my ($gtfFile,$indelFile) = @_;
+    my $currentShifts = &createCurrentShifts($indelFile);
+    my @values = &getValues($gtfFile);
     my %transcriptSummary;
     my $valueLen = @values;
     my $valueLenIndex = $valueLen - 1;
@@ -637,6 +641,7 @@ sub makeTranscriptSummary {
 	    my $loc = Bio::Location::Simple->new( -seq_id => $seqName, -start => $exonStart  , -end => $exonEnd , -strand => $strand);
 	    push @{$transcriptSummary{$transcriptId}->{exons}}, $loc;
 	    $transcriptSummary{$transcriptId}->{sequence_source_id} = $seqName;
+    	    $transcriptSummary{$transcriptId}->{gene_na_sequence_id} = $transcriptId;
             $transcriptSummary{$transcriptId}->{max_exon_end} = $exonEnd;
             $transcriptSummary{$transcriptId}->{min_exon_start} = $exonStart;
 	    $currentFrame++;
@@ -645,10 +650,9 @@ sub makeTranscriptSummary {
             $currentFrame++;
 	}
     }
-    return \%transcriptSummary;
+    my $transcriptSummaryShifted = &addStrainExonShiftsToTranscriptSummary($currentShifts, \%transcriptSummary);
+    return $transcriptSummaryShifted;
 }
-
-
 
 sub calculateAminoAcidPosition {
   my ($codingPosition) = @_;
@@ -748,8 +752,8 @@ sub addStrainExonShiftsToTranscriptSummary {
 		my ($shifted_start, $shifted_end);
 		$exon_start = $$transcriptSummary{$transcript}->{min_exon_start};
 		$exon_end = $$transcriptSummary{$transcript}->{max_exon_end};
-                # This makes sure that we are correctly setting shifted starts and ends  
-		if ($transcript !~ /$chromosome/) {
+                # This makes sure that we are correctly setting shifted starts and ends
+		if ($$transcriptSummary{$transcript}->{sequence_source_id} !~ /$chromosome/) {
 		    if ($$transcriptSummary{$transcript}->{$strain}->{shifted_start}) {
 			next;
 		    }
@@ -924,7 +928,9 @@ sub calculateVariationCdsPosition {
 	$variation->{is_coding} = 0;
 
 	foreach my $transcript (@$transcripts) {
-
+	    
+	    $variation->{gene_na_sequence_id} = $transcript;
+	    
 	    if ($transcriptSummary->{$transcript}->{$strain}->{shifted_start}) {
                 $cdsShiftedStart = $transcriptSummary->{$transcript}->{$strain}->{shifted_start};
                 $cdsShiftedEnd = $transcriptSummary->{$transcript}->{$strain}->{shifted_end};
@@ -1037,9 +1043,10 @@ sub variationAndRefProduct {
     my $refConsensusCodingSequence;    
     foreach my $variation (@$variations) {
 	my $strain = $variation->{strain};
-
+	
 	foreach my $transcript (@$transcripts) {
 	    my $consensusCodingSequence;
+	    
 	    # We already have retrieved this coding sequence, go get it from the transcript summary object
 	    if($transcriptSummary->{$transcript}->{cache}->{consensus_cds}) {
 		$consensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{consensus_cds};
@@ -1075,7 +1082,7 @@ sub variationAndRefProduct {
 
 	    my $strand = $transcriptSummary->{$transcript}->{cds_strand};
 	    my $variationPositionInCds = $variation->{position_in_cds};
-
+	    
 	    next unless($variationPositionInCds);
 	    next if($variationPositionInCds > length $consensusCodingSequence);
 
@@ -1275,6 +1282,7 @@ sub makeSNPFeatureFromVariations {
   my $totalAlleleCount = scalar @$variations;
   my $hasStopCodon = 0;
   foreach my $variation (@$variations) {
+    my $geneNaSequenceId = $variation->{gene_na_sequence_id};
     my $allele = $variation->{base};
     my $strain = $variation->{strain};
     $alleleCounts{$allele} ++;
@@ -1301,7 +1309,7 @@ sub makeSNPFeatureFromVariations {
   my $majorAlleleCount = $sortedAlleleCounts[0];
   my $minorAlleleCount = $sortedAlleleCounts[1];
   my $snp = {     "source_id" => $snpSourceId,
-	          "na_sequence_id" => $referenceVariation->{na_sequence_id},
+	          "gene_na_sequence_id" => $geneNaSequenceId,
 	          "location" => $location,
 	          "reference_strain" => $referenceStrain,
 	          "reference_na" => $referenceVariation->{base},
