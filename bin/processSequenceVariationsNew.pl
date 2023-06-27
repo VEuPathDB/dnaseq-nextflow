@@ -1282,6 +1282,7 @@ sub makeSNPFeatureFromVariations {
   my $hasStopCodon = 0;
   foreach my $variation (@$variations) {
     my $transcriptId = $variation->{transcript_id};
+    print "Transcript id is $transcriptId\n";  
     my $allele = $variation->{base};
     my $strain = $variation->{strain};
     $alleleCounts{$allele} ++;
