@@ -2,7 +2,7 @@
  
 set -euo pipefail
 
-for i in *.vcf.gz; do cp $i ${i}.tmp.vcf.gz; gunzip ${i}.tmp.vcf.gz; bgzip ${i}.tmp.vcf; cp ${i}.tmp.vcf.gz $i; rm ${i}.tmp.vcf.gz; tabix $i; done
+for i in *.vcf.gz; do cp ${i} ${i}.tmp.vcf.gz; gunzip ${i}.tmp.vcf.gz; bgzip ${i}.tmp.vcf; cp ${i}.tmp.vcf.gz $i; rm ${i}.tmp.vcf.gz; tabix ${i}; done
 bcftools merge \
       -o merged.vcf.gz \
       -O z *.vcf.gz
