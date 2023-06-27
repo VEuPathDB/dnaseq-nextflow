@@ -641,7 +641,7 @@ sub makeTranscriptSummary {
 	    my $loc = Bio::Location::Simple->new( -seq_id => $seqName, -start => $exonStart  , -end => $exonEnd , -strand => $strand);
 	    push @{$transcriptSummary{$transcriptId}->{exons}}, $loc;
 	    $transcriptSummary{$transcriptId}->{sequence_source_id} = $seqName;
-    	    $transcriptSummary{$transcriptId}->{gene_na_sequence_id} = $transcriptId;
+    	    $transcriptSummary{$transcriptId}->{transcript_id} = $transcriptId;
             $transcriptSummary{$transcriptId}->{max_exon_end} = $exonEnd;
             $transcriptSummary{$transcriptId}->{min_exon_start} = $exonStart;
 	    $currentFrame++;
@@ -929,7 +929,7 @@ sub calculateVariationCdsPosition {
 
 	foreach my $transcript (@$transcripts) {
 	    
-	    $variation->{gene_na_sequence_id} = $transcript;
+	    $variation->{transcript_id} = $transcript;
 	    
 	    if ($transcriptSummary->{$transcript}->{$strain}->{shifted_start}) {
                 $cdsShiftedStart = $transcriptSummary->{$transcript}->{$strain}->{shifted_start};
@@ -1274,7 +1274,6 @@ sub makeSNPFeatureFromVariations {
   my ($variations, $referenceVariation) = @_;
   my $sequenceSourceId = $referenceVariation->{sequence_source_id};
   my $location = $referenceVariation->{location};
-  my $snpSourceId = $referenceVariation->{snp_source_id} ? $referenceVariation->{snp_source_id} : "NGS_SNP.$sequenceSourceId.$location";
   my $referenceStrain = $referenceVariation->{strain};
   my %alleleCounts;
   my %productCounts;
@@ -1282,7 +1281,7 @@ sub makeSNPFeatureFromVariations {
   my $totalAlleleCount = scalar @$variations;
   my $hasStopCodon = 0;
   foreach my $variation (@$variations) {
-    my $geneNaSequenceId = $variation->{gene_na_sequence_id};
+    my $transcriptId = $variation->{transcript_id};
     my $allele = $variation->{base};
     my $strain = $variation->{strain};
     $alleleCounts{$allele} ++;
@@ -1308,8 +1307,8 @@ sub makeSNPFeatureFromVariations {
   my $minorProduct = $sortedProducts[1];
   my $majorAlleleCount = $sortedAlleleCounts[0];
   my $minorAlleleCount = $sortedAlleleCounts[1];
-  my $snp = {     "source_id" => $snpSourceId,
-	          "gene_na_sequence_id" => $geneNaSequenceId,
+  my $snp = {     "source_id" => $sequenceSourceId,
+	          "transcript_id" => $transcriptId,
 	          "location" => $location,
 	          "reference_strain" => $referenceStrain,
 	          "reference_na" => $referenceVariation->{base},

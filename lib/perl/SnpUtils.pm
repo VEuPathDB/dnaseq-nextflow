@@ -29,7 +29,7 @@ sub sampleCacheFileColumnNames {
 sub snpFileColumnNames {
     my @columnNames =  (
 	     "location",
-	     "gene_na_feature_id",
+	     "transcript_id",
              "source_id",
 	     "reference_strain",
              "reference_na",

@@ -32,11 +32,9 @@ open($outputFile, "> ./variationFeatureFinal.dat") or die "Cannot open file vari
 open(my $data, '<', $variationFile) || die "Could not open file $variationFile: $!";
 while (my $line = <$data>) {
     chomp $line;
-    my ($location, $geneNaFeatureId, $sourceId, $referenceStrain, $referenceNa, $referenceAa, $hasNonsynonymousAllele, $majorAllele, $minorAllele, $majorAlleleCount, $minorAlleleCount, $majorProduct, $minorProduct, $distinctStrainCount, $distinctAlleleCount, $hasCodingMutation, $totalAlleleCount, $hasStopCodon, $refCodon, $referenceAAFull) = split(/\t/, $line);
-    $sourceId =~ /NGS_SNP\.(.+)\.\d+/;
-    my $source_id = $1;
-    my $naFeatureId = &queryNaFeatureId($dbh, $source_id);
-    my $naSequenceId = &queryNaSequenceId($dbh, $source_id);
+    my ($location, $transcriptId, $sourceId, $referenceStrain, $referenceNa, $referenceAa, $hasNonsynonymousAllele, $majorAllele, $minorAllele, $majorAlleleCount, $minorAlleleCount, $majorProduct, $minorProduct, $distinctStrainCount, $distinctAlleleCount, $hasCodingMutation, $totalAlleleCount, $hasStopCodon, $refCodon, $referenceAAFull) = split(/\t/, $line);
+    my $naFeatureId = &queryNaFeatureId($dbh, $sourceId);
+    my $naSequenceId = &queryNaSequenceId($dbh, $sourceId);
     print $outputFile "$location\t$naFeatureId\t$naSequenceId\t$source_id\t$referenceStrain\t$referenceNa\t$referenceAa\t$hasNonsynonymousAllele\t$majorAllele\t$minorAllele\t$majorAlleleCount\t$minorAlleleCount\t$majorProduct\t$minorProduct\t$distinctStrainCount\t$distinctAlleleCount\t$hasCodingMutation\t$totalAlleleCount\t$hasStopCodon\t$refCodon\t$referenceAAFull\n";
 }
 
