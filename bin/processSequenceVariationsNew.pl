@@ -843,7 +843,7 @@ sub calcCoordinates {
 	    $shiftedLocation = $oldShift + $coordinate;
 	}
     }
-    return ($shiftedLocation, $oldShift, $shiftFrame);   
+    return ($shiftedLocation, $shiftFrame, $oldShift);   
 }
 
 
