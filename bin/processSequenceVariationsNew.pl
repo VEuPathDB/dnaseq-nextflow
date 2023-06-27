@@ -1283,7 +1283,7 @@ sub makeSNPFeatureFromVariations {
   foreach my $variation (@$variations) {
     my $transcriptId = $variation->{transcript_id};
     print "Transcript id is $transcriptId\n";
-    prinr Dumper $variation;
+    print Dumper $variation;
     my $allele = $variation->{base};
     my $strain = $variation->{strain};
     $alleleCounts{$allele} ++;
