@@ -1166,6 +1166,7 @@ sub calculatePossibleCodons {
 sub printSNPFeature {
     my ($snp, $snpFh) = @_;
     my $keys = VEuPath::SnpUtils::snpFileColumnNames();
+    print "$snp->{transcript_id}\n";
     print $snpFh join("\t", map {$snp->{$_}} @$keys) . "\n";
 }
 
@@ -1282,8 +1283,6 @@ sub makeSNPFeatureFromVariations {
   my $hasStopCodon = 0;
   foreach my $variation (@$variations) {
     my $transcriptId = $variation->{transcript_id};
-    print "Transcript id is $transcriptId\n";
-    print Dumper $variation;
     my $allele = $variation->{base};
     my $strain = $variation->{strain};
     $alleleCounts{$allele} ++;
@@ -1329,6 +1328,7 @@ sub makeSNPFeatureFromVariations {
 		  "has_stop_codon" => $hasStopCodon,
 		  "ref_codon" => $referenceVariation->{ref_codon},
 		  "reference_aa_full" => $referenceVariation->{reference_aa_full}    
-            };
+  };
+  print Dumper $snp;
   return $snp;
 }
