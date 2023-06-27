@@ -981,7 +981,7 @@ sub calculateVariationCdsPosition {
               $isCoding = 1;
             }
 
-	$variation->{transcript} = $transcript;
+	$variation->{transcript_id} = $transcript;
         $variation->{position_in_cds} = $cdsPos;
         $variation->{position_in_protein} = $positionInProtein;
 	$variation->{is_coding} = $isCoding;
@@ -1246,7 +1246,7 @@ sub makeProductFeatureFromVariations {
   }
   foreach my $variation (@$variations) {
       next unless($variation->{codon});
-      my $transcript = $variation->{transcript};
+      my $transcript = $variation->{transcript_id};
       my $position_in_codon = $variation->{position_in_codon};
       my $codon = $variation->{codon};
       my $codons =  &calculatePossibleCodons($codon);
@@ -1282,7 +1282,8 @@ sub makeSNPFeatureFromVariations {
   my $hasStopCodon = 0;
   foreach my $variation (@$variations) {
     my $transcriptId = $variation->{transcript_id};
-    print "Transcript id is $transcriptId\n";  
+    print "Transcript id is $transcriptId\n";
+    prinr Dumper $variation;
     my $allele = $variation->{base};
     my $strain = $variation->{strain};
     $alleleCounts{$allele} ++;
