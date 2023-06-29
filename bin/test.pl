@@ -98,7 +98,7 @@ my @allStrains = keys %{$strainVarscanFileHandles};
 
 my $transcriptSummary = &makeTranscriptSummary($gtfFile, $indelFile);
 
-#print Dumper $transcriptSummary;
+print Dumper $transcriptSummary;
 #die;
 
 #--------------------------------------------------------------------------------
@@ -394,6 +394,8 @@ sub getValues {
 sub makeTranscriptSummary {
     my ($gtfFile,$indelFile) = @_;
     my $currentShifts = &createCurrentShifts($indelFile);
+    print Dumper $currentShifts;
+    die;
     my @values = &getValues($gtfFile);
     my %transcriptSummary;
     my $valueLen = @values;
@@ -582,11 +584,10 @@ sub addStrainCDSShiftsToTranscriptSummary {
 	            $exon_start = $$transcriptSummary{$transcript}->{$exonStartField};
 	            $exon_end = $$transcriptSummary{$transcript}->{$exonEndField};
 
-		    print "$exonShiftFrame, $shiftFrameLimit, $oldExonShift, $exon_start, $startIndicator, $chromosomeShiftArray\n";
-                    ($shifted_exon_start, $exonShiftFrame, $oldExonShift) = &calcCoordinates($exonShiftFrame, $shiftFrameLimit, $oldExonShift, $exon_start, $startIndicator, $chromosomeShiftArray);
-		    print "$shifted_exon_start, $exonShiftFrame, $oldExonShift\n";
-                    die;
-  		    ($shifted_exon_end, $exonShiftFrame, $oldExonShift) = &calcCoordinates($exonShiftFrame, $shiftFrameLimit, $oldExonShift, $exon_end, $endIndicator, $chromosomeShiftArray);
+		    #print "$exonShiftFrame, $shiftFrameLimit, $oldExonShift, $exon_start, $startIndicator\n";
+	            ($shifted_exon_start, $exonShiftFrame, $oldExonShift) = &calcCoordinates($exonShiftFrame, $shiftFrameLimit, $oldExonShift, $exon_start, $startIndicator, \@chromosomeShiftArray);
+		    #print "$shifted_exon_start, $exonShiftFrame, $oldExonShift\n";
+		    ($shifted_exon_end, $exonShiftFrame, $oldExonShift) = &calcCoordinates($exonShiftFrame, $shiftFrameLimit, $oldExonShift, $exon_end, $endIndicator, \@chromosomeShiftArray);
 		    
 		    $$transcriptSummary{$transcript}->{$strain}->{$exonShiftedStartField} = $shifted_exon_start;
 		    $$transcriptSummary{$transcript}->{$strain}->{$exonShiftedEndField} = $shifted_exon_end;
@@ -614,8 +615,8 @@ sub addStrainCDSShiftsToTranscriptSummary {
 	            $cds_start = $$transcriptSummary{$transcript}->{$cdsStartField};
                     $cds_end = $$transcriptSummary{$transcript}->{$cdsEndField};	    
 
-		    ($shifted_cds_start, $cdsShiftFrame, $oldCdsShift) = &calcCoordinates($cdsShiftFrame, $shiftFrameLimit, $oldCdsShift, $cds_start, $startIndicator, $chromosomeShiftArray);
-		    ($shifted_cds_end, $cdsShiftFrame, $oldCdsShift) = &calcCoordinates($cdsShiftFrame, $shiftFrameLimit, $oldCdsShift, $cds_end, $endIndicator, $chromosomeShiftArray);
+		    ($shifted_cds_start, $cdsShiftFrame, $oldCdsShift) = &calcCoordinates($cdsShiftFrame, $shiftFrameLimit, $oldCdsShift, $cds_start, $startIndicator, \@chromosomeShiftArray);
+		    ($shifted_cds_end, $cdsShiftFrame, $oldCdsShift) = &calcCoordinates($cdsShiftFrame, $shiftFrameLimit, $oldCdsShift, $cds_end, $endIndicator, \@chromosomeShiftArray);
 
                     $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedStartField} = $shifted_cds_start;
 		    $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedEndField} = $shifted_cds_end;
@@ -632,12 +633,12 @@ sub calcCoordinates {
     my ($shiftFrame, $shiftFrameLimit, $oldShift, $coordinate, $indicator, $shiftArray) = @_;
     my $shiftedLocation;
     my $oldFrame;
-        
-    if ($coordinate < $shiftArray->[0][$shiftFrame][0]) {
+
+    if ($coordinate < $shiftArray->[0][0][$shiftFrame][0]) {
 	$shiftedLocation = $oldShift + $coordinate;
     }
 
-    elsif ($shiftArray->[0][$shiftFrame][0] == $coordinate) {
+    elsif ($shiftArray->[0][0][$shiftFrame][0] == $coordinate) {
         my $currentShift = $shiftArray->[0][$shiftFrame][1];
 
 	if ($currentShift == 0) {
@@ -657,39 +658,39 @@ sub calcCoordinates {
         }
     }
 
-    elsif ($coordinate > $shiftArray->[0][$shiftFrame][0] || $shiftFrame == $shiftFrameLimit) {
+    elsif ($coordinate > $shiftArray->[0][0][$shiftFrame][0] || $shiftFrame == $shiftFrameLimit) {
 
-	until ($shiftArray->[0][$shiftFrame][0] >= $coordinate || $shiftFrame == $shiftFrameLimit) {
-	    $oldShift = $shiftArray->[0][$shiftFrame][1];
+	until ($shiftArray->[0][0][$shiftFrame][0] >= $coordinate || $shiftFrame == $shiftFrameLimit) {
+	    $oldShift = $shiftArray->[0][0][$shiftFrame][1];
 	    $shiftFrame++;
 	}
 
-	if ($shiftFrame == $shiftFrameLimit && $coordinate < $shiftArray->[0][$shiftFrame][0]) {
-	    $shiftedLocation = $coordinate + $shiftArray->[0][$shiftFrame-1][1];
+	if ($shiftFrame == $shiftFrameLimit && $coordinate < $shiftArray->[0][0][$shiftFrame][0]) {
+	    $shiftedLocation = $coordinate + $shiftArray->[0][0][$shiftFrame-1][1];
 	}
 
-	elsif ($shiftFrame == $shiftFrameLimit && $coordinate > $shiftArray->[0][$shiftFrame][0]) {
-	    $shiftedLocation = $coordinate + $shiftArray->[0][$shiftFrame][1];
+	elsif ($shiftFrame == $shiftFrameLimit && $coordinate > $shiftArray->[0][0][$shiftFrame][0]) {
+	    $shiftedLocation = $coordinate + $shiftArray->[0][0][$shiftFrame][1];
 	}
 
-	elsif ($shiftArray->[0][$shiftFrame][0] == $coordinate) {
+	elsif ($shiftArray->[0][0][$shiftFrame][0] == $coordinate) {
 
-	    if ($shiftArray->[0][$shiftFrame][1] == 0) {
+	    if ($shiftArray->[0][0][$shiftFrame][1] == 0) {
                 $shiftedLocation = $coordinate;
             }
 
 	    elsif ($indicator eq 'start') {
 		$oldFrame = $shiftFrame - 1;
-                $shiftedLocation = $shiftArray->[0][$oldFrame][1] + $coordinate;
+                $shiftedLocation = $shiftArray->[0][0][$oldFrame][1] + $coordinate;
             }
 
-	    elsif ($indicator eq 'end' && $shiftArray->[0][$shiftFrame][1] > 0) {
-                $shiftedLocation = $shiftArray->[0][$shiftFrame][1] + $coordinate;     
+	    elsif ($indicator eq 'end' && $shiftArray->[0][0][$shiftFrame][1] > 0) {
+                $shiftedLocation = $shiftArray->[0][0][$shiftFrame][1] + $coordinate;     
             }
 
-	    elsif ($indicator eq 'end' && $shiftArray->[0][$shiftFrame][1] < 0) {
+	    elsif ($indicator eq 'end' && $shiftArray->[0][0][$shiftFrame][1] < 0) {
                 $oldFrame = $shiftFrame - 1;
-                $shiftedLocation = $shiftArray->[0][$oldFrame][1] + $coordinate;     
+                $shiftedLocation = $shiftArray->[0][0][$oldFrame][1] + $coordinate;     
             }
 	}
 
