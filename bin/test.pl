@@ -98,7 +98,76 @@ my @allStrains = keys %{$strainVarscanFileHandles};
 
 my $transcriptSummary = &makeTranscriptSummary($gtfFile, $indelFile);
 
-print Dumper $transcriptSummary;
+my $currentShifts = &createCurrentShifts($indelFile);
+
+open(UNDONE, $undoneStrainsFile) or die "Cannot open file $undoneStrainsFile for reading: $!";
+my @undoneStrains =  map { chomp; $_ } <UNDONE>;
+close UNDONE;
+
+if($forcePositionCompute) {
+  push @undoneStrains, $referenceStrain;
+}
+
+my $merger = VEuPath::MergeSortedSeqVariations->new($newSampleFile, $cacheFile, \@undoneStrains, qr/\t/);
+
+my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscript);
+
+my $strainFrame;
+my $count = 0;
+
+my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscripts, $counter);
+
+while($merger->hasNext()) {
+
+  my $variations = $merger->nextSNP();
+  my ($sequenceId, $location) = &snpLocationFromVariations($variations);
+
+  print STDERR "SEQUENCEID=$sequenceId\tLOCATION=$location\n" if($debug);
+
+  my ($referenceAllele, $positionsInCds, $positionsInProtein, $referenceVariation, $isCoding);
+  
+  ($variations, $strainFrame) = &addShiftedLocation($variations, $strainFrame, $currentShifts);
+
+  $variations = &addTranscript($variations, $location, $transcriptSummary);
+
+  my $cachedReferenceVariation = &cachedReferenceVariation($variations, $referenceStrain);
+
+  if($cachedReferenceVariation && !$isLegacyVariations) {
+      print STDERR "HAS_CACHED REFERENCE VARIATION\n" if($debug);
+      $referenceVariation = $cachedReferenceVariation;
+  }
+  else {
+      my $referenceAllele = $variations->[0]->{reference};
+      if ($variations->[0]->{is_coding} == 1) {
+          #print "Processing...\n";
+          my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($transcriptSummary, $variations, $consensusFasta, $genomeFasta);
+	  #print Dumper $variations;
+          #print "$refCodon\n";
+	  #die;
+      }
+  }
+  #else {
+  #    
+  #    &variationAndRefProduct($sequenceId, $sequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) if($refPositionInCds);
+      # $variations = &calculateVariationCdsPosition($transcripts, $transcriptSummary, $sequenceId, $location, $variations);
+      # my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = 
+      # $referenceVariation = {'base' => $referenceAllele,
+      # 			     'reference' => $referenceAllele,    
+      #                        'location' => $location,
+      #                        'sequence_source_id' => $sequenceId,
+      #                        'matches_reference' => 1,
+      #                        'position_in_cds' => $refPositionInCds,
+      #                        'strain' => $referenceStrain,
+      #                        'product' => $refProduct,
+      #                        'position_in_protein' => $refPositionInProtein,
+      #                        'is_coding' => $isCoding,
+      #                        'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
+      # 			     'ref_codon' => $refCodon,
+      # 			     'reference_aa_full' => $reference_aa_full	 
+      # };
+      # push @$variations, $referenceVariation;
+  #}
+}
 #die;
 
 #--------------------------------------------------------------------------------
@@ -394,8 +463,6 @@ sub getValues {
 sub makeTranscriptSummary {
     my ($gtfFile,$indelFile) = @_;
     my $currentShifts = &createCurrentShifts($indelFile);
-    print Dumper $currentShifts;
-    die;
     my @values = &getValues($gtfFile);
     my %transcriptSummary;
     my $valueLen = @values;
@@ -847,113 +914,92 @@ sub calculateVariationCdsPosition {
     return($variations);
 }
 
-
-sub calculateReferenceCdsPosition {
-    my ($transcripts, $transcriptSummary, $sequenceId, $location) = @_;
-    my $cdsPos;
-    my $positionInProtein;
-    my $isCoding;
-    foreach my $transcript (@$transcripts) {
-        my $cdsStart = $transcriptSummary->{$transcript}->{min_cds_start};
-        my $cdsEnd = $transcriptSummary->{$transcript}->{max_cds_end};
-        my $cdsStrand = $transcriptSummary->{$transcript}->{cds_strand};
-        $isCoding = 0;
-	next unless($cdsStart && $cdsEnd);
-	next if($location < $cdsStart || $location > $cdsEnd);
-
-	my $gene = Bio::Coordinate::GeneMapper->new(
-      -in  => "chr",
-      -out => "cds",
-      -cds => Bio::Location::Simple->new(
-         -start => $cdsStart,
-         -end => $cdsEnd,
-         -strand => $cdsStrand,
-         -seq_id => $sequenceId,
-      ),
-        -exons => $transcriptSummary->{$transcript}->{exons}
-      );
-    my $loc =   Bio::Location::Simple->new(
-      -start => $location,
-      -end => $location,
-      -strand => +1,
-      -seq_id => $sequenceId,
-     );
-
-        my $map = $gene->map($loc);
-        $cdsPos = $map->start;
-
-	if($cdsPos && $cdsPos > 1) {
-            $positionInProtein = &calculateAminoAcidPosition($cdsPos);
-            $isCoding = 1;
-        }
-    }
-    return($isCoding, $cdsPos, $positionInProtein);
-}
-
-
 sub variationAndRefProduct {
-    my ($sequenceId, $refSequenceId, $transcripts, $transcriptSummary, $location, $refPositionInCds, $referenceAllele, $consensusFasta, $genomeFasta, $variations) = @_;
+    my ($transcriptSummary, $variations, $consensusFasta, $genomeFasta) = @_;
     my ($product, $refProduct, $codon, $refCodon);
     my $adjacentSnpCausesProductDifference = 0;
-    my $refConsensusCodingSequence;    
+    my $refConsensusCodingSequence;
     foreach my $variation (@$variations) {
+	my $refSeqSourceId = $variation->{sequence_source_id};
+	my $consensusCodingSequence;
 	my $strain = $variation->{strain};
-	
-	foreach my $transcript (@$transcripts) {
-	    my $consensusCodingSequence;
-	    
-	    # We already have retrieved this coding sequence, go get it from the transcript summary object
-	    if($transcriptSummary->{$transcript}->{cache}->{consensus_cds}) {
-		$consensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{consensus_cds};
+        my $strand = $transcriptSummary->{$transcript}->{cds_strand};
+	my $strand = $variation->{strand};
+	my $transcript = $variation->{transcript};
+	my $exon_number = $variation->{exon_number};
+	my $cds_number = $variation->{cds_number};
+	my $shifted_location = $variation->{shifted_location};
+	my $location = $variation->{location};
+	my $cds_count = 0;
+        my $prior_cds_len = 0;
+	my $prior_ref_cds_len = 0;
+	my ($pos_in_cds, $pos_in_protein, $ref_pos_in_cds, $ref_pos_in_protein);
+        foreach my $key (keys %{ $$transcriptSummary{$transcript} }) {
+            if ($key =~ /cds/) {
+                $cds_count++;
 	    }
-
-	    else { # first time through for this transcript
-		# Get coding sequence from samtools faidx and consensus sequence using shifted exons
-		my $shifted_start = $transcriptSummary->{$transcript}->{$strain}->{shifted_start};
-		my $shifted_end = $transcriptSummary->{$transcript}->{$strain}->{shifted_end};
-		my $strand = $transcriptSummary->{$transcript}->{cds_strand};
-		
-		$consensusCodingSequence = &getCodingSequence($strain, $shifted_start, $shifted_end, $strand, $consensusFasta);
-	
-		$transcriptSummary->{$transcript}->{cache}->{consensus_cds} = $consensusCodingSequence;
+	    else {
+	        next;
 	    }
-
-	    # We already have retrieved the reference coding sequence for this transcript
-	
-	    if($transcriptSummary->{$transcript}->{cache}->{ref_cds}) {
-		$refConsensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{ref_cds};
-	    }
-
-	    else { # first time through for this transcript
-		# Use same functionality for retrieving the reference coding sequence
-		my $start = $transcriptSummary->{$transcript}->{min_exon_start};
-		my $end = $transcriptSummary->{$transcript}->{max_exon_end};
-		my $strand = $transcriptSummary->{$transcript}->{cds_strand};
-		
-		$refConsensusCodingSequence = &getCodingSequence($sequenceId, $start, $end, $strand, $genomeFasta);
-		
-		$transcriptSummary->{$transcript}->{cache}->{ref_cds} = $refConsensusCodingSequence;
-	    }
-
-	    my $strand = $transcriptSummary->{$transcript}->{cds_strand};
-	    my $variationPositionInCds = $variation->{position_in_cds};
-	    
-	    next unless($variationPositionInCds);
-	    next if($variationPositionInCds > length $consensusCodingSequence);
-
-	    ($codon, $product) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $variationPositionInCds);
-	    ($refCodon, $refProduct) = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $refPositionInCds);
-	    
-	    if($product ne $refProduct) {
-		$adjacentSnpCausesProductDifference = 1;
-	    }
-	    
-            $variation->{product} = $product;
-	    $variation->{codon} = $codon;
-	    $variation->{reference_aa} = $refProduct;
-	    $variation->{reference_codon} = $refCodon;
-	    $variation->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
+	}
+	$cds_count = $cds_count/2;
+	if($transcriptSummary->{$transcript}->{cache}->{$strain}->{consensus_cds}) {
+	    $consensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{$strain}->{consensus_cds};
+	}
+	else { # first time through for this transcript. Get coding sequence using samtools faidx and consensus sequence using shifted exons
+	    foreach my $number (1 .. $cds_count) {
+		my $cdsShiftedStartField = "cds_shifted_start_$number";
+		my $cdsShiftedEndField = "cds_shifted_end_$number";
+		my $cds_shifted_start = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedStartField};
+	        my $cds_shifted_end = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedEndField};
+                my $cds_sequence_chunk = &getCodingSequence($strain, $cds_shifted_start, $cds_shifted_end, $strand, $consensusFasta);
+		$consensusCodingSequence = $consensusCodingSequence . $cds_sequence_chunk;
+		if ($number != $cds_number) {
+		    $prior_cds_len = $prior_cds_len + $cds_end - $cds_start;
+		}
+		elsif ($number == $cds_number) {
+		    $pos_in_cds = $shifted_location - $cds_shifted_start + $prior_cds_len + 1;
+		}
+            }
+	    $transcriptSummary->{$transcript}->{cache}->{$strain}->{consensus_cds} = $consensusCodingSequence;
+	}
+	if($transcriptSummary->{$transcript}->{cache}->{ref_cds}) { # We already have retrieved the reference coding sequence for this transcript
+	    $refConsensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{ref_cds};
+	}
+        else { # first time through for this transcript. Use same functionality for retrieving the reference coding sequence
+	    foreach my $number (1 .. $cds_number) {
+		my $cdsStartField = "cds_start_$number";
+		my $cdsEndField = "cds_end_$number";
+		my $cds_start = $$transcriptSummary{$transcript}->{$cdsStartField};
+	        my $cds_end = $$transcriptSummary{$transcript}->{$cdsEndField};
+                my $cds_sequence_chunk = &getCodingSequence($refSeqSourceId, $cds_start, $cds_end, $strand, $genomeFasta);
+		$refConsensusCodingSequence = $refConsensusCodingSequence . $cds_sequence_chunk;
+		if ($number != $cds_number) {
+		    $prior_ref_cds_len = $prior_ref_cds_len + $cds_end - $cds_start;
+		}
+		elsif ($number == $cds_number) {
+		    $ref_pos_in_cds = $location - $cds_start + $prior_ref_cds_len + 1;
+		}
+            }
+	    $transcriptSummary->{$transcript}->{cache}->{ref_cds} = $refConsensusCodingSequence;
         }
+
+        ($codon, $product) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $pos_in_cds);
+	($refCodon, $refProduct) = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $ref_pos_in_cds);
+
+	print Dumper $product;
+	print Dumper $refProduct;
+	die;
+	  
+	if($product ne $refProduct) {
+	    $adjacentSnpCausesProductDifference = 1;
+	}
+	    
+        $variation->{product} = $product;
+	$variation->{codon} = $codon;
+	$variation->{reference_aa} = $refProduct;
+	$variation->{reference_codon} = $refCodon;
+	$variation->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
     }
     return($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $refConsensusCodingSequence);
 }
@@ -1186,3 +1232,64 @@ sub makeSNPFeatureFromVariations {
             };
   return $snp;
 }
+
+sub addTranscript {
+    my ($variations, $location, $transcriptSummary) = @_;
+    my @sorted_keys = nsort keys %{ $transcriptSummary };
+    foreach $variation ( @$variations ) {
+	my $isCoding = 0;
+	my $variationTranscript;
+        foreach my $transcript (@sorted_keys) {
+	    my ($shifted_exon_start, $shifted_exon_end, $shifted_cds_start, $shifted_cds_end);
+	    my $exon_count = 0;
+	    my $cds_count = 0;
+	    foreach my $key (keys %{ $$transcriptSummary{$transcript} }) {
+	        if ($key =~ /exon/) {
+		    $exon_count++;
+	        }
+	        elsif ($key =~ /cds/) {
+		    $cds_count++;
+	        }
+	        else {
+		    next;
+	        }
+	    }
+	    $exon_count = $exon_count/2;
+            $cds_count = $cds_count/2;
+            foreach my $number (1 .. $exon_count) {
+	        my $exonStartField = "exon_start_$number";
+	        my $exonEndField = "exon_end_$number";
+	        my $exon_start = $$transcriptSummary{$transcript}->{$exonStartField};
+	        my $exon_end = $$transcriptSummary{$transcript}->{$exonEndField};
+		if ($location >= $exon_start && $location <= $exon_end) {
+		    $variationTranscript = $transcript;
+		}
+		if ($variationTranscript) {
+		    $variation->{exon_number} = $number;
+		    last;
+		}
+	    }
+	    foreach my $number (1 .. $cds_count) {
+
+		my $cdsStartField = "cds_start_$number";
+		my $cdsEndField = "cds_end_$number";
+		my $cds_start = $$transcriptSummary{$transcript}->{$cdsStartField};
+	        my $cds_end = $$transcriptSummary{$transcript}->{$cdsEndField};
+		if ($location >= $cds_start && $location <= $cds_end) {
+		    $isCoding = 1;
+		}
+		if ($isCoding == 1) {
+		    $variation->{cds_number} = $number;
+		    last;
+		}
+            }
+	    if ($variationTranscript) {
+		last;
+	    }   
+        }
+	$variation->{is_coding} = $isCoding;
+	$variation->{transcript} = $variationTranscript;
+    }
+    return $variations;
+}
+    
