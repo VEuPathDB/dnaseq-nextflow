@@ -139,11 +139,11 @@ while($merger->hasNext()) {
   else {
       my $referenceAllele = $variations->[0]->{reference};
       if ($variations->[0]->{is_coding} == 1) {
-          #print "Processing...\n";
+          print "Processing...\n";
           my ($refProduct, $refCodon, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($transcriptSummary, $variations, $consensusFasta, $genomeFasta);
-	  #print Dumper $variations;
-          #print "$refCodon\n";
-	  #die;
+	  print Dumper $variations;
+          print "$refCodon\n";
+	  die;
       }
   }
   #else {
@@ -531,15 +531,21 @@ sub getAminoAcidSequenceOfSnp {
   my $offset = $positionInCds - $modCds;
 
   my $codon = substr $cdsSequence, $offset - 1, $codonLength;
+
+  print "Codon is $codon\n";
+
   my $codons = &calculatePossibleCodons($codon);
+
+  print "Codons are...\n";
+  print Dumper $codons;
 
   my $products;
   my $productsLen = scalar @$codons;
   $productsLen=$productsLen-1;
 
   foreach my $i (0..$productsLen) {
-      $codon = $codons->[$i];
-      my $product = $CODON_TABLE->translate($codon);
+      $current_codon = $codons->[$i];
+      my $product = $CODON_TABLE->translate($current_codon);
       push @{ $products }, $product; 
   }
 
@@ -935,7 +941,10 @@ sub variationAndRefProduct {
 	my $prior_ref_cds_len = 0;
 	my ($pos_in_cds, $pos_in_protein, $ref_pos_in_cds, $ref_pos_in_protein);
         foreach my $key (keys %{ $$transcriptSummary{$transcript} }) {
-            if ($key =~ /cds/) {
+	    if ($key eq 'cds_strand') {
+		next;
+	    }
+            elsif ($key =~ /cds/) {
                 $cds_count++;
 	    }
 	    else {
@@ -952,7 +961,7 @@ sub variationAndRefProduct {
 		my $cdsShiftedEndField = "cds_shifted_end_$number";
 		my $cds_shifted_start = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedStartField};
 	        my $cds_shifted_end = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedEndField};
-                my $cds_sequence_chunk = &getCodingSequence($strain, $cds_shifted_start, $cds_shifted_end, $strand, $consensusFasta);
+		my $cds_sequence_chunk = &getCodingSequence($strain, $cds_shifted_start, $cds_shifted_end, $strand, $consensusFasta);
 		$consensusCodingSequence = $consensusCodingSequence . $cds_sequence_chunk;
 		if ($number != $cds_number) {
 		    $prior_cds_len = $prior_cds_len + $cds_end - $cds_start;
@@ -967,12 +976,12 @@ sub variationAndRefProduct {
 	    $refConsensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{ref_cds};
 	}
         else { # first time through for this transcript. Use same functionality for retrieving the reference coding sequence
-	    foreach my $number (1 .. $cds_number) {
+            foreach my $number (1 .. $cds_count) {
 		my $cdsStartField = "cds_start_$number";
 		my $cdsEndField = "cds_end_$number";
 		my $cds_start = $$transcriptSummary{$transcript}->{$cdsStartField};
 	        my $cds_end = $$transcriptSummary{$transcript}->{$cdsEndField};
-                my $cds_sequence_chunk = &getCodingSequence($refSeqSourceId, $cds_start, $cds_end, $strand, $genomeFasta);
+		my $cds_sequence_chunk = &getCodingSequence($refSeqSourceId, $cds_start, $cds_end, $strand, $genomeFasta);
 		$refConsensusCodingSequence = $refConsensusCodingSequence . $cds_sequence_chunk;
 		if ($number != $cds_number) {
 		    $prior_ref_cds_len = $prior_ref_cds_len + $cds_end - $cds_start;
@@ -987,14 +996,12 @@ sub variationAndRefProduct {
         ($codon, $product) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $pos_in_cds);
 	($refCodon, $refProduct) = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $ref_pos_in_cds);
 
-	print Dumper $product;
-	print Dumper $refProduct;
-	die;
-	  
-	if($product ne $refProduct) {
+        print "Codon returning from getAminoAcid is $codon\n";
+	
+        if($product ne $refProduct) {
 	    $adjacentSnpCausesProductDifference = 1;
 	}
-	    
+	
         $variation->{product} = $product;
 	$variation->{codon} = $codon;
 	$variation->{reference_aa} = $refProduct;
