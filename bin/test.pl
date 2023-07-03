@@ -22,7 +22,7 @@ use locale;
 use Sort::Naturally;
 use Set::CrossProduct;
 
-my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile, $varscanDirectory, $referenceStrain, $help, $debug, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile);
+my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile, $varscanDirectory, $referenceStrain, $help, $debug, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile, $transcriptFasta);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
             "cache_file=s"=> \$cacheFile,
             "clean_cache"=> \$cleanCache,
@@ -38,7 +38,8 @@ my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile
 	    "genome=s"=> \$genomeFasta,
 	    "indelFile=s"=> \$indelFile,
 	    "gtfFile=s"=> \$gtfFile,
-    );
+	    "transcript"=> \$transcriptFasta
+            );
 
 if($help) {
   &usage();
@@ -97,6 +98,9 @@ my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVar
 my @allStrains = keys %{$strainVarscanFileHandles};
 
 my $transcriptSummary = &makeTranscriptSummary($gtfFile, $indelFile);
+
+print Dumper $transcriptSummary;
+die;
 
 my $currentShifts = &createCurrentShifts($indelFile);
 
@@ -465,7 +469,8 @@ sub makeTranscriptSummary {
         }
     }
     my $transcriptSummaryShifted = &addStrainCDSShiftsToTranscriptSummary($currentShifts, \%transcriptSummary);
-    return \%transcriptSummary;
+    my $transcriptSummaryWithTranscriptomicLocations = &addTranscriptomicLocation($transcriptSummaryShifted, $currentShifts);
+    return $transcriptSummaryWithTranscriptomicLocations;
 }
 
 sub calculateAminoAcidPosition {
@@ -1147,4 +1152,90 @@ sub addTranscript {
 	$variation->{transcript} = $variationTranscript;
     }
     return $variations;
+}
+
+sub addTranscriptomicLocation {
+    my ($transcriptSummary, $currentShifts) = @_;
+    my @sorted_keys = nsort keys %{ $transcriptSummary };
+    my $refSeqSourceId;
+    foreach my $strain (keys %{ $currentShifts }) {
+        my $cdsStartLocation = 1;
+        foreach my $transcript (@sorted_keys) {
+	    my $cds_count = 0;
+            $refSeqSourceId = $$transcriptSummary{$transcript}->{sequence_source_id};
+            foreach my $key (keys %{ $$transcriptSummary{$transcript} }) {
+                if ($key eq 'cds_strand') {
+                    next;
+                }
+                elsif ($key =~ /cds/) {
+                    $cds_count++;
+                }
+                else {
+                    next;
+                }
+            }
+            $cds_count = $cds_count/2;
+            foreach my $number (1 .. $cds_count) {
+                my $cdsShiftedStartField = "cds_shifted_start_$number";
+                my $cdsShiftedEndField = "cds_shifted_end_$number";
+		my $transcriptomicShiftedStartField = "transcript_shifted_start_$number";
+                my $transcriptomicShiftedEndField = "transcript_shifted_end_$number";
+                my $cds_shifted_start = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedStartField};
+                my $cds_shifted_end = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedEndField};
+                my $cdsLen = $cds_shifted_end - $cds_shifted_start;
+		my $transcriptomicShiftedStart = $cdsStartLocation;
+                if ($cdsStartLocation == 1) {
+		    my $transcriptomicShiftedEnd = $cdsLen + 1;
+		    $$transcriptSummary{$transcript}->{$strain}->{$transcriptomicShiftedStartField} = $transcriptomicShiftedStart;
+		    $$transcriptSummary{$transcript}->{$strain}->{$transcriptomicShiftedEndField} = $transcriptomicShiftedEnd;
+		    $cdsStartLocation = $transcriptomicShiftedEnd + 1;
+		}
+                else {
+                    my $transcriptomicShiftedEnd = $cdsLen + 1 + $transcriptomicShiftedStart;
+		    $$transcriptSummary{$transcript}->{$strain}->{$transcriptomicShiftedStartField} = $transcriptomicShiftedStart;
+		    $$transcriptSummary{$transcript}->{$strain}->{$transcriptomicShiftedEndField} = $transcriptomicShiftedEnd;
+		    $cdsStartLocation = $transcriptomicShiftedEnd + 1;
+		}
+            }
+        }
+    }
+    my $cdsStartLocation = 1;
+    foreach my $transcript (@sorted_keys) {
+        my $cds_count = 0;
+        foreach my $key (keys %{ $$transcriptSummary{$transcript} }) {
+            if ($key eq 'cds_strand') {
+                next;
+            }
+            elsif ($key =~ /cds/) {
+                $cds_count++;
+            }
+            else {
+                next;
+            }
+        }
+        $cds_count = $cds_count/2;
+        foreach my $number (1 .. $cds_count) {
+            my $cdsStartField = "cds_start_$number";
+            my $cdsEndField = "cds_end_$number";
+	    my $transcriptomicStartField = "transcript_start_$number";
+            my $transcriptomicEndField = "transcript_end_$number";
+            my $cds_start = $$transcriptSummary{$transcript}->{$cdsStartField};
+            my $cds_end = $$transcriptSummary{$transcript}->{$cdsEndField};
+            my $cdsLen = $cds_end - $cds_start;
+            my $transcriptomicStart = $cdsStartLocation;
+	    if ($cdsStartLocation == 1) {
+		my $transcriptomicEnd = $cdsLen + 1;
+	        $$transcriptSummary{$transcript}->{$transcriptomicStartField} = $transcriptomicStart;
+	        $$transcriptSummary{$transcript}->{$transcriptomicEndField} = $transcriptomicEnd;
+	        $cdsStartLocation = $transcriptomicEnd + 1;
+	    }
+            else {
+                my $transcriptomicEnd = $cdsLen + 1 + $transcriptomicStart;
+	        $$transcriptSummary{$transcript}->{$transcriptomicStartField} = $transcriptomicStart;
+	        $$transcriptSummary{$transcript}->{$transcriptomicEndField} = $transcriptomicEnd;
+	        $cdsStartLocation = $transcriptomicEnd + 1;
+	    }
+        }
+    }
+    return $transcriptSummary;
 }
