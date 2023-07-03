@@ -22,7 +22,7 @@ use locale;
 use Sort::Naturally;
 use Set::CrossProduct;
 
-my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile, $varscanDirectory, $referenceStrain, $help, $debug, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile, $transcriptFasta);
+my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile, $varscanDirectory, $referenceStrain, $help, $debug, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
             "cache_file=s"=> \$cacheFile,
             "clean_cache"=> \$cleanCache,
@@ -37,8 +37,7 @@ my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile
 	    "consensus=s"=> \$consensusFasta,
 	    "genome=s"=> \$genomeFasta,
 	    "indelFile=s"=> \$indelFile,
-	    "gtfFile=s"=> \$gtfFile,
-	    "transcript"=> \$transcriptFasta
+	    "gtfFile=s"=> \$gtfFile
             );
 
 if($help) {
@@ -469,8 +468,9 @@ sub makeTranscriptSummary {
         }
     }
     my $transcriptSummaryShifted = &addStrainCDSShiftsToTranscriptSummary($currentShifts, \%transcriptSummary);
-    my $transcriptSummaryWithTranscriptomicLocations = &addTranscriptomicLocation($transcriptSummaryShifted, $currentShifts);
-    return $transcriptSummaryWithTranscriptomicLocations;
+    my $transcriptSummaryWithFrameShifts = &addFrameShifts($currentShifts, $transcriptSummaryShifted);
+    #my $transcriptSummaryWithTranscriptomicLocations = &addTranscriptomicLocation($transcriptSummaryShifted, $currentShifts);
+    return $transcriptSummaryWithFrameShifts;
 }
 
 sub calculateAminoAcidPosition {
@@ -501,8 +501,6 @@ sub getAminoAcidSequenceOfSnp {
       print "$positionInProtein not in range\n";
       die;
   }
-
-  print "$cdsSequence\t$positionInCds\t$positionInProtein\t$codon\n";
   
   my $codons = &calculatePossibleCodons($codon);
 
@@ -767,12 +765,11 @@ sub addShiftedLocation {
 
 
 
-
 sub variationAndRefProduct {
     my ($transcriptSummary, $variations, $consensusFasta, $genomeFasta) = @_;
     my ($product, $refProduct, $codon, $refCodon);
     my $adjacentSnpCausesProductDifference = 0;
-    my $refConsensusCodingSequence;
+    my $referenceCodingSequence;
     foreach my $variation (@$variations) {
 	my $refSeqSourceId = $variation->{sequence_source_id};
 	my $consensusCodingSequence;
@@ -804,8 +801,8 @@ sub variationAndRefProduct {
 	    foreach my $number (1 .. $cds_count) {
                 my $cdsShiftedStartField = "cds_shifted_start_$number";
 	        my $cdsShiftedEndField = "cds_shifted_end_$number";
-	        my $cds_shifted_start = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedStartField};
-	        my $cds_shifted_end = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedEndField};
+                my $cds_shifted_start = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedStartField};
+                my $cds_shifted_end = $$transcriptSummary{$transcript}->{$strain}->{$cdsShiftedEndField};
 	        if ($number != $cds_number) {
 	            $prior_cds_len = $prior_cds_len + $cds_end - $cds_start;
 	        }
@@ -832,7 +829,7 @@ sub variationAndRefProduct {
 	    $transcriptSummary->{$transcript}->{cache}->{$strain}->{consensus_cds} = $consensusCodingSequence;
 	}
 	if($transcriptSummary->{$transcript}->{cache}->{ref_cds}) { # We already have retrieved the reference coding sequence for this transcript
-	    $refConsensusCodingSequence = $transcriptSummary->{$transcript}->{cache}->{ref_cds};
+	    $referenceCodingSequence = $transcriptSummary->{$transcript}->{cache}->{ref_cds};
 	     foreach my $number (1 .. $cds_count) {
 		my $cdsStartField = "cds_start_$number";
 		my $cdsEndField = "cds_end_$number";
@@ -853,7 +850,7 @@ sub variationAndRefProduct {
 		my $cds_start = $$transcriptSummary{$transcript}->{$cdsStartField};
 	        my $cds_end = $$transcriptSummary{$transcript}->{$cdsEndField};
 		my $cds_ref_sequence_chunk = &getCodingSequence($refSeqSourceId, $cds_start, $cds_end, $strand, $genomeFasta);
-		$refConsensusCodingSequence = $refConsensusCodingSequence . $cds_ref_sequence_chunk;
+		$referenceCodingSequence = $referenceCodingSequence . $cds_ref_sequence_chunk;
 		if ($number != $cds_number) {
 		    $prior_ref_cds_len = $prior_ref_cds_len + $cds_end - $cds_start;
 		}
@@ -861,14 +858,12 @@ sub variationAndRefProduct {
 		    $ref_pos_in_cds = $location - $cds_start + $prior_ref_cds_len + 1;
 		}
             }
-	    $transcriptSummary->{$transcript}->{cache}->{ref_cds} = $refConsensusCodingSequence;
+	    $transcriptSummary->{$transcript}->{cache}->{ref_cds} = $referenceCodingSequence;
         }
 
-	print "Reference\n";
-	($refCodon, $refProduct) = &getAminoAcidSequenceOfSnp($refConsensusCodingSequence, $ref_pos_in_cds);
+	($refCodon, $refProduct) = &getAminoAcidSequenceOfSnp($referenceCodingSequence, $ref_pos_in_cds);
 	$ref_pos_in_pro = &calculateAminoAcidPosition($ref_pos_in_cds);
-	print "Variation\n";
-        ($codon, $product) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $pos_in_cds);
+	($codon, $product) = &getAminoAcidSequenceOfSnp($consensusCodingSequence, $pos_in_cds);
         $pos_in_pro = &calculateAminoAcidPosition($pos_in_cds);
         if($product ne $refProduct) {
             $adjacentSnpCausesProductDifference = 1;
@@ -882,24 +877,19 @@ sub variationAndRefProduct {
 	$variation->{has_nonsynonomous} = $adjacentSnpCausesProductDifference;
 	$variation->{reference_aa} = $refProduct;
     }
-    return($refProduct, $refCodon, $ref_pos_in_cds, $ref_pos_in_pro, $adjacentSnpCausesProductDifference, $refConsensusCodingSequence);
+    return($refProduct, $refCodon, $ref_pos_in_cds, $ref_pos_in_pro, $adjacentSnpCausesProductDifference, $referenceCodingSequence);
 }
 
 
 sub getCodingSequence {
     my ($defline, $start, $end, $strand, $fasta) = @_;
     my $seq;
-
-    if ($strand == 1) {
-	$seq = `samtools faidx $fasta $defline:$start-$end`;
+    $seq = `samtools faidx $fasta $defline:$start-$end`;
+    $seq = $seq =~ s/>.+\n//gr;
+    $seq = $seq =~ s/\n//gr;
+    if ($strand = -1) {
+	$seq = &reverse_complement_IUPAC($seq)
     }
-
-    else {
-        $seq = `samtools faidx -i $fasta $defline:$start-$end`;
-    }
-
-    my $seq = $seq =~ s/>.+\n//gr;
-    my $seq = $seq =~ s/\n//gr;
     return $seq;
 }
 
@@ -908,14 +898,13 @@ sub calculatePossibleCodons {
     my ($codon) = @_;
     my $codonList;
 
-    if (!$codon) {
-        return $codonList;
+    if (length($codon) != 3) {
+	$codon = "NNN";
     }
-    else {
-	$codon = uc($codon);
-        my @codonArray=split(//, $codon);
+    $codon = uc($codon);
+    my @codonArray=split(//, $codon);
 
-        my %translate = (A => ['A'],
+    my %translate = (A => ['A'],
     		     G => ['G'],
 		     C => ['C'],
 		     T => ['T'],
@@ -931,18 +920,17 @@ sub calculatePossibleCodons {
 		     V => ['G','C','A'],
 		     N => ['A','G','C','T']
                      );
-        my @expanded = map { $translate{$_} } @codonArray;
+    my @expanded = map { $translate{$_} } @codonArray;
 
-        my $iterator = Set::CrossProduct->new(\@expanded);
+    my $iterator = Set::CrossProduct->new(\@expanded);
 
-        foreach my $codon ($iterator->combinations) {
-            my $string = join(",", @$codon);
-            $string = $string =~ s/,//gr;
-	    push @{ $codonList }, $string;
-        }
-
-	return $codonList;
+    foreach my $codon ($iterator->combinations) {
+        my $string = join(",", @$codon);
+        $string = $string =~ s/,//gr;
+        push @{ $codonList }, $string;
     }
+
+    return $codonList;
 }
 
 
@@ -1239,3 +1227,69 @@ sub addTranscriptomicLocation {
     }
     return $transcriptSummary;
 }
+
+sub reverse_complement_IUPAC {
+    my ($dna) = @_;
+        
+    # reverse the DNA sequence
+    my $revcomp = reverse($dna);
+
+    # complement the reversed DNA sequence
+    $revcomp =~ tr/ABCDGHMNRSTUVWXYabcdghmnrstuvwxy/TVGHCDKNYSAABWXRtvghcdknysaabwxr/;
+    return $revcomp;
+}
+
+
+sub addFrameShifts {
+    my ($currentShifts,$transcriptSummary) = @_;
+    my @sorted_keys = nsort keys %{ $transcriptSummary };
+    my $refSeqSourceId;
+    foreach my $strain (keys %{ $currentShifts }) {
+        foreach my $transcript (@sorted_keys) {
+	    my $hasFrameShift = 0;
+	    my $frameShiftLocation;
+            foreach my $key (keys %{ $$transcriptSummary{$transcript} }) {
+                if ($key eq 'cds_strand') {
+                    next;
+                }
+                elsif ($key =~ /cds/) {
+                    $cds_count++;
+                }
+                else {
+                    next;
+                }
+            }
+            $cds_count = $cds_count/2;
+            foreach my $number (1 .. $cds_count) {
+                my $cdsStartField = "cds_start_$number";
+                my $cdsEndField = "cds_end_$number";
+		my $cds_start = $$transcriptSummary{$transcript}->{$cdsStartField};
+                my $cds_end = $$transcriptSummary{$transcript}->{$cdsEndField};
+		my $shiftArray = $currentShifts->{$strain};
+	        foreach my $chromosome (keys %{ $shiftArray }) {	   
+	            my @chromosomeShiftArray = $shiftArray->{$chromosome};
+	            my $indexedArray = $chromosomeShiftArray[0][0];
+		    my $shiftArrayLen = scalar @{ $indexedArray };
+                    my $shiftFrameLimit = $shiftArrayLen - 1;
+		    my $shiftFrame = 0;
+		    until ($shiftFrame == $shiftFrameLimit) {
+			my $location = $indexedArray->[$shiftFrame][0];
+			if ($location >= $cds_start && $location <= $cds_end) {
+			    #print "Location $location start $cds_start end $cds_end\n";
+			    $hasFrameShift = 1;
+			    $frameShiftLocation = $location;
+			    last;
+			}
+			else {
+			    $shiftFrame+=1;
+			}
+		    }
+		}
+	    }
+	    $$transcriptSummary{$transcript}->{$strain}->{has_frameshift} = $hasFrameShift;
+	    $$transcriptSummary{$transcript}->{$strain}->{frameshift_location} = $frameShiftLocation;
+	}
+    }
+    return $transcriptSummary;
+}
+
