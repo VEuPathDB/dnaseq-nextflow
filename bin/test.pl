@@ -141,8 +141,7 @@ while($merger->hasNext()) {
                          'position_in_codon' => $refPositionInProtein,
                          'is_coding' => $isCoding,
                          'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
-      			 'ref_codon' => $refCodon,
-      			 'reference_aa_full' => $reference_aa_full	 
+      			 'ref_codon' => $refCodon
   };
   push @$variations, $referenceVariation;
   # No need to continue if there is no variation at this point:  Important for when we undo!!
@@ -1166,8 +1165,7 @@ sub makeSNPFeatureFromVariations {
 		  "has_coding_mutation" => $referenceVariation->{is_coding},
 		  "total_allele_count" => $totalAlleleCount,
 		  "has_stop_codon" => $hasStopCodon,
-		  "ref_codon" => $referenceVariation->{ref_codon},
-		  "reference_aa_full" => $referenceVariation->{reference_aa_full}    
+		  "ref_codon" => $referenceVariation->{ref_codon}
             };
   return $snp;
 }
