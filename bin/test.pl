@@ -62,9 +62,6 @@ if(!$cacheFileExists || $cleanCache) {
 
 }
 
-my $initialCacheCount = `cat $cacheFile | wc -l`;
-chomp($initialCacheCount);
-
 unless(-d $varscanDirectory) {
   &usage("Required Directory Missing") unless($isLegacyVariations);
 }
@@ -75,9 +72,6 @@ unless(-e $undoneStrainsFile) {
 }
 
 my $CODON_TABLE = Bio::Tools::CodonTable->new( -id => 1); #standard codon table
-
-my $totalTime;
-my $totalTimeStart = time();
 
 my $dirname = dirname($cacheFile);
 
@@ -97,9 +91,6 @@ my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVar
 my @allStrains = keys %{$strainVarscanFileHandles};
 
 my $transcriptSummary = &makeTranscriptSummary($gtfFile, $indelFile);
-
-print Dumper $transcriptSummary;
-die;
 
 my $currentShifts = &createCurrentShifts($indelFile);
 
@@ -133,41 +124,117 @@ while($merger->hasNext()) {
 
   $variations = &addTranscript($variations, $location, $transcriptSummary);
 
-  my $cachedReferenceVariation = &cachedReferenceVariation($variations, $referenceStrain);
+  $referenceAllele = $variations->[0]->{reference};
+  $isCoding = $variations->[0]->{is_coding};
+  my ($refProduct, $refCodon, $refPositionInCds, $refPositionInProtein, $adjacentSnpCausesProductDifference, $reference_aa_full);
+  if ($isCoding == 1) {
+      ($refProduct, $refCodon, $refPositionInCds, $refPositionInProtein, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($transcriptSummary, $variations, $consensusFasta, $genomeFasta);
+  }
+  $referenceVariation = {'base' => $referenceAllele,
+                         'reference' => $referenceAllele,    
+                         'location' => $location,
+                         'sequence_source_id' => $sequenceId,
+                         'matches_reference' => 1,
+                         'position_in_cds' => $refPositionInCds,
+                         'strain' => $referenceStrain,
+                         'product' => $refProduct,
+                         'position_in_protein' => $refPositionInProtein,
+                         'is_coding' => $isCoding,
+                         'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
+      			 'ref_codon' => $refCodon,
+      			 'reference_aa_full' => $reference_aa_full	 
+  };
+  push @$variations, $referenceVariation;
+  # No need to continue if there is no variation at this point:  Important for when we undo!!
+  if(!&hasVariation($variations) && !$isLegacyVariations) {
+      print STDERR  "NO VARIATION FOR STRAINS:  " . join(",", map { $_->{strain}} @$variations) . "\n" if($debug);
+      next;
+  }
 
-  if($cachedReferenceVariation && !$isLegacyVariations) {
-      print STDERR "HAS_CACHED REFERENCE VARIATION\n" if($debug);
-      $referenceVariation = $cachedReferenceVariation;
+  # loop over all strains add coverage vars
+  my @variationStrains = map { $_->{strain} } @$variations;
+
+  unless($isLegacyVariations) {
+      my $coverageVariations = &makeCoverageVariations(\@allStrains, \@variationStrains, $strainVarscanFileHandles, $referenceVariation);
+      my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
+      print STDERR "HAS COVERAGE VARIATIONS FOR THE FOLLOWING:  " . join(",", @coverageVariationStrains) . "\n" if($debug);
+      push @$variations, @$coverageVariations;
   }
-  else {
-      $referenceAllele = $variations->[0]->{reference};
-      $isCoding = $variations->[0]->{is_coding};
-      my ($refProduct, $refCodon, $refPositionInCds, $refPositionInProtein, $adjacentSnpCausesProductDifference, $reference_aa_full);
-      if ($isCoding == 1) {
-	  ($refProduct, $refCodon, $refPositionInCds, $refPositionInProtein, $adjacentSnpCausesProductDifference, $reference_aa_full) = &variationAndRefProduct($transcriptSummary, $variations, $consensusFasta, $genomeFasta);
+
+  # loop through variations and print
+  foreach my $variation (@$variations) {
+
+      # Adding a field to show if snp is downstream of a frameshift
+      if ($variation->{transcript}) {
+	  my $transcript = $variation->{transcript};
+	  my $strain = $variation->{strain};
+	  if ($transcriptSummary->{$transcript}->{$strain}->{has_frameshift} == 1) {
+	      my $frameshiftLocation = $transcriptSummary->{$transcript}->{$strain}->{frameshift_location};
+	      if ($transcriptSummary->{$transcript}->{cds_strain} == 1 && $variation->{shifted_location} > $frameshiftLocation) {
+                  $variation->{downstream_of_frameshift} = 1;
+	      }
+	      elsif ($transcriptSummary->{$transcript}->{cds_strain} == -1 && $variation->{shifted_location} < $frameshiftLocation) {
+                  $variation->{downstream_of_frameshift} = 1;
+	      }
+	      else {
+                  $variation->{downstream_of_frameshift} = 0;
+	      }
+	  }
+	  else {
+              $variation->{downstream_of_frameshift} = 0;
+	  }
       }
-      $referenceVariation = {'base' => $referenceAllele,
-      			     'reference' => $referenceAllele,    
-                             'location' => $location,
-                             'sequence_source_id' => $sequenceId,
-                             'matches_reference' => 1,
-                             'position_in_cds' => $refPositionInCds,
-                             'strain' => $referenceStrain,
-                             'product' => $refProduct,
-                             'position_in_protein' => $refPositionInProtein,
-                             'is_coding' => $isCoding,
-                             'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
-      			     'ref_codon' => $refCodon,
-      			     'reference_aa_full' => $reference_aa_full	 
-      };
-      push @$variations, $referenceVariation;
-      if ($isCoding == 1) {
-	  #print Dumper $variations;
+      else {
+          $variation->{downstream_of_frameshift} = 0;
       }
+      
+      my $strain = $variation->{strain};
+      my ($protocolAppNodeId, $extDbRlsId);
+
+      if(!$forcePositionCompute || $strain eq $referenceStrain) {
+              #&printVariation($variation, $cacheFh);
+              next;
+      }
+
+      my $allele = $variation->{base};
+
+      if($allele eq $referenceAllele) {
+          $variation->{matches_reference} = 1;
+      }
+
+      else {
+	  $variation->{matches_reference} = 0;
+      }
+
+      #&printVariation($variation, $cacheFh);
+  }  
+
+  print Dumper $variations;
+  
+  my $snpFeature = &makeSNPFeatureFromVariations($variations, $referenceVariation);
+
+  &printSNPFeature($snpFeature, $snpFh);
+
+  if ($referenceVariation->{is_coding} == 1) {
+      my $productFeature = &makeProductFeatureFromVariations($variations, $referenceVariation);
+      my $alleleFeature = &makeAlleleFeatureFromVariations($variations);
+      &printProductFeature($productFeature, $productFh);
+      &printAlleleFeature($alleleFeature, $alleleFh);
   }
-  #print Dumper $variations;
+  
+  $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
+  $prevSequenceId = $sequenceId;
+  $prevTranscript = $transcripts->[0];
+
+  $count++;
 }
-#die;
+close $cacheFh;
+close $snpFh;
+close $alleleFh;
+close $productFh;
+&closeVarscanFiles($strainVarscanFileHandles);
+
+close OUT;
 
 #--------------------------------------------------------------------------------
 # BEGIN SUBROUTINES
@@ -1018,6 +1085,7 @@ sub makeProductFeatureFromVariations {
   foreach my $variation (@$variations) {
       next unless($variation->{codon});
       my $transcript = $variation->{transcript};
+      my $downstreamOfFrameshift = $variation->{downstream_of_frameshift};
       my $position_in_codon = $variation->{position_in_codon};
       my $codon = $variation->{codon};
       my $codons =  &calculatePossibleCodons($codon);
@@ -1032,7 +1100,8 @@ sub makeProductFeatureFromVariations {
                       "codon" => $codon,
 	              "position_in_codon" => $position_in_codon,
 	              "ref_location_cds" => $refLocationCds,
-		      "ref_location_protein" => $refLocationProtein
+		      "ref_location_protein" => $refLocationProtein,
+		      "downstream_of_frameshift" => $downstreamOfFrameshift	  
 	             };
 	  push @$products, $pro;      
       }
