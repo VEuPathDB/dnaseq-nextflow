@@ -74,8 +74,9 @@ sub productFileColumnNames {
              "count",
              "product",
              "ref_location_cds",
-             "ref_location_protein"
-	);
+	     "ref_location_protein",
+	     "downstream_of_frameshift"
+	     );
 
    return wantarray ? @columnNames : \@columnNames;
 }
