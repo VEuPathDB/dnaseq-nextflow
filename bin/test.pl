@@ -138,7 +138,7 @@ while($merger->hasNext()) {
                          'position_in_cds' => $refPositionInCds,
                          'strain' => $referenceStrain,
                          'product' => $refProduct,
-                         'position_in_protein' => $refPositionInProtein,
+                         'position_in_codon' => $refPositionInProtein,
                          'is_coding' => $isCoding,
                          'has_nonsynonomous' => $adjacentSnpCausesProductDifference,
       			 'ref_codon' => $refCodon,
@@ -209,7 +209,7 @@ while($merger->hasNext()) {
       #&printVariation($variation, $cacheFh);
   }  
 
-  print Dumper $variations;
+  #print Dumper $variations;
   
   my $snpFeature = &makeSNPFeatureFromVariations($variations, $referenceVariation);
 
@@ -834,7 +834,7 @@ sub addShiftedLocation {
 
 sub variationAndRefProduct {
     my ($transcriptSummary, $variations, $consensusFasta, $genomeFasta) = @_;
-    my ($product, $refProduct, $codon, $refCodon);
+    my ($refProduct, $refCodon, $ref_pos_in_cds, $ref_pos_in_protein);
     my $adjacentSnpCausesProductDifference = 0;
     my $referenceCodingSequence;
     foreach my $variation (@$variations) {
@@ -850,7 +850,7 @@ sub variationAndRefProduct {
 	my $cds_count = 0;
         my $prior_cds_len = 0;
 	my $prior_ref_cds_len = 0;
-	my ($pos_in_cds, $pos_in_protein, $ref_pos_in_cds, $ref_pos_in_protein);
+	my ($pos_in_cds, $pos_in_protein, $product, $codon);
         foreach my $key (keys %{ $$transcriptSummary{$transcript} }) {
 	    if ($key eq 'cds_strand') {
 		next;
@@ -937,7 +937,7 @@ sub variationAndRefProduct {
         }
 	$refProduct = $refProduct->[0];
         $variation->{product} = $product;
-        $variation->{position_in_protein} = $pos_in_pro;
+        $variation->{position_in_codon} = $pos_in_pro;
 	$variation->{position_in_cds} = $pos_in_cds;
         $variation->{codon} = $codon;
 	$variation->{reference_codon} = $refCodon;
@@ -1071,7 +1071,7 @@ sub makeProductFeatureFromVariations {
   my %productCounts;
   my $products;
   my $refLocationCds = $referenceVariation->{position_in_cds};
-  my $refLocationProtein = $referenceVariation->{position_in_protein};
+  my $refLocationProtein = $referenceVariation->{position_in_codon};
   foreach my $variation (@$variations) {
       next unless($variation->{product});
       my $productsArray = $variation->{product};
