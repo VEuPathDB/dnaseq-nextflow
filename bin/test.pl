@@ -112,7 +112,7 @@ my $count = 0;
 my ($prevSequenceId, $prevTranscriptMaxEnd, $prevTranscripts, $counter);
 
 while($merger->hasNext()) {
-
+    
   my $variations = $merger->nextSNP();
   my ($sequenceId, $location) = &snpLocationFromVariations($variations);
 
@@ -123,7 +123,19 @@ while($merger->hasNext()) {
   ($variations, $strainFrame) = &addShiftedLocation($variations, $strainFrame, $currentShifts);
 
   $variations = &addTranscript($variations, $location, $transcriptSummary);
-
+  
+  # clear the transcripts cache once we move past the current transcript
+  if($prevTranscript && $variations->[0]->{transcript} && $prevTranscript ne $variations->[0]->{transcript}) {
+      # Uncomment to see how this works
+      #print "$prevTranscript now onto $variations->[0]->{transcript}\n";
+      #print "$transcriptSummary->{$prevTranscript}->{cache}->{ref_cds}\n";
+      &cleanCdsCache($transcriptSummary, $prevTranscript, \@allStrains);
+      #print "Now is $transcriptSummary->{$previousTranscript}->{cache}->{ref_cds}\n";
+  }
+  if ($variations->[0]->{transcript}) {
+      $prevTranscript = $variations->[0]->{transcript};
+  }
+  
   $referenceAllele = $variations->[0]->{reference};
   $isCoding = $variations->[0]->{is_coding};
   my ($refProduct, $refCodon, $refPositionInCds, $refPositionInProtein, $adjacentSnpCausesProductDifference, $reference_aa_full);
@@ -220,11 +232,7 @@ while($merger->hasNext()) {
       &printProductFeature($productFeature, $productFh);
       &printAlleleFeature($alleleFeature, $alleleFh);
   }
-  
-  $prevTranscriptMaxEnd = $transcriptSummary->{$transcripts->[0]}->{max_exon_end};
   $prevSequenceId = $sequenceId;
-  $prevTranscript = $transcripts->[0];
-
   $count++;
 }
 close $cacheFh;
@@ -432,10 +440,12 @@ sub openVarscanFiles {
 
 
 sub cleanCdsCache {
-  my ($transcriptSummary, $transcripts) = @_;
-
-  foreach my $transcript (@$transcripts) {
-    $transcriptSummary->{$transcript}->{cache} = undef;
+  my ($transcriptSummary, $prevTranscript, $allStrains) = @_;  
+  $transcriptSummary->{$prevTranscript}->{cache}->{ref_cds} = undef;
+  foreach my $strain (@$allStrains) {
+      #print "$transcriptSummary->{$prevTranscript}->{cache}->{$strain}->{consensus_cds}\n";
+      $transcriptSummary->{$prevTranscript}->{cache}->{$strain}->{consensus_cds} = undef;
+      #print "Now is $transcriptSummary->{$prevTranscript}->{cache}->{$strain}->{consensus_cds}\n";
   }
 }
 
