@@ -25,12 +25,11 @@ sub sampleCacheFileColumnNames {
   return wantarray ? @columnNames : \@columnNames;
 }
 
-
 sub snpFileColumnNames {
     my @columnNames =  (
 	     "location",
+	     "source_id",
 	     "transcript_id",
-             "source_id",
 	     "reference_strain",
              "reference_na",
              "reference_aa",

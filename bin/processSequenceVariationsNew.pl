@@ -1122,16 +1122,15 @@ sub makeProductFeatureFromVariations {
 sub makeSNPFeatureFromVariations {
   my ($variations, $referenceVariation) = @_;
   my $location = $referenceVariation->{location};
-  my $snpSourceId = $referenceVariation->{snp_source_id} ? $referenceVariation->{snp_source_id} : "NGS_SNP.$referenceVariation->{sequence_source_id}.$location";
+  my $sourceId = $referenceVariation->{sequence_source_id};
   my $referenceStrain = $referenceVariation->{strain};
   my %alleleCounts;
   my %productCounts;
   my %strains;
   my $totalAlleleCount = scalar @$variations;
   my $hasStopCodon = 0;
+  my $transcript = $variations->[0]->{transcript};
   foreach my $variation (@$variations) {
-    my $geneNaSequenceId = $variation->{gene_na_sequence_id};
-    my $sequenceSourceId = $variation->{sequence_source_id};  
     my $allele = $variation->{base};
     my $strain = $variation->{strain};
     $alleleCounts{$allele} ++;
@@ -1157,8 +1156,7 @@ sub makeSNPFeatureFromVariations {
   my $minorProduct = $sortedProducts[1];
   my $majorAlleleCount = $sortedAlleleCounts[0];
   my $minorAlleleCount = $sortedAlleleCounts[1];
-  my $snp = {     "source_id" => $snpSourceId,
-	          "gene_na_sequence_id" => $geneNaSequenceId,
+  my $snp = {     "source_id" => $sourceId,
 	          "location" => $location,
 	          "reference_strain" => $referenceStrain,
 	          "reference_na" => $referenceVariation->{base},
@@ -1175,8 +1173,9 @@ sub makeSNPFeatureFromVariations {
 		  "has_coding_mutation" => $referenceVariation->{is_coding},
 		  "total_allele_count" => $totalAlleleCount,
 		  "has_stop_codon" => $hasStopCodon,
-		  "ref_codon" => $referenceVariation->{ref_codon}
-            };
+		  "ref_codon" => $referenceVariation->{ref_codon},
+		  "transcript_id" => $transcript    
+  };
   return $snp;
 }
 

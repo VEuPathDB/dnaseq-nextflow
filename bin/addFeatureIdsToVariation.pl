@@ -32,9 +32,9 @@ open($outputFile, "> ./variationFeatureFinal.dat") or die "Cannot open file vari
 open(my $data, '<', $variationFile) || die "Could not open file $variationFile: $!";
 while (my $line = <$data>) {
     chomp $line;
-    my ($location, $transcriptId, $sourceId, $referenceStrain, $referenceNa, $referenceAa, $hasNonsynonymousAllele, $majorAllele, $minorAllele, $majorAlleleCount, $minorAlleleCount, $majorProduct, $minorProduct, $distinctStrainCount, $distinctAlleleCount, $hasCodingMutation, $totalAlleleCount, $hasStopCodon, $refCodon) = split(/\t/, $line);
-    my $naFeatureId = &queryNaFeatureId($dbh, $sourceId);
+    my ($location, $sourceId, $transcriptId, $referenceStrain, $referenceNa, $referenceAa, $hasNonsynonymousAllele, $majorAllele, $minorAllele, $majorAlleleCount, $minorAlleleCount, $majorProduct, $minorProduct, $distinctStrainCount, $distinctAlleleCount, $hasCodingMutation, $totalAlleleCount, $hasStopCodon, $refCodon) = split(/\t/, $line);
     my $naSequenceId = &queryNaSequenceId($dbh, $sourceId);
+    my $naFeatureId = &queryNaFeatureId($dbh, $transcriptId);
     print $outputFile "$location\t$naFeatureId\t$naSequenceId\t$source_id\t$referenceStrain\t$referenceNa\t$referenceAa\t$hasNonsynonymousAllele\t$majorAllele\t$minorAllele\t$majorAlleleCount\t$minorAlleleCount\t$majorProduct\t$minorProduct\t$distinctStrainCount\t$distinctAlleleCount\t$hasCodingMutation\t$totalAlleleCount\t$hasStopCodon\t$refCodon\n";
 }
 
@@ -42,12 +42,11 @@ close $outputFile;
 close $data;
 
 sub queryNaFeatureId {
-    my ($dbh, $sourceid) = @_;
+    my ($dbh, $transcriptId) = @_;
 
-  my $sql = "select f.na_feature_id
-from dots.NaFeatureImp f
-where f.source_id = '$sourceid'";
-
+    my $sql = "select na_feature_id 
+    from dots.transcript 
+    where source_id = '$transcriptId'";
 
     my $sh = $dbh->prepare($sql);
     $sh->execute();
@@ -64,9 +63,9 @@ where f.source_id = '$sourceid'";
 sub queryNaSequenceId {
     my ($dbh, $sourceid) = @_;
 
-  my $sql = "select s.na_sequence_id
-from dots.NaSequenceImp
-where s.source_id = '$sourceid'";
+    my $sql = "select na_sequence_id 
+    from dots.nasequence 
+    where source_id = '$sourceid'"; 
 
     my $sh = $dbh->prepare($sql);
     $sh->execute();
