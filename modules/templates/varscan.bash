@@ -10,8 +10,8 @@ bgzip varscan.snps.vcf
 tabix -fp vcf varscan.snps.vcf.gz
 bgzip varscan.indels.vcf
 tabix -fp vcf varscan.indels.vcf.gz
-parseVarscanToCoverage.pl --file varscan.cons --percentCutoff 60 --coverageCutoff $params.minCoverage --outputFile ${sampleName}.coverage.txt
-maskGenome.pl \
+/usr/bin/perl /usr/bin/parseVarscanToCoverage.pl --file varscan.cons --percentCutoff 60 --coverageCutoff $params.minCoverage --outputFile ${sampleName}.coverage.txt
+/usr/bin/perl /usr/bin/maskGenome.pl \
   -p $resultPileup \
   -f $genomeReorderedFastaIndex \
   -dc $params.minCoverage \
