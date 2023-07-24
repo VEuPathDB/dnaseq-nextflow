@@ -19,20 +19,29 @@ sub sampleCacheFileColumnNames {
        'snp_source_id',
        'is_coding',
        'position_in_cds',
-       'position_in_protein'
-      );
+       'position_in_codon',
+       'downstream_of_frameshift',
+       'transcript',
+       'product',
+       'reference_codon',
+       'codon',
+       'has_nonsynonomous',
+       'shifted_location',
+       'cds_number',
+       'current_shift'
+       );
 
   return wantarray ? @columnNames : \@columnNames;
 }
 
+
 sub snpFileColumnNames {
     my @columnNames =  (
 	     "location",
-	     "source_id",
 	     "transcript_id",
+             "source_id",
 	     "reference_strain",
              "reference_na",
-             "reference_aa",
              "has_nonsynonymous_allele",
              "major_allele",
              "minor_allele",
@@ -67,7 +76,7 @@ sub alleleFileColumnNames {
 sub productFileColumnNames {
     my @columnNames =  (
 	     "codon",
-	     "position_in_codon",
+	     "position_in_protein",
 	     "transcript",
              "count",
              "product",
