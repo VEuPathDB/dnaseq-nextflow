@@ -239,6 +239,8 @@ while ($i <= $greatestLocation) {
   }
 
   my $snpFeature = &makeSNPFeatureFromVariations($variations, $referenceVariation);
+
+  #print Dumper $snpFeature;
   
   &printSNPFeature($snpFeature, $snpFh);
 
@@ -1016,10 +1018,11 @@ sub makeSNPFeatureFromVariations {
     $alleleCounts{$allele} ++;
     $strains{$strain}++; 
     my $products = $variation->{product};
-    my $productsLen = scalar @$products;
+    my @productsArray = split(":", $products);
+    my $productsLen = scalar @productsArray;
     $productsLen = $productsLen-1;
     foreach my $i (0..$productsLen) {
-	my $product = $products->[$i];
+	my $product = $productsArray[$i];
         $productCounts{$product}++;
 	$hasStopCodon = 1 if($product eq '*');
     }
@@ -1351,8 +1354,9 @@ sub makeVariationsFromArray {
     $variation->{downstream_of_frameshift} = $snp->[13];
     $variation->{transcript} = $snp->[14];
     my $productString = $snp->[15];
-    my @productsArray = split(":", $productsString);
-    $variation->{product} = @productsArray;
+    my @productsArray = split(":", $productString);
+    $variation->{product} = ();
+    $variation->{product} = \@productsArray;
     $variation->{reference_codon} = $snp->[16];
     $variation->{codon} = $snp->[17];
     $variation->{has_nonsynonomous} = $snp->[18];
