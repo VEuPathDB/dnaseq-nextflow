@@ -186,9 +186,9 @@ process snpEff {
   publishDir "$params.outputDir", mode: "copy"
 
   input:
-    path $mergedVcf
-    path $genesGtf
-    path $sequencesFa
+    path mergedVcf
+    path genesGtf
+    path sequencesFa
 
   output:
     path 'merged.ann.vcf'
