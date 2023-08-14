@@ -240,6 +240,6 @@ workflow me {
     insertProduct(processSeqVarsResults.productFile)
     insertAllele(processSeqVarsResults.alleleFile)
 
-    //snpEff(mergedVcfResults, params.gtfFile, params.genomeFastaFile)
+    snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
 
 }
