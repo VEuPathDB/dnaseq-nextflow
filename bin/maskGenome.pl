@@ -15,13 +15,12 @@ my ($pileupFile,$faiFile,$depthCutoff,$outputFile,$seqlen,$currentPos,$filePos,$
 
 # Opening outputFile
 
-
 # Starting output fasta file with defline. Retrieving total length of sequence.
 open(F,"$faiFile") || die "Unable to open $faiFile";
 
 while(<F>){
-    if (/^(\S+)\t(\d+)\t(\d+)\t/) {
-	&maskSeq($1,$2,$3,$depthCutoff,$pileupFile,$outputFile);
+    if (/^(\S+)\t(\d+)\t/) {
+	&maskSeq($1,$2,$depthCutoff,$pileupFile,$outputFile);
     }
     else {
         die "faiFile not in correct format.";
@@ -31,13 +30,10 @@ while(<F>){
 close F;
 
 sub maskSeq {
-    my ($seq,$startPos,$endPos,$depthCutoff,$pileup,$outputFile) = @_;
-    if ($startPos > $endPos) {
-	die "Starting position greater than ending position";
-    }
+    my ($seq,$length,$depthCutoff,$pileup,$outputFile) = @_;
     open (P,"$pileup") || die "Unable to open $pileup";
     open(O,">>$outputFile") || die "Unable to open $outputFile";
-    my $currentPos = $startPos;
+    my $currentPos = 1;
     my $processedSeq = 0;
     my ($coveredPos,$nuc,$cov);
     while(<P>) {
@@ -45,26 +41,26 @@ sub maskSeq {
         if(/^(\S+)\t(\d+)\t(\w)\t(\d)/){
             if ($1 eq $seq) {
 	        print O ">$1\n" if ($processedSeq == 0);
-		die "Sequence $seq has a covered position $2 before the start of the sequence $startPos" if ($processedSeq == 0 && $startPos > $2);
 		$processedSeq = 1;
 		$coveredPos=$2;
 		$nuc = $3;
 		$cov = $4;
-		# Do I need to mask until start of sequence? I believe no.
 		until ($currentPos == $coveredPos) {
 		    print O "N";
 		    $currentPos++;
 	        }
 	        if ($cov >= $depthCutoff) {
 		    print O "$nuc";
+		    $currentPos++;
 		}
 		else {
 		    print O "N";
+		    $currentPos++;
 		}
 	    }
 	    else {
 	        if ($processedSeq == 1) {
-		    until ($currentPos > $endPos) {
+		    until ($currentPos > $length) {
 		        print O "N";
 		        $currentPos++;
 		    }
