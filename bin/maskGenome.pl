@@ -14,15 +14,14 @@ my ($pileupFile,$faiFile,$depthCutoff,$outputFile,$seqlen,$currentPos,$filePos,$
            );
 
 # Opening outputFile
-open(O,">$outputFile");
+
 
 # Starting output fasta file with defline. Retrieving total length of sequence.
 open(F,"$faiFile") || die "Unable to open $faiFile";
 
 while(<F>){
-    if (/^(\S+)\t(\d+)/) {
-        print O ">$1\n";
-        $seqlen = $2;
+    if (/^(\S+)\t(\d+)\t(\d+)\t/) {
+	&maskSeq($1,$2,$3,$depthCutoff,$pileupFile,$outputFile);
     }
     else {
         die "faiFile not in correct format.";
@@ -31,67 +30,52 @@ while(<F>){
 
 close F;
 
-# Finding first position in pileupFile
-open (P,"$pileupFile") || die "Unable to open $pileupFile";
-
-while(<P>) {
-    if(/^(\S+)\t(\d+)/){
-        $currentPos=$2;
+sub maskSeq {
+    my ($seq,$startPos,$endPos,$depthCutoff,$pileup,$outputFile) = @_;
+    if ($startPos > $endPos) {
+	die "Starting position greater than ending position";
     }
-    last;
-}
-
-close P;
-
-# Printing N's for uncovered bases before first covered position
-# 2 because this indexes at 1 not zero, and I do not want one for the first covered position
-for my $i (2..$currentPos){
-  print O "N";
-}
-
-# Using pileupFile, currentPos, and seqlen to create masked genome
-open (P,"$pileupFile") || die "Unable to open $pileupFile";
-
-while(<P>) {
-    if(/^\S+\t(\d+)\t(\w+)\t(\d+)/){
-        $filePos = $1;
-        $nuc = $2;
-        $cov = $3;
-        if ($currentPos eq $filePos) {
-            if ($cov >= $depthCutoff) {
-	        print O $nuc;
-	        $currentPos++;  
-            }
-            else {
-	        print O "N";
-	        $currentPos++;
+    open (P,"$pileup") || die "Unable to open $pileup";
+    open(O,">>$outputFile") || die "Unable to open $outputFile";
+    my $currentPos = $startPos;
+    my $processedSeq = 0;
+    my ($coveredPos,$nuc,$cov);
+    while(<P>) {
+	# Get Pile up data
+        if(/^(\S+)\t(\d+)\t(\w)\t(\d)/){
+            if ($1 eq $seq) {
+	        print O ">$1\n" if ($processedSeq == 0);
+		die "Sequence $seq has a covered position $2 before the start of the sequence $startPos" if ($processedSeq == 0 && $startPos > $2);
+		$processedSeq = 1;
+		$coveredPos=$2;
+		$nuc = $3;
+		$cov = $4;
+		# Do I need to mask until start of sequence? I believe no.
+		until ($currentPos == $coveredPos) {
+		    print O "N";
+		    $currentPos++;
+	        }
+	        if ($cov >= $depthCutoff) {
+		    print O "$nuc";
+		}
+		else {
+		    print O "N";
+		}
+	    }
+	    else {
+	        if ($processedSeq == 1) {
+		    until ($currentPos > $endPos) {
+		        print O "N";
+		        $currentPos++;
+		    }
+		    last;
+	    	}
             }
 	}
         else {
-            while($currentPos < $filePos){
-	        print O "N";
-	        $currentPos++;
-            } 
-            if ($cov >= $depthCutoff){
-	        print O $nuc;
-	        $currentPos++;  
-            }
-            else {
-	        print O "N";
-	        $currentPos++;  
-            }
+	    die "Improper pileup format";
         }
-  }
-  else {
-      die "$pileupFile in wrong format";
-  }
+    }
+    close P;
+    close O;
 }
-
-# Print N for every uncovered base remaining in genome
-while($currentPos ne $seqlen+1){
-    print O "N";
-    $currentPos++;
-}
-
-close P;
-close O;
