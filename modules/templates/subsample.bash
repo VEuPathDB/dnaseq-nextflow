@@ -14,3 +14,9 @@ if awk "BEGIN {exit !(\$frac >= 1)}"
 else
    samtools view -b -s \$frac $resultSortedBam > result_sorted_ds.bam
 fi
+
+lineCount=\$(wc -l result_sorted_ds.bam)
+
+if [\$lineCount = 0]; then
+    exit 1
+fi

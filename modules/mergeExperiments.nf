@@ -70,6 +70,7 @@ process processSeqVars {
   publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
 
   input:
     path snpFile
