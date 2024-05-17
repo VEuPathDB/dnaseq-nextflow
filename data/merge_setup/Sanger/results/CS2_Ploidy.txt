@@ -1,0 +1,2 @@
+na_sequence_id	chr_copy_number
+Pf3D7_02_v3	1
