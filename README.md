@@ -238,7 +238,7 @@ flowchart TD
 Workflows: processSingleExperiment=ps; loadSingleExperiment=ls; loadCNV=lc; mergeExperiments=me;
 
 | ps | me | Parameter | Value | Description |
-| -- | -- | -- | -- | --------- | ----- | ----------- |
+| -- | -- | -- | -- | --------- |
 | X  | X | outputDir | string path | Where you would like the output files to be stored |
 | X  |   | inputDir | string path | Path to the directory containing the strain specific fastqs and bam files (each strain has their own directory located inside the inputDir) |
 | X  |   | fromBAM | boolean | If true, samples will be retrieved from the strain specific bam files |
