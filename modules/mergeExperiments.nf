@@ -3,7 +3,7 @@ nextflow.enable.dsl=2
 
 
 process checkUniqueIds {
-  container = 'veupathdb/dnaseqanalysis'
+  container = 'veupathdb/dnaseqanalysis:v1.0.0'
   
   input:
     path 'consensus.fa.gz'
@@ -22,7 +22,7 @@ process checkUniqueIds {
 
 
 process mergeVcfs {
-  container = 'veupathdb/dnaseqanalysis'
+  container = 'veupathdb/dnaseqanalysis:v1.0.0'
   publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
 
   input:
@@ -43,7 +43,7 @@ process mergeVcfs {
 
 
 process makeSnpFile {
-  container = 'veupathdb/dnaseqanalysis'
+  container = 'veupathdb/dnaseqanalysis:v1.0.0'
 
   input:
     path 'merged.vcf.gz'
@@ -66,7 +66,7 @@ process makeSnpFile {
 
 
 process processSeqVars {
-  container = 'veupathdb/dnaseqanalysis'
+  container = 'veupathdb/dnaseqanalysis:v1.0.0'
   publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
@@ -183,7 +183,7 @@ process insertAllele {
 
 
 process snpEff {
-  container = 'veupathdb/dnaseqanalysis'
+  container = 'veupathdb/dnaseqanalysis:v1.0.0'
   publishDir "$params.outputDir", mode: "copy"
 
   input:
