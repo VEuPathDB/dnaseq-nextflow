@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-process hisat2Index {
+process bwaIndex {
   container = 'veupathdb/shortreadaligner:1.0.0'
 
   input:
@@ -10,40 +10,46 @@ process hisat2Index {
    val createIndex
 
   output:
-   path 'genomeIndex*.ht2', emit: ht2_files
-   val 'genomeIndex' , emit: genome_index_name
+   path 'genomeIndex.*', emit: index_files
+   path genomeFasta, emit: genome_fasta
 
   script:
     """
     set -euo pipefail
 
     if [ "$fromBam" = true ]; then
-        touch genomeIndex.1.ht2
+        # Create dummy index files for stub mode
+        touch genomeIndex.amb genomeIndex.ann genomeIndex.bwt genomeIndex.pac genomeIndex.sa
         samtools faidx $genomeFasta
     elif [ "$createIndex" = true ]; then
-        hisat2-build $genomeFasta genomeIndex
+        cp $genomeFasta genomeIndex
+        bwa index genomeIndex
         samtools faidx $genomeFasta
     else
-        TMP=$params.hisat2Index
-        FILES=\$TMP*
-        for f in \$FILES; do cp "\$f" "genomeIndex\${f#\$TMP}" ; done
+        TMP=$params.bwaIndex
+        cp \$TMP genomeIndex
+        cp \${TMP}.amb genomeIndex.amb
+        cp \${TMP}.ann genomeIndex.ann
+        cp \${TMP}.bwt genomeIndex.bwt
+        cp \${TMP}.pac genomeIndex.pac
+        cp \${TMP}.sa genomeIndex.sa
         samtools faidx $genomeFasta
     fi
     """
 
   stub:
     """
-    touch genomeIndex1.ht2
+    touch genomeIndex.amb genomeIndex.ann genomeIndex.bwt genomeIndex.pac genomeIndex.sa
     """
 }
 
-process hisat2 {
+process bwaMem {
     container = 'veupathdb/shortreadaligner:1.0.0'
 
     input:
       tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p)
-      val hisat2_index
-      path 'genomeIndex.*.ht2'
+      path indexFiles
+      path genomeFasta
       val fromBam
       val isPaired
 
@@ -57,26 +63,22 @@ process hisat2 {
       if [ "$fromBam" = true ]; then
           samtools view -bS $sampleFile | samtools sort - > result_sorted.bam
       elif [ "$isPaired" = true ]; then
-          mateAEncoding=\$(<mateAEncoding)
-          hisat2 --no-spliced-alignment \\
-              -k 1 \\
-              -p $params.hisat2Threads \\
-              -q --\$mateAEncoding \\
-              -x $hisat2_index \\
-              -1 $sample_1p \\
-              -2 $sample_2p  \\
+          bwa mem \\
+              -t $params.bwaThreads \\
+              -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
+              genomeIndex \\
+              $sample_1p \\
+              $sample_2p \\
               | samtools collate -o output.bam -
               samtools fixmate -m output.bam fix.bam
               samtools sort -o sort.bam fix.bam
               samtools markdup -r sort.bam result_sorted.bam
       else
-          mateAEncoding=\$(<mateAEncoding)
-          hisat2 --no-spliced-alignment \\
-              -k 1 \\
-              -p $params.hisat2Threads \\
-              -q --\$mateAEncoding \\
-              -x $hisat2_index \\
-              -U $sample_1p \\
+          bwa mem \\
+              -t $params.bwaThreads \\
+              -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
+              genomeIndex \\
+              $sample_1p \\
               | samtools collate -o output.bam -
               samtools fixmate -m output.bam fix.bam
               samtools sort -o sort.bam fix.bam

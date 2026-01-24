@@ -9,8 +9,8 @@ include { fastqc_check } from '../modules/preprocessing.nf'
 include { trimmomatic } from '../modules/preprocessing.nf'
 
 // Alignment
-include { hisat2Index } from '../modules/alignment.nf'
-include { hisat2 } from '../modules/alignment.nf'
+include { bwaIndex } from '../modules/alignment.nf'
+include { bwaMem } from '../modules/alignment.nf'
 include { reorderFasta } from '../modules/alignment.nf'
 include { subsample } from '../modules/alignment.nf'
 include { picard } from '../modules/alignment.nf'
@@ -54,7 +54,7 @@ workflow ps {
 
     genome_fasta_file = file(params.genomeFastaFile)
 
-    hisat2IndexResults = hisat2Index(genome_fasta_file, params.fromBAM, params.createIndex)
+    bwaIndexResults = bwaIndex(genome_fasta_file, params.fromBAM, params.createIndex)
 
     if(!params.local && !params.fromBAM) {
 
@@ -66,7 +66,7 @@ workflow ps {
 
         trimmomaticResults = trimmomatic(downloadFilesResults.files.join(fastqc_checkResults), params.fromBAM, downloadFilesResults.isPaired)
 
-        hisat2Results = hisat2(downloadFilesResults.files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, downloadFilesResults.isPaired)
+        bwaMemResults = bwaMem(downloadFilesResults.files.join(fastqc_checkResults).join(trimmomaticResults), bwaIndexResults.index_files, bwaIndexResults.genome_fasta, params.fromBAM, downloadFilesResults.isPaired)
     }
 
     else if(!params.local && params.fromBAM) {
@@ -79,7 +79,7 @@ workflow ps {
 
         trimmomaticResults = trimmomatic(files.join(fastqc_checkResults), params.fromBAM, 'NA')
 
-        hisat2Results = hisat2(files.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, 'NA')
+        bwaMemResults = bwaMem(files.join(fastqc_checkResults).join(trimmomaticResults), bwaIndexResults.index_files, bwaIndexResults.genome_fasta, params.fromBAM, 'NA')
 
     }
 
@@ -91,13 +91,13 @@ workflow ps {
 
         trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults), params.fromBAM, params.isPaired)
 
-        hisat2Results = hisat2(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), hisat2IndexResults.genome_index_name, hisat2IndexResults.ht2_files, params.fromBAM, params.isPaired)
+        bwaMemResults = bwaMem(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), bwaIndexResults.index_files, bwaIndexResults.genome_fasta, params.fromBAM, params.isPaired)
 
     }
 
-    reorderFastaResults = reorderFasta(hisat2Results.first(), genome_fasta_file)
+    reorderFastaResults = reorderFasta(bwaMemResults.first(), genome_fasta_file)
 
-    subsampleResults = subsample(hisat2Results)
+    subsampleResults = subsample(bwaMemResults)
 
     picardResults = picard(reorderFastaResults, subsampleResults)
 
