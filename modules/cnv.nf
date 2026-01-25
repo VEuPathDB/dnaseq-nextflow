@@ -216,7 +216,7 @@ process makeSnpDensity {
   container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(genomeMaskedFasta)
     tuple path(windows), path(genome)
 
   output:
@@ -225,12 +225,12 @@ process makeSnpDensity {
   script:
     """
     set -euo pipefail
-    zcat $varscanSnpsVcfGz | bedtools coverage \\
+    zcat $snpsVcfGz | bedtools coverage \\
       -a $windows \\
       -b stdin -sorted \\
       -g $genome \\
       -counts > snpDensity.bed
-    zcat $varscanIndelsVcfGz | bedtools coverage \\
+    zcat $indelsVcfGz | bedtools coverage \\
       -a $windows \\
       -b stdin -sorted \\
       -g $genome \\
@@ -276,7 +276,7 @@ process getHeterozygousSNPs {
   container = 'veupathdb/vcf_parser_cnv:1.0.0'
 
   input:
-    tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(genomeMaskedFasta)
 
   output:
     tuple val(sampleName), path('heterozygousSNPs.vcf')
@@ -284,7 +284,7 @@ process getHeterozygousSNPs {
   script:
     """
     set -euo pipefail
-    makeHeterozygosityPlot.py --vcfFile $varscanSnpsVcfGz
+    makeHeterozygosityPlot.py --vcfFile $snpsVcfGz
     """
 
   stub:

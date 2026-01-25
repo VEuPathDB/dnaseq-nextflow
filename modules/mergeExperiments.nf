@@ -92,7 +92,7 @@ process processSeqVars {
     path undoneStrainsFile
     val  organism_abbrev
     val  reference_strain
-    path varscanDir
+    path coverageDir
     path genomeFasta
     path consensusFasta
     path indelFile
@@ -120,7 +120,7 @@ process processSeqVars {
       --undone_strains_file $undoneStrainsFile \\
       --organism_abbrev $organism_abbrev \\
       --reference_strain $reference_strain  \\
-      --varscan_directory $varscanDir \\
+      --coverage_directory $coverageDir \\
       --genome $genomeFasta \\
       --consensus unzipped.fa \\
       --indelFile $indelFile \\

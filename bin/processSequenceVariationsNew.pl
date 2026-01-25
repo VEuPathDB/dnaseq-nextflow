@@ -18,12 +18,12 @@ use Sort::Naturally;
 use Set::CrossProduct;
 use experimental 'smartmatch';
 
-my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile, $varscanDirectory, $referenceStrain, $help, $debug, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile);
+my ($newSampleFile, $cacheFile, $cleanCache, $organismAbbrev, $undoneStrainsFile, $coverageDirectory, $referenceStrain, $help, $debug, $isLegacyVariations, $forcePositionCompute, $consensusFasta, $genomeFasta, $indelFile, $gtfFile);
 &GetOptions("new_sample_file=s"=> \$newSampleFile,
             "cache_file=s"=> \$cacheFile,
             "clean_cache"=> \$cleanCache,
             "undone_strains_file=s" => \$undoneStrainsFile,
-            "varscan_directory=s" => \$varscanDirectory,
+            "coverage_directory=s" => \$coverageDirectory,
             "is_legacy_variations" => \$isLegacyVariations,
             "organism_abbrev=s" =>\$organismAbbrev,
             "reference_strain=s" => \$referenceStrain,
@@ -58,7 +58,7 @@ if(!$cacheFileExists || $cleanCache) {
 
 }
 
-unless(-d $varscanDirectory) {
+unless(-d $coverageDirectory) {
   &usage("Required Directory Missing") unless($isLegacyVariations);
 }
 
@@ -81,9 +81,9 @@ open($snpFh, "> $snpOutputFile") or die "Cannot open file $snpOutputFile for wri
 open($alleleFh, "> $alleleOutputFile") or die "Cannot open file $alleleOutputFile for writing: $!";
 open($productFh, "> $productOutputFile") or die "Cannot open file $productOutputFile for writing: $!";
 
-my $strainVarscanFileHandles = &openVarscanFiles($varscanDirectory, $isLegacyVariations);
+my $strainCoverageFileHandles = &openCoverageFiles($coverageDirectory, $isLegacyVariations);
 
-my @allStrains = keys %{$strainVarscanFileHandles};
+my @allStrains = keys %{$strainCoverageFileHandles};
 
 my $transcriptSummary = &makeTranscriptSummary($gtfFile, $indelFile);
 
@@ -208,7 +208,7 @@ while ($i <= $greatestLocation) {
   my @variationStrains = map { $_->{strain} } @$variations;
     
   unless($isLegacyVariations) {
-      my $coverageVariations = &makeCoverageVariations(\@allStrains, \@variationStrains, $strainVarscanFileHandles, $referenceVariation);
+      my $coverageVariations = &makeCoverageVariations(\@allStrains, \@variationStrains, $strainCoverageFileHandles, $referenceVariation);
       my @coverageVariationStrains = map { $_->{strain} } @$coverageVariations;
       print STDERR "HAS COVERAGE VARIATIONS FOR THE FOLLOWING:  " . join(",", @coverageVariationStrains) . "\n" if($debug);
       push @$variations, @$coverageVariations;
@@ -263,7 +263,7 @@ close $snpFh;
 close $alleleFh;
 close $productFh;
 close OUT;
-&closeVarscanFiles($strainVarscanFileHandles);
+&closeCoverageFiles($strainCoverageFileHandles);
 
 # compare file sizes of old and new cache file                                                                                                                                                             
 my $newCacheCount = `cat $tempCacheFile | wc -l`;
@@ -293,7 +293,7 @@ sub usage {
     die "Error running program";
   }
 
-  print STDERR "usage:  processSequenceVariations.pl --new_sample_file=<FILE> --cache_file=<FILE> [--gusConfigFile=<GUS_CONFIG>] --undone_strains_file=<FILE> --varscan_directory=<DIR> --transcript_extdb_spec=s --organism_abbrev=s --reference_strain=s\n";
+  print STDERR "usage:  processSequenceVariations.pl --new_sample_file=<FILE> --cache_file=<FILE> [--gusConfigFile=<GUS_CONFIG>] --undone_strains_file=<FILE> --coverage_directory=<DIR> --transcript_extdb_spec=s --organism_abbrev=s --reference_strain=s\n";
   exit(0);
 }
 
@@ -313,7 +313,7 @@ sub printVariation {
 
 
 sub makeCoverageVariations {
-  my ($allStrains, $variationStrains, $strainVarscanFileHandles, $referenceVariation) = @_;
+  my ($allStrains, $variationStrains, $strainCoverageFileHandles, $referenceVariation) = @_;
 
   my @rv;
 
@@ -328,7 +328,7 @@ sub makeCoverageVariations {
     }
 
     unless($hasVariation) {
-      my $fileReader = $strainVarscanFileHandles->{$strain} ;
+      my $fileReader = $strainCoverageFileHandles->{$strain} ;
 
       my $variation = &makeCoverageVariation($fileReader, $referenceVariation, $strain);
 
@@ -433,7 +433,7 @@ sub snpLocationFromVariations {
 }
 
 
-sub closeVarscanFiles {
+sub closeCoverageFiles {
   my ($fhHash) = @_;
 
   foreach(keys %$fhHash) {
@@ -441,18 +441,18 @@ sub closeVarscanFiles {
   }
 }
 
-sub openVarscanFiles {
-  my ($varscanDirectory, $isLegacyVariations) = @_;
+sub openCoverageFiles {
+  my ($coverageDirectory, $isLegacyVariations) = @_;
 
   my %rv;
 
   return \%rv if($isLegacyVariations);
 
-  opendir(DIR, $varscanDirectory) or die "Cannot open directory $varscanDirectory for reading: $!";
+  opendir(DIR, $coverageDirectory) or die "Cannot open directory $coverageDirectory for reading: $!";
 
   while(my $file = readdir(DIR)) {
     my $reader;
-    my $fullPath = $varscanDirectory . "/$file";
+    my $fullPath = $coverageDirectory . "/$file";
 
     if($file =~ /(.+)\.coverage\.txt$/) {
       my $strain = $1;

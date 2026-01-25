@@ -27,7 +27,7 @@ workflow me {
     bigwigs = bw_qch.collectFile(storeDir: params.webServicesDir)
     bams = bam_qch.collectFile(storeDir: params.webServicesDir)
 
-    coverages = coverage_qch.collectFile(storeDir: params.varscan_directory)
+    coverages = coverage_qch.collectFile(storeDir: params.coverage_directory)
 
     combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
     combinedIndels = indels_qch.collectFile(name: 'indel.tsv')
@@ -40,7 +40,7 @@ workflow me {
 
     makeSnpFileResults = makeSnpFile(mergedVcf)
 
-    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
+    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.coverage_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
 
     addFeatureIdsToVariationResults = addFeatureIdsToVariation(processSeqVarsResults.variationFile, params.gusConfig)
 

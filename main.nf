@@ -89,7 +89,7 @@ workflow mergeExperiments {
     indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv')
     bam_qch = Channel.fromPath(params.inputDir + '/*.bam')
     bw_qch = Channel.fromPath(params.inputDir + '/*.bw')
-    coverage_qch = Channel.fromPath(params.varscanFilePath + '/*.coverage.txt')
+    coverage_qch = Channel.fromPath(params.coverageFilePath + '/*.coverage.txt')
   }
 
   else {

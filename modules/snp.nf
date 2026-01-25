@@ -1,88 +1,65 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-process mpileup {
+process freebayes {
   container = 'veupathdb/shortreadaligner:1.0.0'
 
-  publishDir "$params.outputDir", pattern: "result.pileup", mode: "copy", saveAs: { filename -> "${sampleName}.result.pileup" }
+  publishDir "$params.outputDir/freebayes", pattern: "${sampleName}.coverage.txt", mode: "copy"
 
   input:
-    tuple val(sampleName), path (resultSortedGatkBam), path(resultSortedGatkBamIndex)
+    tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    tuple val(sampleName), path('result.pileup')
-
-  script:
-    """
-    set -euo pipefail
-    samtools mpileup \\
-      -A \\
-      -f $genomeReorderedFasta \\
-      -B $resultSortedGatkBam > result.pileup 2>pileup.err
-    """
-
-  stub:
-    """
-    touch result.pileup
-    """
-
-}
-
-process varscan {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
-
-  publishDir "$params.outputDir/varscanCons", pattern: "${sampleName}.coverage.txt", mode: "copy"
-
-  input:
-    tuple val(sampleName), path (resultSortedGatkBam), path(resultSortedGatkBamIndex), path(resultPileup)
-    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
-
-  output:
-    tuple val(sampleName), path('varscan.snps.vcf.gz'), path('varscan.snps.vcf.gz.tbi'), path('varscan.indels.vcf.gz'), path('varscan.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
+    tuple val(sampleName), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
     path "${sampleName}.coverage.txt"
 
   script:
     """
     set -euo pipefail
 
-    JARPATH="/usr/local/VarScan.jar"
-    echo $sampleName >vcf_sample_name
+    # Run freebayes
+    freebayes \\
+      -f $genomeReorderedFasta \\
+      -p $params.ploidy \\
+      --min-coverage $params.minCoverage \\
+      --min-alternate-fraction $params.freebayesMinAltFraction \\
+      $resultSortedGatkBam > freebayes.vcf
 
-    java -jar \$JARPATH mpileup2snp $resultPileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqSnp >varscan.snps.vcf  2>varscan_snps.err
+    # Split into SNPs and indels
+    bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
+    bcftools view -v indels freebayes.vcf > freebayes.indels.vcf
 
-    java -jar \$JARPATH mpileup2indel $resultPileup --vcf-sample-list vcf_sample_name --output-vcf 1 --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqCons >varscan.indels.vcf  2> varscan_indels.err
+    # Compress and index
+    bgzip freebayes.snps.vcf
+    tabix -fp vcf freebayes.snps.vcf.gz
+    bgzip freebayes.indels.vcf
+    tabix -fp vcf freebayes.indels.vcf.gz
 
-    java -jar \$JARPATH mpileup2cns $resultPileup --p-value $params.varscanPValue --min-coverage $params.minCoverage --min-var-freq $params.varscanMinVarFreqCons > varscan.cons 2>varscan_cons.err
+    # Calculate coverage from BAM using samtools
+    samtools depth -a $resultSortedGatkBam | awk '{sum+=\$3; count++} END {print "Average_Coverage\\t" sum/count "\\nTotal_Positions\\t" count}' > ${sampleName}.coverage.txt
 
-    bgzip varscan.snps.vcf
-    tabix -fp vcf varscan.snps.vcf.gz
-    bgzip varscan.indels.vcf
-    tabix -fp vcf varscan.indels.vcf.gz
-
-    perl /usr/bin/parseVarscanToCoverage.pl \\
-        --file varscan.cons \\
-        --percentCutoff 60 \\
-        --coverageCutoff $params.minCoverage \\
-        --outputFile ${sampleName}.coverage.txt
+    # Create masked genome based on low coverage regions
+    samtools mpileup -f $genomeReorderedFasta -A -B $resultSortedGatkBam > temp.pileup
 
     perl /usr/bin/maskGenome.pl \\
-      -p $resultPileup \\
+      -p temp.pileup \\
       -f $genomeReorderedFastaIndex \\
       -dc $params.minCoverage \\
       -o masked.fa
 
     fold -w 60 masked.fa > genome_masked.fa
+    rm temp.pileup
     """
 
   stub:
     """
-    touch varscan.snps.vcf.gz
-    touch varscan.snps.vcf.gz.tbi
-    touch varscan.indels.vcf.gz
-    touch varscan.indels.vcf.gz.tbi
+    touch freebayes.snps.vcf.gz
+    touch freebayes.snps.vcf.gz.tbi
+    touch freebayes.indels.vcf.gz
+    touch freebayes.indels.vcf.gz.tbi
     touch genome_masked.fa
-    touch varscan.cons.gz
+    touch ${sampleName}.coverage.txt
     """
 }
 
@@ -90,35 +67,35 @@ process concatSnpsAndIndels {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(genomeMaskedFasta)
 
   output:
-    tuple val(sampleName), path('varscan.concat.vcf'), path('genome_masked.fa')
+    tuple val(sampleName), path('variants.concat.vcf'), path('genome_masked.fa')
 
   script:
     """
     set -euo pipefail
     bcftools concat \\
       -a \\
-      -o varscan.concat.vcf $varscanSnpsVcfGz $varscanIndelsVcfGz
+      -o variants.concat.vcf $snpsVcfGz $indelsVcfGz
     """
 
   stub:
     """
-    touch varscan.concat.vcf
+    touch variants.concat.vcf
     touch genome_masked.fa
     """
 
 }
 
-process makeCombinedVarscanIndex {
+process makeCombinedVariantIndex {
   container = 'veupathdb/dnaseqanalysis:1.0.0'
 
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz", mode: "copy"
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz.tbi", mode: "copy"
 
   input:
-    tuple val(sampleName), path(varscanConcatVcf), path(genomeMaskedFasta)
+    tuple val(sampleName), path(concatVcf), path(genomeMaskedFasta)
 
   output:
     tuple val(sampleName), path('*.concat.vcf.gz'), path('*.concat.vcf.gz.tbi'), path('genome_masked.fa')
@@ -126,15 +103,15 @@ process makeCombinedVarscanIndex {
   script:
     """
     set -euo pipefail
-    mv $varscanConcatVcf ${sampleName}.concat.vcf
+    mv $concatVcf ${sampleName}.concat.vcf
     bgzip ${sampleName}.concat.vcf
     tabix -fp vcf ${sampleName}.concat.vcf.gz
     """
 
   stub:
     """
-    touch varscan.concat.vcf.gz
-    touch varscan.concat.vcf.gz.tbi
+    touch ${sampleName}.concat.vcf.gz
+    touch ${sampleName}.concat.vcf.gz.tbi
     touch genome_masked.fa
     """
 
@@ -144,7 +121,7 @@ process filterIndels {
   container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path(varscanConcatVcfGz), path(varscanConcatVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi), path(genomeMaskedFasta)
 
   output:
     tuple val(sampleName), path('output.recode.vcf')
@@ -153,7 +130,7 @@ process filterIndels {
     """
     set -euo pipefail
     vcftools \\
-        --gzvcf $varscanConcatVcfGz \\
+        --gzvcf $concatVcfGz \\
         --keep-only-indels \\
         --out output \\
         --recode
@@ -221,7 +198,7 @@ process mergeVcfs {
 
 }
 
-process makeMergedVarscanIndex {
+process makeMergedVariantIndex {
   container = 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
@@ -255,7 +232,7 @@ process bcftoolsConsensus {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path(varscanConcatVcfGz), path(varscanConcatVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi), path(genomeMaskedFasta)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
@@ -266,7 +243,7 @@ process bcftoolsConsensus {
     set -euo pipefail
     bcftools consensus \\
       -I \\
-      -f $genomeMaskedFasta $varscanConcatVcfGz > cons.fa
+      -f $genomeMaskedFasta $concatVcfGz > cons.fa
     """
 
   stub:

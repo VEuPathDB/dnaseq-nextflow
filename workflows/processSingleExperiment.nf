@@ -17,14 +17,13 @@ include { picard } from '../modules/alignment.nf'
 include { gatk } from '../modules/alignment.nf'
 
 // SNP
-include { mpileup } from '../modules/snp.nf'
-include { varscan } from '../modules/snp.nf'
+include { freebayes } from '../modules/snp.nf'
 include { concatSnpsAndIndels } from '../modules/snp.nf'
-include { makeCombinedVarscanIndex } from '../modules/snp.nf'
+include { makeCombinedVariantIndex } from '../modules/snp.nf'
 include { filterIndels } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
-include { makeMergedVarscanIndex } from '../modules/snp.nf'
+include { makeMergedVariantIndex } from '../modules/snp.nf'
 include { bcftoolsConsensus } from '../modules/snp.nf'
 include { addSampleToDefline } from '../modules/snp.nf'
 
@@ -103,24 +102,22 @@ workflow ps {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    mpileupResults = mpileup(gatkResults, reorderFastaResults)
+    freebayesResults = freebayes(gatkResults, reorderFastaResults)
 
-    varscanResults = varscan(gatkResults.join(mpileupResults), reorderFastaResults)
+    concatSnpsAndIndelsResults = concatSnpsAndIndels(freebayesResults.vcf_files)
 
-    concatSnpsAndIndelsResults = concatSnpsAndIndels(varscanResults.vcf_files)
+    makeCombinedVariantIndexResults = makeCombinedVariantIndex(concatSnpsAndIndelsResults)
 
-    makeCombinedVarscanIndexResults = makeCombinedVarscanIndex(concatSnpsAndIndelsResults)
-
-    filterIndelsResults = filterIndels(makeCombinedVarscanIndexResults)
+    filterIndelsResults = filterIndels(makeCombinedVariantIndexResults)
 
     makeIndelTSV(filterIndelsResults)
 
     // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
-    mergeVcfsResults = mergeVcfs(makeCombinedVarscanIndexResults.count(), makeCombinedVarscanIndexResults.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
+    mergeVcfsResults = mergeVcfs(makeCombinedVariantIndexResults.count(), makeCombinedVariantIndexResults.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
 
-    makeMergedVarscanIndexResults = makeMergedVarscanIndex(mergeVcfsResults)
+    makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVarscanIndexResults, reorderFastaResults)
+    bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVariantIndexResults, reorderFastaResults)
 
     addSampleToDefline(bcftoolsConsensusResults)
 
@@ -142,13 +139,13 @@ workflow ps {
 
     normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics))
 
-    makeSnpDensityResults = makeSnpDensity(varscanResults.vcf_files, makeWindowFileResults)
+    makeSnpDensityResults = makeSnpDensity(freebayesResults.vcf_files, makeWindowFileResults)
 
     makeDensityBigwigsResults = makeDensityBigwigs(makeSnpDensityResults, reorderFastaResults)
 
     if (params.ploidy != 1) {
 
-      getHeterozygousSNPsResults = getHeterozygousSNPs(varscanResults.vcf_files)
+      getHeterozygousSNPsResults = getHeterozygousSNPs(freebayesResults.vcf_files)
 
       makeHeterozygousDensityBedResults = makeHeterozygousDensityBed(makeWindowFileResults, getHeterozygousSNPsResults)
 
