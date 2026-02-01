@@ -30,7 +30,6 @@ workflow me {
     coverages = coverage_qch.collectFile(storeDir: params.coverage_directory)
 
     combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
-    combinedIndels = indels_qch.collectFile(name: 'indel.tsv')
 
     checkUniqueIds(combinedFastagz)
 
@@ -40,7 +39,11 @@ workflow me {
 
     makeSnpFileResults = makeSnpFile(mergedVcf)
 
-    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.coverage_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
+    // Placeholder channels — wired to upstream transcript-prep process once it exists
+    transcriptDb = Channel.of(params.transcriptDb)
+    indelDb = Channel.of(params.indelDb)
+
+    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.reference_strain, params.coverage_directory, transcriptDb, indelDb, params.gtfFile, coverages, bigwigs, bams)
 
     addFeatureIdsToVariationResults = addFeatureIdsToVariation(processSeqVarsResults.variationFile, params.gusConfig)
 

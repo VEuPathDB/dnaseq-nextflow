@@ -90,12 +90,10 @@ process processSeqVars {
     path snpFile
     path cacheFile
     path undoneStrainsFile
-    val  organism_abbrev
     val  reference_strain
     path coverageDir
-    path genomeFasta
-    path consensusFasta
-    path indelFile
+    path transcriptDb
+    path indelDb
     path gtfFile
     path coverageComplete
     path bigwigsComplete
@@ -111,20 +109,15 @@ process processSeqVars {
     """
     set -euo pipefail
 
-    cp $consensusFasta unzipped.fa.gz;
-    gunzip unzipped.fa.gz;
-
-    perl /usr/bin/processSequenceVariationsNew.pl \\
-      --new_sample_file $snpFile \\
+    julia /usr/bin/processSequenceVariations.jl \\
+      --snp_file $snpFile \\
       --cache_file $cacheFile \\
       --undone_strains_file $undoneStrainsFile \\
-      --organism_abbrev $organism_abbrev \\
-      --reference_strain $reference_strain  \\
+      --reference_strain $reference_strain \\
       --coverage_directory $coverageDir \\
-      --genome $genomeFasta \\
-      --consensus unzipped.fa \\
-      --indelFile $indelFile \\
-      --gtfFile $gtfFile
+      --transcript_db $transcriptDb \\
+      --indel_db $indelDb \\
+      --gtf_file $gtfFile
 
     mv snpFeature.dat variationFeature.dat
     """

@@ -10,6 +10,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools default-jre python3 python tabix samtools perl default-jre unzip cpanminus bioperl libaio1 emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl openjdk-8-jdk libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
 
+ENV JULIA_VERSION=1.10.8
+RUN wget -q https://julialang-releases.github.io/pub/julia/${JULIA_VERSION}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
+    && tar xzf julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
+    && mv julia-${JULIA_VERSION} /opt/julia \
+    && rm julia-${JULIA_VERSION}-linux-x86_64.tar.gz
+ENV PATH=/opt/julia/bin:$PATH
+
+# Precompile SQLite.jl (only external dependency)
+RUN julia -e 'using Pkg; Pkg.add("SQLite"); using SQLite'
+
 WORKDIR /gusApp
 WORKDIR /gusApp/gus_home
 WORKDIR /gusApp/project_home
