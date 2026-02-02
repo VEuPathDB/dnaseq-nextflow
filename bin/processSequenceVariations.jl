@@ -12,6 +12,21 @@ using SQLite
 using Printf
 
 # ---------------------------------------------------------------------------
+# Global debug flag
+# ---------------------------------------------------------------------------
+
+global DEBUG = false
+
+"""
+    debug_log(msg...)
+
+Print debug message if DEBUG is enabled.
+"""
+function debug_log(msg...)
+    DEBUG && println(stderr, "[DEBUG] ", msg...)
+end
+
+# ---------------------------------------------------------------------------
 # CLI argument parsing (hand-rolled, no package dependency)
 # ---------------------------------------------------------------------------
 
@@ -137,6 +152,7 @@ Parse a GTF file, extracting CDS features. Returns:
   - per-transcript info dict
 """
 function parse_gtf(gtf_file::String)
+    debug_log("Parsing GTF file: ", gtf_file)
     # First pass: collect CDS entries grouped by transcript
     transcript_cds = Dict{String, Vector{Tuple{String,Int,Int,Int}}}()  # tid -> [(seq_id, start, end, strand)]
     transcript_order = String[]  # preserve first-seen order
@@ -203,6 +219,9 @@ function parse_gtf(gtf_file::String)
 
     # Sort all_intervals by (seq_id, start_pos) for binary search
     sort!(all_intervals; by = iv -> (iv.seq_id, iv.start_pos))
+
+    debug_log("GTF parsed: ", length(transcript_info), " transcripts, ",
+              length(all_intervals), " CDS intervals")
 
     (all_intervals, transcript_info)
 end
@@ -298,6 +317,7 @@ end
 """
 
 function precompute_frameshifts(indel_db::SQLite.DB, transcript_info::Dict{String,TranscriptInfo})
+    debug_log("Precomputing frameshift information...")
     # For each (strain, transcript) that has indels, compute running cumulative sum
     # and record first position where cumsum % 3 != 0
     fs_info = Dict{String, Dict{String, Tuple{Bool, Int}}}()
@@ -345,6 +365,10 @@ function precompute_frameshifts(indel_db::SQLite.DB, transcript_info::Dict{Strin
         end
     end
     flush_current()
+
+    # Count how many strain-transcript pairs have frameshifts
+    fs_count = sum(length(v) for v in values(fs_info))
+    debug_log("Frameshift precomputation complete: ", fs_count, " strain-transcript pairs with indels")
 
     fs_info
 end
@@ -488,6 +512,7 @@ end
 # ---------------------------------------------------------------------------
 
 function open_coverage_files(coverage_dir::String)
+    debug_log("Opening coverage files from: ", coverage_dir)
     readers = Dict{String, CoverageReader}()
     for fname in readdir(coverage_dir)
         if endswith(fname, ".coverage.txt")
@@ -496,6 +521,7 @@ function open_coverage_files(coverage_dir::String)
             readers[strain] = open_coverage_reader(path)
         end
     end
+    debug_log("Opened ", length(readers), " coverage files")
     readers
 end
 
@@ -943,8 +969,10 @@ function annotate_position(
 
         # Load transcript sequences if transcript changed
         if transcript_id != transcript_cache.current_transcript_id
+            debug_log("    Loading sequences for transcript: ", transcript_id)
             transcript_cache.current_transcript_id = transcript_id
             transcript_cache.current_transcript_seqs = load_transcript_sequences(ctx.transcript_db, transcript_id)
+            debug_log("    Loaded ", length(transcript_cache.current_transcript_seqs), " strain sequences")
         end
 
         # Compute reference codon/product
@@ -1375,16 +1403,24 @@ function process_single_position!(
     writers::OutputWriters,
     transcript_cache::TranscriptSequenceCache
 )
+    debug_log("Processing position: ", seq_id, ":", location)
+
     # Collect all variations at this position
     (variations, _) = collect_variations_at_position(
         cache_pf, snp_pf, seq_id, location, ctx.undone_strains
     )
 
     # Skip if empty batch
-    isempty(variations) && return false
+    if isempty(variations)
+        debug_log("  Skipping - no variations at this position")
+        return false
+    end
+    debug_log("  Found ", length(variations), " variations")
 
     # Annotate position
     annotation = annotate_position(seq_id, location, ctx, transcript_cache)
+    debug_log("  Annotation: is_coding=", annotation.is_coding,
+              ", transcript=", annotation.transcript_id)
 
     # Annotate each variation with coding info
     annotate_variations!(variations, annotation, ctx, transcript_cache)
@@ -1396,16 +1432,20 @@ function process_single_position!(
 
     # Add reference variation to the batch
     push!(variations, ref_variation)
+    debug_log("  Total variations including reference: ", length(variations))
 
     # Check if there is actual variation (more than one distinct allele)
     if !has_variation(variations)
+        debug_log("  Skipping - no actual variation (all same allele)")
         return false  # no variation, skip
     end
 
     # Fill coverage for strains not in the variation batch
     fill_coverage_gaps!(variations, annotation, seq_id, location, ctx)
+    debug_log("  After gap filling: ", length(variations), " variations")
 
     # Write outputs
+    debug_log("  Writing outputs...")
     write_cache_entries(writers.cache_fh, variations, ctx)
     write_snp_feature(writers.snp_fh, variations, annotation, seq_id, location, ctx.reference_strain)
     write_allele_and_product_files(writers.allele_fh, writers.product_fh, variations, annotation)
@@ -1458,13 +1498,24 @@ function main()
     # 1. Parse arguments
     args = parse_args(ARGS)
 
+    # Set global DEBUG flag if --debug is present
+    global DEBUG = haskey(args, "debug")
+    debug_log("Debug mode enabled")
+
     # 2. Initialize processing context
+    debug_log("Initializing processing context...")
     ctx = initialize_processing_context(args)
+    debug_log("Context initialized: ", length(ctx.all_strains), " strains, ",
+              length(ctx.cds_intervals), " CDS intervals")
 
     # 3. Open output writers
+    debug_log("Opening output files...")
     (writers, temp_cache_file) = open_output_writers(args["cache_file"])
 
     # 4. Open input files with peek
+    debug_log("Opening input files...")
+    debug_log("  Cache file: ", args["cache_file"])
+    debug_log("  SNP file: ", args["snp_file"])
     cache_pf = open_peeked(args["cache_file"])
     snp_pf = open_peeked(args["snp_file"])
 
@@ -1472,25 +1523,32 @@ function main()
     transcript_cache = TranscriptSequenceCache("", Dict{String,String}())
 
     # 6. Main processing loop
-    process_all_positions!(
+    debug_log("Starting main processing loop...")
+    processed_count = process_all_positions!(
         cache_pf, snp_pf, ctx, writers, transcript_cache
     )
+    debug_log("Processing complete. Total positions processed: ", processed_count)
 
     # 7. Close input files
+    debug_log("Closing input files...")
     close_peeked(cache_pf)
     close_peeked(snp_pf)
 
     # 8. Close output writers
+    debug_log("Closing output files...")
     close_output_writers(writers)
 
     # 9. Close processing context
+    debug_log("Closing processing context...")
     close_processing_context(ctx)
 
     # 10. Finalize files
+    debug_log("Finalizing output files...")
     finalize_output_files(
         args["cache_file"], temp_cache_file,
         args["snp_file"], args["undone_strains_file"]
     )
+    debug_log("Done!")
 end
 
 # ---------------------------------------------------------------------------
