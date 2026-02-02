@@ -1,14 +1,11 @@
 FROM ubuntu:focal
 
 # set environment variables
-ENV varscan_version 2.3.9
 ENV TABIX_VERSION 0.2.6
-
-ENV CLASSPATH /usr/local/VarScan.jar
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools default-jre python3 python tabix samtools perl default-jre unzip cpanminus bioperl libaio1 emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl openjdk-8-jdk libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools default-jre python3 python tabix samtools perl default-jre unzip cpanminus bioperl libaio1 emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl openjdk-8-jdk libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa freebayes && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
 
 ENV JULIA_VERSION=1.10.8
 RUN wget -q https://julialang-releases.github.io/pub/julia/${JULIA_VERSION}/julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
@@ -95,15 +92,14 @@ RUN export ORACLE_DBD_VER=1.83 \
     && make install
 WORKDIR /work
 
-# download software
+# download software and install perl modules
 WORKDIR /usr/local/
-RUN wget -O VarScan.jar https://sourceforge.net/projects/varscan/files/VarScan.v${varscan_version}.jar/download
 
 RUN cpanm Bio::Perl Bio::Seq Bio::Tools::GFF Bio::Coordinate::GeneMapper Bio::Coordinate::Pair Bio::Location::Simple Bio::Tools::CodonTable VCF DBD::Oracle DBI Set::CrossProduct Test2::V0
 
 WORKDIR /usr/bin/
 
-RUN wget https://snpeff.blob.core.windows.net/versions/snpEff_latest_core.zip \
+RUN wget https://snpeff-public.s3.amazonaws.com/versions/snpEff_latest_core.zip \
   && unzip snpEff_latest_core.zip \
   && cd snpEff \
   && rm snpEff.config
