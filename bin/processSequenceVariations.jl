@@ -533,6 +533,56 @@ function Variation()
 end
 
 # ---------------------------------------------------------------------------
+# Processing data structures for refactored main()
+# ---------------------------------------------------------------------------
+
+"""
+    ProcessingContext holds all read-only reference data and database connections.
+"""
+struct ProcessingContext
+    reference_strain::String
+    undone_strains::Set{String}
+    cds_intervals::Vector{CDSInterval}
+    transcript_info::Dict{String,TranscriptInfo}
+    transcript_db::SQLite.DB
+    indel_db::SQLite.DB
+    fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}  # frameshift info
+    coverage_readers::Dict{String, CoverageReader}
+    all_strains::Vector{String}
+end
+
+"""
+    OutputWriters encapsulates the four output file handles.
+"""
+struct OutputWriters
+    cache_fh::IOStream
+    snp_fh::IOStream
+    allele_fh::IOStream
+    product_fh::IOStream
+end
+
+"""
+    PositionAnnotation bundles all annotation data computed for a genomic position.
+"""
+struct PositionAnnotation
+    is_coding::Int
+    transcript_id::String
+    cds_number::Int
+    pos_in_cds::Int
+    pos_in_codon_val::Int
+    ref_codon::String
+    ref_product::String
+end
+
+"""
+    TranscriptSequenceCache explicitly manages mutable state for transcript sequence caching.
+"""
+mutable struct TranscriptSequenceCache
+    current_transcript_id::String
+    current_transcript_seqs::Dict{String,String}
+end
+
+# ---------------------------------------------------------------------------
 # Parse a cache line (20 columns in new format) into a Variation
 # Cache columns: sequence_source_id, location, strain, reference, base,
 #   coverage, percent, quality, pvalue, snp_source_id, is_coding,
@@ -644,23 +694,19 @@ function peek_sort_key(line::String)
 end
 
 # ---------------------------------------------------------------------------
-# Main processing
+# Resource management functions
 # ---------------------------------------------------------------------------
 
-function main()
-    args = parse_args(ARGS)
+"""
+    initialize_processing_context(args) -> ProcessingContext
 
-    snp_file = args["snp_file"]
-    cache_file = args["cache_file"]
-    undone_strains_file = args["undone_strains_file"]
-    coverage_dir = args["coverage_directory"]
-    transcript_db_path = args["transcript_db"]
-    indel_db_path = args["indel_db"]
-    gtf_file = args["gtf_file"]
-    reference_strain = args["reference_strain"]
-
+Initialize all read-only reference data and database connections.
+Loads undone strains, parses GTF, opens databases, precomputes frameshifts, opens coverage files.
+"""
+function initialize_processing_context(args)
     # Read undone strains
     undone_strains = Set{String}()
+    undone_strains_file = args["undone_strains_file"]
     if isfile(undone_strains_file)
         open(undone_strains_file, "r") do fh
             for line in eachline(fh)
@@ -671,19 +717,38 @@ function main()
     end
 
     # Parse GTF
-    (cds_intervals, transcript_info) = parse_gtf(gtf_file)
+    (cds_intervals, transcript_info) = parse_gtf(args["gtf_file"])
 
     # Open SQLite databases (read-only)
-    transcript_db = SQLite.DB(transcript_db_path; readonly=true)
-    indel_db = SQLite.DB(indel_db_path; readonly=true)
+    transcript_db = SQLite.DB(args["transcript_db"]; readonly=true)
+    indel_db = SQLite.DB(args["indel_db"]; readonly=true)
 
     # Precompute frameshift info
     fs_info = precompute_frameshifts(indel_db, transcript_info)
 
     # Open coverage files
-    coverage_readers = open_coverage_files(coverage_dir)
+    coverage_readers = open_coverage_files(args["coverage_directory"])
     all_strains = collect(keys(coverage_readers))
 
+    ProcessingContext(
+        args["reference_strain"],
+        undone_strains,
+        cds_intervals,
+        transcript_info,
+        transcript_db,
+        indel_db,
+        fs_info,
+        coverage_readers,
+        all_strains
+    )
+end
+
+"""
+    open_output_writers(cache_file) -> (OutputWriters, temp_cache_file)
+
+Creates output file handles and returns temp cache path.
+"""
+function open_output_writers(cache_file)
     # Determine output directory (same as cache file's directory)
     cache_dir = dirname(abspath(cache_file))
     temp_cache_file = joinpath(cache_dir, "cache.tmp")
@@ -697,456 +762,41 @@ function main()
     allele_fh = open(allele_output_file, "w")
     product_fh = open(product_output_file, "w")
 
-    # Open input files with peek
-    cache_pf = open_peeked(cache_file)
-    snp_pf = open_peeked(snp_file)
+    (OutputWriters(cache_fh, snp_fh, allele_fh, product_fh), temp_cache_file)
+end
 
-    # Sequence cache: cleared when transcript changes
-    current_transcript_id = ""
-    current_transcript_seqs = Dict{String,String}()
+"""
+    close_processing_context(ctx::ProcessingContext)
 
-    count = 0
-
-    # ---------------------------------------------------------------------------
-    # Main loop: sorted merge
-    # ---------------------------------------------------------------------------
-    while !cache_pf.exhausted || !snp_pf.exhausted
-        # Determine the next (seq_id, location) to process
-        cache_key = cache_pf.exhausted ? ("~", typemax(Int)) : peek_sort_key(cache_pf.line)
-        snp_key = snp_pf.exhausted ? ("~", typemax(Int)) : peek_sort_key(snp_pf.line)
-
-        # Pick the smaller key (seq_id first, then location)
-        if cache_key[1] < snp_key[1] || (cache_key[1] == snp_key[1] && cache_key[2] <= snp_key[2])
-            current_key = cache_key
-        else
-            current_key = snp_key
-        end
-
-        current_seq_id, current_location = current_key
-
-        # Collect all variations at this position
-        variations = Variation[]
-        cache_strains = Set{String}()
-
-        # Drain cache lines at this position
-        while !cache_pf.exhausted
-            k = peek_sort_key(cache_pf.line)
-            k[1] != current_seq_id && break
-            k[2] != current_location && break
-
-            v = parse_cache_line(cache_pf.line)
-            advance!(cache_pf)
-            isnothing(v) && continue
-
-            # Skip undone strains
-            if v.strain in undone_strains
-                continue
-            end
-
-            push!(variations, v)
-            push!(cache_strains, v.strain)
-        end
-
-        # Drain SNP lines at this position (skip strains already from cache)
-        while !snp_pf.exhausted
-            k = peek_sort_key(snp_pf.line)
-            k[1] != current_seq_id && break
-            k[2] != current_location && break
-
-            v = parse_snp_line(snp_pf.line)
-            advance!(snp_pf)
-            isnothing(v) && continue
-
-            # Skip if strain already present from cache
-            if v.strain in cache_strains
-                continue
-            end
-
-            push!(variations, v)
-        end
-
-        # Skip if empty batch
-        isempty(variations) && continue
-
-        # ---------------------------------------------------------------------------
-        # Annotate: CDS lookup
-        # ---------------------------------------------------------------------------
-        cds_hit = find_cds(cds_intervals, current_seq_id, current_location)
-
-        is_coding = 0
-        transcript_id = ""
-        cds_number = 0
-        pos_in_cds = 0
-        pos_in_codon_val = 0
-
-        if !isnothing(cds_hit)
-            is_coding = 1
-            transcript_id = cds_hit.transcript_id
-            cds_number = cds_hit.cds_number
-
-            tinfo = transcript_info[transcript_id]
-            pos_in_cds = compute_position_in_cds(tinfo, current_location, cds_number)
-            pos_in_codon_val = position_in_codon(pos_in_cds)
-        end
-
-        # Load transcript sequences if transcript changed
-        if is_coding == 1 && transcript_id != current_transcript_id
-            current_transcript_id = transcript_id
-            current_transcript_seqs = load_transcript_sequences(transcript_db, transcript_id)
-        end
-
-        # ---------------------------------------------------------------------------
-        # Compute reference codon/product
-        # ---------------------------------------------------------------------------
-        ref_codon = ""
-        ref_product = ""
-
-        if is_coding == 1
-            ref_seq = get(current_transcript_seqs, reference_strain, "")
-            if !isempty(ref_seq)
-                ref_codon = extract_codon(ref_seq, pos_in_cds)
-                ref_product = translate_codon(ref_codon)
-            end
-        end
-
-        # ---------------------------------------------------------------------------
-        # Annotate each variation with coding info
-        # ---------------------------------------------------------------------------
-        for v in variations
-            # Skip variations that already have position_in_codon set (from cache)
-            if v.position_in_codon != 0
-                # Already annotated (came from cache) — keep existing values
-                # but update is_coding/transcript if needed
-                continue
-            end
-
-            v.is_coding = is_coding
-            v.transcript = transcript_id
-            v.cds_number = cds_number
-
-            if is_coding == 1
-                v.position_in_cds = pos_in_cds
-                v.position_in_codon = pos_in_codon_val
-                v.reference_codon = ref_codon
-
-                # Get strain's sequence and compute adjusted position
-                strain_seq = get(current_transcript_seqs, v.strain, "")
-                if !isempty(strain_seq)
-                    # Compute position adjustment via indel DB
-                    shift = get_indel_shift(indel_db, transcript_id, v.strain, pos_in_cds)
-                    adjusted_pos = pos_in_cds + shift
-
-                    strain_codon = extract_codon(strain_seq, adjusted_pos)
-                    v.codon = strain_codon
-
-                    # Expand IUPAC and translate
-                    expanded = expand_codon(strain_codon)
-                    v.product = [translate_codon(c) for c in expanded]
-                else
-                    v.codon = "NNN"
-                    v.product = ["X"]
-                end
-            end
-        end
-
-        # ---------------------------------------------------------------------------
-        # Build reference variation record
-        # ---------------------------------------------------------------------------
-        ref_allele = variations[1].reference
-        # If reference field is empty (SNP-only lines), use the base from the first entry
-        if isempty(ref_allele)
-            ref_allele = variations[1].base
-        end
-
-        adjacent_snp_causes_product_difference = 0
-        if is_coding == 1
-            for v in variations
-                product_str = join(v.product, ":")
-                if product_str != ref_product
-                    adjacent_snp_causes_product_difference = 1
-                    break
-                end
-            end
-        end
-
-        # Mark has_nonsynonomous on each variation
-        for v in variations
-            if is_coding == 1
-                product_str = join(v.product, ":")
-                v.has_nonsynonomous = (product_str != ref_product) ? 1 : 0
-            end
-        end
-
-        ref_variation = Variation(
-            current_seq_id,
-            current_location,
-            reference_strain,
-            ref_allele,
-            ref_allele,       # base = reference allele
-            "", "",           # coverage, percent (empty for reference)
-            "", "",           # quality, pvalue
-            "",               # snp_source_id
-            is_coding,
-            pos_in_cds,
-            pos_in_codon_val,
-            0,                # downstream_of_frameshift (computed later)
-            transcript_id,
-            is_coding == 1 ? [ref_product] : String[],
-            ref_codon,
-            ref_codon,        # codon = ref_codon for reference
-            adjacent_snp_causes_product_difference,
-            cds_number,
-            1                 # matches_reference
-        )
-
-        # Add reference variation to the batch
-        push!(variations, ref_variation)
-
-        # ---------------------------------------------------------------------------
-        # Check if there is actual variation (more than one distinct allele)
-        # ---------------------------------------------------------------------------
-        alleles_set = Set(v.base for v in variations)
-        if length(alleles_set) <= 1
-            continue  # no variation, skip
-        end
-
-        # ---------------------------------------------------------------------------
-        # Fill coverage for strains not in the variation batch
-        # ---------------------------------------------------------------------------
-        variation_strains = Set(v.strain for v in variations)
-
-        for strain in all_strains
-            strain in variation_strains && continue
-
-            cr = coverage_readers[strain]
-            cov_result = get_coverage(cr, current_seq_id, current_location)
-            if !isnothing(cov_result)
-                cv = Variation()
-                cv.sequence_source_id = current_seq_id
-                cv.location = current_location
-                cv.strain = strain
-                cv.reference = ref_allele
-                cv.base = ref_allele
-                cv.coverage = cov_result[1]
-                cv.percent = cov_result[2]
-                cv.matches_reference = 1
-                cv.is_coding = is_coding
-                cv.transcript = transcript_id
-                cv.position_in_cds = pos_in_cds
-                cv.position_in_codon = pos_in_codon_val
-                cv.reference_codon = ref_codon
-                cv.codon = ref_codon
-                cv.product = is_coding == 1 ? [ref_product] : String[]
-                cv.has_nonsynonomous = adjacent_snp_causes_product_difference
-                cv.cds_number = cds_number
-                push!(variations, cv)
-            end
-        end
-
-        # ---------------------------------------------------------------------------
-        # Compute downstream_of_frameshift and write cache
-        # ---------------------------------------------------------------------------
-        for v in variations
-            if !isempty(v.transcript)
-                v.downstream_of_frameshift = check_downstream_of_frameshift(
-                    fs_info, v.strain, v.transcript, current_location)
-            else
-                v.downstream_of_frameshift = 0
-            end
-
-            # Skip reference strain in cache output
-            v.strain == reference_strain && continue
-
-            # matches_reference
-            v.matches_reference = (v.base == ref_allele) ? 1 : 0
-
-            # Write cache line (20 columns)
-            # sequence_source_id, location, strain, reference, base, coverage, percent,
-            # quality, pvalue, snp_source_id, is_coding, position_in_cds, position_in_codon,
-            # downstream_of_frameshift, transcript, product, reference_codon, codon,
-            # has_nonsynonomous, cds_number
-            product_str = join(v.product, ":")
-            write(cache_fh, join([
-                v.sequence_source_id,
-                string(v.location),
-                v.strain,
-                v.reference,
-                v.base,
-                v.coverage,
-                v.percent,
-                v.quality,
-                v.pvalue,
-                v.snp_source_id,
-                string(v.is_coding),
-                string(v.position_in_cds),
-                string(v.position_in_codon),
-                string(v.downstream_of_frameshift),
-                v.transcript,
-                product_str,
-                v.reference_codon,
-                v.codon,
-                string(v.has_nonsynonomous),
-                string(v.cds_number)
-            ], "\t"), "\n")
-        end
-
-        # ---------------------------------------------------------------------------
-        # Write SNP feature summary
-        # ---------------------------------------------------------------------------
-        # Columns: location, transcript_id, source_id, reference_strain, reference_na,
-        #   has_nonsynonymous_allele, major_allele, minor_allele, major_allele_count,
-        #   minor_allele_count, major_product, minor_product, distinct_strain_count,
-        #   distinct_allele_count, has_coding_mutation, total_allele_count,
-        #   has_stop_codon, ref_codon
-
-        allele_counts = Dict{String,Int}()
-        product_counts = Dict{String,Int}()
-        strain_set = Set{String}()
-        has_stop_codon = 0
-        total_allele_count = length(variations)
-
-        for v in variations
-            allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
-            strain_set |= Set([v.strain])
-
-            # Products are stored as colon-joined string in cache output;
-            # for SNP feature we split and count individual products
-            for p in v.product
-                product_counts[p] = get(product_counts, p, 0) + 1
-                p == "*" && (has_stop_codon = 1)
-            end
-        end
-
-        distinct_strain_count = length(strain_set)
-        distinct_allele_count = length(allele_counts)
-        has_nonsynonymous_allele = length(product_counts) > 1 ? 1 : 0
-
-        # Sort alleles: descending by count, then ascending alphabetically
-        sorted_alleles = sort(collect(keys(allele_counts));
-            by = a -> (-allele_counts[a], a))
-        sorted_products = sort(collect(keys(product_counts));
-            by = p -> (-product_counts[p], p))
-
-        major_allele = sorted_alleles[1]
-        minor_allele = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
-        major_allele_count = allele_counts[major_allele]
-        minor_allele_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
-
-        major_product = length(sorted_products) > 0 ? sorted_products[1] : ""
-        minor_product = length(sorted_products) > 1 ? sorted_products[2] : ""
-
-        write(snp_fh, join([
-            string(current_location),
-            transcript_id,
-            current_seq_id,
-            reference_strain,
-            ref_allele,
-            string(has_nonsynonymous_allele),
-            major_allele,
-            minor_allele,
-            string(major_allele_count),
-            string(minor_allele_count),
-            major_product,
-            minor_product,
-            string(distinct_strain_count),
-            string(distinct_allele_count),
-            string(is_coding),
-            string(total_allele_count),
-            string(has_stop_codon),
-            ref_codon
-        ], "\t"), "\n")
-
-        # ---------------------------------------------------------------------------
-        # Write allele and product files (only for coding variants)
-        # ---------------------------------------------------------------------------
-        if is_coding == 1
-            # Allele file: allele, distinct_strain_count, allele_count, average_coverage, average_read_percent
-            for allele in keys(allele_counts)
-                distinct_strains_for_allele = Set{String}()
-                allele_count = 0
-                sum_coverage = 0.0
-                sum_percent = 0.0
-
-                for v in variations
-                    v.base != allele && continue
-                    allele_count += 1
-                    push!(distinct_strains_for_allele, v.strain)
-                    # coverage and percent may be empty strings
-                    cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-                    pct = isempty(v.percent) ? 0.0 : parse(Float64, v.percent)
-                    sum_coverage += cov
-                    sum_percent += pct
-                end
-
-                avg_cov = allele_count > 0 ? sum_coverage / allele_count : 0.0
-                avg_pct = allele_count > 0 ? sum_percent / allele_count : 0.0
-
-                write(allele_fh, join([
-                    allele,
-                    string(length(distinct_strains_for_allele)),
-                    string(allele_count),
-                    @sprintf("%.2f", avg_cov),
-                    @sprintf("%.2f", avg_pct)
-                ], "\t"), "\n")
-            end
-
-            # Product file: codon, position_in_protein, transcript, count, product,
-            #   ref_location_cds, ref_location_protein, downstream_of_frameshift
-            #
-            # One row per expanded (non-ambiguous) codon per variant.
-            # Recount products across all variations for the count column.
-            all_product_counts = Dict{String,Int}()
-            for v in variations
-                for p in v.product
-                    all_product_counts[p] = get(all_product_counts, p, 0) + 1
-                end
-            end
-
-            for v in variations
-                isempty(v.codon) && continue
-
-                expanded_codons = expand_codon(v.codon)
-                for ec in expanded_codons
-                    product = translate_codon(ec)
-                    count = get(all_product_counts, product, 0)
-
-                    write(product_fh, join([
-                        ec,
-                        string(pos_in_codon_val),
-                        transcript_id,
-                        string(count),
-                        product,
-                        string(pos_in_cds),
-                        string(pos_in_codon_val),
-                        string(v.downstream_of_frameshift)
-                    ], "\t"), "\n")
-                end
-            end
-        end
-
-        count += 1
-        if count % 1000 == 0
-            @info "Processed $count SNPs"
-        end
-    end
-
-    # ---------------------------------------------------------------------------
-    # Close files and finalize
-    # ---------------------------------------------------------------------------
-    close(cache_fh)
-    close(snp_fh)
-    close(allele_fh)
-    close(product_fh)
-    close_peeked(cache_pf)
-    close_peeked(snp_pf)
-
-    for cr in values(coverage_readers)
+Closes coverage readers and databases.
+"""
+function close_processing_context(ctx::ProcessingContext)
+    for cr in values(ctx.coverage_readers)
         close_coverage_reader(cr)
     end
 
-    close(transcript_db)
-    close(indel_db)
+    close(ctx.transcript_db)
+    close(ctx.indel_db)
+end
 
+"""
+    close_output_writers(writers::OutputWriters)
+
+Closes all output file handles.
+"""
+function close_output_writers(writers::OutputWriters)
+    close(writers.cache_fh)
+    close(writers.snp_fh)
+    close(writers.allele_fh)
+    close(writers.product_fh)
+end
+
+"""
+    finalize_output_files(cache_file, temp_cache_file, snp_file, undone_strains_file)
+
+Renames temp cache, truncates consumed input files.
+"""
+function finalize_output_files(cache_file, temp_cache_file, snp_file, undone_strains_file)
     # Rename temp cache to final cache
     if isfile(cache_file)
         rm(cache_file)
@@ -1158,6 +808,689 @@ function main()
 
     # Truncate the undone strains file (consumed)
     open(undone_strains_file, "w") do fh end
+end
+
+# ---------------------------------------------------------------------------
+# Position processing functions
+# ---------------------------------------------------------------------------
+
+"""
+    determine_next_position(cache_pf, snp_pf) -> (seq_id, location) or nothing
+
+Determines which position to process next from peeked files.
+Returns nothing if both files are exhausted.
+"""
+function determine_next_position(cache_pf::PeekedFile, snp_pf::PeekedFile)
+    if cache_pf.exhausted && snp_pf.exhausted
+        return nothing
+    end
+
+    # Determine the next (seq_id, location) to process
+    cache_key = cache_pf.exhausted ? ("~", typemax(Int)) : peek_sort_key(cache_pf.line)
+    snp_key = snp_pf.exhausted ? ("~", typemax(Int)) : peek_sort_key(snp_pf.line)
+
+    # Pick the smaller key (seq_id first, then location)
+    if cache_key[1] < snp_key[1] || (cache_key[1] == snp_key[1] && cache_key[2] <= snp_key[2])
+        cache_key
+    else
+        snp_key
+    end
+end
+
+"""
+    collect_variations_at_position(cache_pf, snp_pf, seq_id, location, undone_strains)
+        -> (variations, cache_strains)
+
+Drains cache and SNP files for current position.
+Filters undone strains.
+"""
+function collect_variations_at_position(
+    cache_pf::PeekedFile,
+    snp_pf::PeekedFile,
+    current_seq_id::String,
+    current_location::Int,
+    undone_strains::Set{String}
+)
+    variations = Variation[]
+    cache_strains = Set{String}()
+
+    # Drain cache lines at this position
+    while !cache_pf.exhausted
+        k = peek_sort_key(cache_pf.line)
+        k[1] != current_seq_id && break
+        k[2] != current_location && break
+
+        v = parse_cache_line(cache_pf.line)
+        advance!(cache_pf)
+        isnothing(v) && continue
+
+        # Skip undone strains
+        if v.strain in undone_strains
+            continue
+        end
+
+        push!(variations, v)
+        push!(cache_strains, v.strain)
+    end
+
+    # Drain SNP lines at this position (skip strains already from cache)
+    while !snp_pf.exhausted
+        k = peek_sort_key(snp_pf.line)
+        k[1] != current_seq_id && break
+        k[2] != current_location && break
+
+        v = parse_snp_line(snp_pf.line)
+        advance!(snp_pf)
+        isnothing(v) && continue
+
+        # Skip if strain already present from cache
+        if v.strain in cache_strains
+            continue
+        end
+
+        push!(variations, v)
+    end
+
+    (variations, cache_strains)
+end
+
+"""
+    has_variation(variations) -> bool
+
+Checks if there's actual variation (>1 distinct allele).
+"""
+function has_variation(variations::Vector{Variation})
+    alleles_set = Set(v.base for v in variations)
+    length(alleles_set) > 1
+end
+
+# ---------------------------------------------------------------------------
+# Annotation logic functions
+# ---------------------------------------------------------------------------
+
+"""
+    annotate_position(seq_id, location, ctx, transcript_cache) -> PositionAnnotation
+
+CDS lookup, position in CDS/codon computation.
+Loads transcript sequences, computes reference codon/product.
+Updates transcript_cache if transcript changes.
+"""
+function annotate_position(
+    seq_id::String,
+    location::Int,
+    ctx::ProcessingContext,
+    transcript_cache::TranscriptSequenceCache
+)
+    # CDS lookup
+    cds_hit = find_cds(ctx.cds_intervals, seq_id, location)
+
+    is_coding = 0
+    transcript_id = ""
+    cds_number = 0
+    pos_in_cds = 0
+    pos_in_codon_val = 0
+    ref_codon = ""
+    ref_product = ""
+
+    if !isnothing(cds_hit)
+        is_coding = 1
+        transcript_id = cds_hit.transcript_id
+        cds_number = cds_hit.cds_number
+
+        tinfo = ctx.transcript_info[transcript_id]
+        pos_in_cds = compute_position_in_cds(tinfo, location, cds_number)
+        pos_in_codon_val = position_in_codon(pos_in_cds)
+
+        # Load transcript sequences if transcript changed
+        if transcript_id != transcript_cache.current_transcript_id
+            transcript_cache.current_transcript_id = transcript_id
+            transcript_cache.current_transcript_seqs = load_transcript_sequences(ctx.transcript_db, transcript_id)
+        end
+
+        # Compute reference codon/product
+        ref_seq = get(transcript_cache.current_transcript_seqs, ctx.reference_strain, "")
+        if !isempty(ref_seq)
+            ref_codon = extract_codon(ref_seq, pos_in_cds)
+            ref_product = translate_codon(ref_codon)
+        end
+    end
+
+    PositionAnnotation(
+        is_coding,
+        transcript_id,
+        cds_number,
+        pos_in_cds,
+        pos_in_codon_val,
+        ref_codon,
+        ref_product
+    )
+end
+
+"""
+    annotate_variations!(variations, annotation, ctx, transcript_cache)
+
+Annotates each variation with coding info.
+Mutates variation records in place.
+"""
+function annotate_variations!(
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    ctx::ProcessingContext,
+    transcript_cache::TranscriptSequenceCache
+)
+    for v in variations
+        # Skip variations that already have position_in_codon set (from cache)
+        if v.position_in_codon != 0
+            # Already annotated (came from cache) — keep existing values
+            continue
+        end
+
+        v.is_coding = annotation.is_coding
+        v.transcript = annotation.transcript_id
+        v.cds_number = annotation.cds_number
+
+        if annotation.is_coding == 1
+            v.position_in_cds = annotation.pos_in_cds
+            v.position_in_codon = annotation.pos_in_codon_val
+            v.reference_codon = annotation.ref_codon
+
+            # Get strain's sequence and compute adjusted position
+            strain_seq = get(transcript_cache.current_transcript_seqs, v.strain, "")
+            if !isempty(strain_seq)
+                # Compute position adjustment via indel DB
+                shift = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
+                adjusted_pos = annotation.pos_in_cds + shift
+
+                strain_codon = extract_codon(strain_seq, adjusted_pos)
+                v.codon = strain_codon
+
+                # Expand IUPAC and translate
+                expanded = expand_codon(strain_codon)
+                v.product = [translate_codon(c) for c in expanded]
+            else
+                v.codon = "NNN"
+                v.product = ["X"]
+            end
+        end
+    end
+end
+
+"""
+    build_reference_variation(variations, annotation, seq_id, location, reference_strain)
+        -> Variation
+
+Creates reference strain variation record.
+Computes adjacent_snp_causes_product_difference.
+"""
+function build_reference_variation(
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    seq_id::String,
+    location::Int,
+    reference_strain::String
+)
+    ref_allele = variations[1].reference
+    # If reference field is empty (SNP-only lines), use the base from the first entry
+    if isempty(ref_allele)
+        ref_allele = variations[1].base
+    end
+
+    adjacent_snp_causes_product_difference = 0
+    if annotation.is_coding == 1
+        for v in variations
+            product_str = join(v.product, ":")
+            if product_str != annotation.ref_product
+                adjacent_snp_causes_product_difference = 1
+                break
+            end
+        end
+    end
+
+    # Mark has_nonsynonomous on each variation
+    for v in variations
+        if annotation.is_coding == 1
+            product_str = join(v.product, ":")
+            v.has_nonsynonomous = (product_str != annotation.ref_product) ? 1 : 0
+        end
+    end
+
+    Variation(
+        seq_id,
+        location,
+        reference_strain,
+        ref_allele,
+        ref_allele,       # base = reference allele
+        "", "",           # coverage, percent (empty for reference)
+        "", "",           # quality, pvalue
+        "",               # snp_source_id
+        annotation.is_coding,
+        annotation.pos_in_cds,
+        annotation.pos_in_codon_val,
+        0,                # downstream_of_frameshift (computed later)
+        annotation.transcript_id,
+        annotation.is_coding == 1 ? [annotation.ref_product] : String[],
+        annotation.ref_codon,
+        annotation.ref_codon,        # codon = ref_codon for reference
+        adjacent_snp_causes_product_difference,
+        annotation.cds_number,
+        1                 # matches_reference
+    )
+end
+
+"""
+    fill_coverage_gaps!(variations, annotation, seq_id, location, ctx)
+
+Adds coverage-only variations for missing strains.
+Appends to variations vector.
+"""
+function fill_coverage_gaps!(
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    seq_id::String,
+    location::Int,
+    ctx::ProcessingContext
+)
+    # Get reference allele
+    ref_allele = variations[1].reference
+    if isempty(ref_allele)
+        ref_allele = variations[1].base
+    end
+
+    # Find adjacent_snp_causes_product_difference from reference variation (last one added)
+    adjacent_snp_causes_product_difference = 0
+    for v in variations
+        if v.strain == ctx.reference_strain
+            adjacent_snp_causes_product_difference = v.has_nonsynonomous
+            break
+        end
+    end
+
+    variation_strains = Set(v.strain for v in variations)
+
+    for strain in ctx.all_strains
+        strain in variation_strains && continue
+
+        cr = ctx.coverage_readers[strain]
+        cov_result = get_coverage(cr, seq_id, location)
+        if !isnothing(cov_result)
+            cv = Variation()
+            cv.sequence_source_id = seq_id
+            cv.location = location
+            cv.strain = strain
+            cv.reference = ref_allele
+            cv.base = ref_allele
+            cv.coverage = cov_result[1]
+            cv.percent = cov_result[2]
+            cv.matches_reference = 1
+            cv.is_coding = annotation.is_coding
+            cv.transcript = annotation.transcript_id
+            cv.position_in_cds = annotation.pos_in_cds
+            cv.position_in_codon = annotation.pos_in_codon_val
+            cv.reference_codon = annotation.ref_codon
+            cv.codon = annotation.ref_codon
+            cv.product = annotation.is_coding == 1 ? [annotation.ref_product] : String[]
+            cv.has_nonsynonomous = adjacent_snp_causes_product_difference
+            cv.cds_number = annotation.cds_number
+            push!(variations, cv)
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Output writing functions
+# ---------------------------------------------------------------------------
+
+"""
+    write_cache_entries(cache_fh, variations, ctx)
+
+Computes downstream_of_frameshift and writes cache lines for all non-reference variations.
+"""
+function write_cache_entries(
+    cache_fh::IOStream,
+    variations::Vector{Variation},
+    ctx::ProcessingContext
+)
+    # Get reference allele for matches_reference computation
+    ref_allele = variations[1].reference
+    if isempty(ref_allele)
+        ref_allele = variations[1].base
+    end
+
+    for v in variations
+        if !isempty(v.transcript)
+            v.downstream_of_frameshift = check_downstream_of_frameshift(
+                ctx.fs_info, v.strain, v.transcript, v.location)
+        else
+            v.downstream_of_frameshift = 0
+        end
+
+        # Skip reference strain in cache output
+        v.strain == ctx.reference_strain && continue
+
+        # matches_reference
+        v.matches_reference = (v.base == ref_allele) ? 1 : 0
+
+        # Write cache line (20 columns)
+        product_str = join(v.product, ":")
+        write(cache_fh, join([
+            v.sequence_source_id,
+            string(v.location),
+            v.strain,
+            v.reference,
+            v.base,
+            v.coverage,
+            v.percent,
+            v.quality,
+            v.pvalue,
+            v.snp_source_id,
+            string(v.is_coding),
+            string(v.position_in_cds),
+            string(v.position_in_codon),
+            string(v.downstream_of_frameshift),
+            v.transcript,
+            product_str,
+            v.reference_codon,
+            v.codon,
+            string(v.has_nonsynonomous),
+            string(v.cds_number)
+        ], "\t"), "\n")
+    end
+end
+
+"""
+    write_snp_feature(snp_fh, variations, annotation, seq_id, location, reference_strain)
+
+Aggregates statistics and writes SNP feature summary line.
+"""
+function write_snp_feature(
+    snp_fh::IOStream,
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    seq_id::String,
+    location::Int,
+    reference_strain::String
+)
+    # Get reference allele
+    ref_allele = variations[1].reference
+    if isempty(ref_allele)
+        ref_allele = variations[1].base
+    end
+
+    allele_counts = Dict{String,Int}()
+    product_counts = Dict{String,Int}()
+    strain_set = Set{String}()
+    has_stop_codon = 0
+    total_allele_count = length(variations)
+
+    for v in variations
+        allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+        strain_set |= Set([v.strain])
+
+        # Products are stored as colon-joined string in cache output;
+        # for SNP feature we split and count individual products
+        for p in v.product
+            product_counts[p] = get(product_counts, p, 0) + 1
+            p == "*" && (has_stop_codon = 1)
+        end
+    end
+
+    distinct_strain_count = length(strain_set)
+    distinct_allele_count = length(allele_counts)
+    has_nonsynonymous_allele = length(product_counts) > 1 ? 1 : 0
+
+    # Sort alleles: descending by count, then ascending alphabetically
+    sorted_alleles = sort(collect(keys(allele_counts));
+        by = a -> (-allele_counts[a], a))
+    sorted_products = sort(collect(keys(product_counts));
+        by = p -> (-product_counts[p], p))
+
+    major_allele = sorted_alleles[1]
+    minor_allele = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
+    major_allele_count = allele_counts[major_allele]
+    minor_allele_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
+
+    major_product = length(sorted_products) > 0 ? sorted_products[1] : ""
+    minor_product = length(sorted_products) > 1 ? sorted_products[2] : ""
+
+    write(snp_fh, join([
+        string(location),
+        annotation.transcript_id,
+        seq_id,
+        reference_strain,
+        ref_allele,
+        string(has_nonsynonymous_allele),
+        major_allele,
+        minor_allele,
+        string(major_allele_count),
+        string(minor_allele_count),
+        major_product,
+        minor_product,
+        string(distinct_strain_count),
+        string(distinct_allele_count),
+        string(annotation.is_coding),
+        string(total_allele_count),
+        string(has_stop_codon),
+        annotation.ref_codon
+    ], "\t"), "\n")
+end
+
+"""
+    write_allele_and_product_files(allele_fh, product_fh, variations, annotation)
+
+Writes allele statistics and product details for coding variants.
+"""
+function write_allele_and_product_files(
+    allele_fh::IOStream,
+    product_fh::IOStream,
+    variations::Vector{Variation},
+    annotation::PositionAnnotation
+)
+    annotation.is_coding != 1 && return
+
+    # Allele file: allele, distinct_strain_count, allele_count, average_coverage, average_read_percent
+    allele_counts = Dict{String,Int}()
+    for v in variations
+        allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+    end
+
+    for allele in keys(allele_counts)
+        distinct_strains_for_allele = Set{String}()
+        allele_count = 0
+        sum_coverage = 0.0
+        sum_percent = 0.0
+
+        for v in variations
+            v.base != allele && continue
+            allele_count += 1
+            push!(distinct_strains_for_allele, v.strain)
+            # coverage and percent may be empty strings
+            cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
+            pct = isempty(v.percent) ? 0.0 : parse(Float64, v.percent)
+            sum_coverage += cov
+            sum_percent += pct
+        end
+
+        avg_cov = allele_count > 0 ? sum_coverage / allele_count : 0.0
+        avg_pct = allele_count > 0 ? sum_percent / allele_count : 0.0
+
+        write(allele_fh, join([
+            allele,
+            string(length(distinct_strains_for_allele)),
+            string(allele_count),
+            @sprintf("%.2f", avg_cov),
+            @sprintf("%.2f", avg_pct)
+        ], "\t"), "\n")
+    end
+
+    # Product file: codon, position_in_protein, transcript, count, product,
+    #   ref_location_cds, ref_location_protein, downstream_of_frameshift
+    #
+    # One row per expanded (non-ambiguous) codon per variant.
+    # Recount products across all variations for the count column.
+    all_product_counts = Dict{String,Int}()
+    for v in variations
+        for p in v.product
+            all_product_counts[p] = get(all_product_counts, p, 0) + 1
+        end
+    end
+
+    for v in variations
+        isempty(v.codon) && continue
+
+        expanded_codons = expand_codon(v.codon)
+        for ec in expanded_codons
+            product = translate_codon(ec)
+            count = get(all_product_counts, product, 0)
+
+            write(product_fh, join([
+                ec,
+                string(annotation.pos_in_codon_val),
+                annotation.transcript_id,
+                string(count),
+                product,
+                string(annotation.pos_in_cds),
+                string(annotation.pos_in_codon_val),
+                string(v.downstream_of_frameshift)
+            ], "\t"), "\n")
+        end
+    end
+end
+
+# ---------------------------------------------------------------------------
+# Main loop orchestration
+# ---------------------------------------------------------------------------
+
+"""
+    process_single_position!(cache_pf, snp_pf, seq_id, location, ctx, writers, transcript_cache) -> Bool
+
+Process a single genomic position through the full pipeline.
+Returns true if position was processed, false if skipped.
+"""
+function process_single_position!(
+    cache_pf::PeekedFile,
+    snp_pf::PeekedFile,
+    seq_id::String,
+    location::Int,
+    ctx::ProcessingContext,
+    writers::OutputWriters,
+    transcript_cache::TranscriptSequenceCache
+)
+    # Collect all variations at this position
+    (variations, _) = collect_variations_at_position(
+        cache_pf, snp_pf, seq_id, location, ctx.undone_strains
+    )
+
+    # Skip if empty batch
+    isempty(variations) && return false
+
+    # Annotate position
+    annotation = annotate_position(seq_id, location, ctx, transcript_cache)
+
+    # Annotate each variation with coding info
+    annotate_variations!(variations, annotation, ctx, transcript_cache)
+
+    # Build reference variation record
+    ref_variation = build_reference_variation(
+        variations, annotation, seq_id, location, ctx.reference_strain
+    )
+
+    # Add reference variation to the batch
+    push!(variations, ref_variation)
+
+    # Check if there is actual variation (more than one distinct allele)
+    if !has_variation(variations)
+        return false  # no variation, skip
+    end
+
+    # Fill coverage for strains not in the variation batch
+    fill_coverage_gaps!(variations, annotation, seq_id, location, ctx)
+
+    # Write outputs
+    write_cache_entries(writers.cache_fh, variations, ctx)
+    write_snp_feature(writers.snp_fh, variations, annotation, seq_id, location, ctx.reference_strain)
+    write_allele_and_product_files(writers.allele_fh, writers.product_fh, variations, annotation)
+
+    true
+end
+
+"""
+    process_all_positions!(cache_pf, snp_pf, ctx, writers, transcript_cache) -> Int
+
+Main processing loop: sorted merge of cache and SNP files.
+Returns count of processed positions.
+"""
+function process_all_positions!(
+    cache_pf::PeekedFile,
+    snp_pf::PeekedFile,
+    ctx::ProcessingContext,
+    writers::OutputWriters,
+    transcript_cache::TranscriptSequenceCache
+)
+    count = 0
+
+    while !cache_pf.exhausted || !snp_pf.exhausted
+        # Determine the next (seq_id, location) to process
+        next_pos = determine_next_position(cache_pf, snp_pf)
+        isnothing(next_pos) && break
+
+        current_seq_id, current_location = next_pos
+
+        # Process this position
+        if process_single_position!(
+            cache_pf, snp_pf, current_seq_id, current_location,
+            ctx, writers, transcript_cache
+        )
+            count += 1
+            if count % 1000 == 0
+                @info "Processed $count SNPs"
+            end
+        end
+    end
+
+    count
+end
+
+# ---------------------------------------------------------------------------
+# Main processing
+# ---------------------------------------------------------------------------
+
+function main()
+    # 1. Parse arguments
+    args = parse_args(ARGS)
+
+    # 2. Initialize processing context
+    ctx = initialize_processing_context(args)
+
+    # 3. Open output writers
+    (writers, temp_cache_file) = open_output_writers(args["cache_file"])
+
+    # 4. Open input files with peek
+    cache_pf = open_peeked(args["cache_file"])
+    snp_pf = open_peeked(args["snp_file"])
+
+    # 5. Initialize transcript sequence cache
+    transcript_cache = TranscriptSequenceCache("", Dict{String,String}())
+
+    # 6. Main processing loop
+    process_all_positions!(
+        cache_pf, snp_pf, ctx, writers, transcript_cache
+    )
+
+    # 7. Close input files
+    close_peeked(cache_pf)
+    close_peeked(snp_pf)
+
+    # 8. Close output writers
+    close_output_writers(writers)
+
+    # 9. Close processing context
+    close_processing_context(ctx)
+
+    # 10. Finalize files
+    finalize_output_files(
+        args["cache_file"], temp_cache_file,
+        args["snp_file"], args["undone_strains_file"]
+    )
 end
 
 # ---------------------------------------------------------------------------
