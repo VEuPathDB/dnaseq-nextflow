@@ -97,7 +97,7 @@ process fastqc_check {
 }
 
 process trimmomatic {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container = 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
     tuple val(sampleName), path(sampleFile), path('mateAEncoding')
@@ -118,11 +118,11 @@ process trimmomatic {
         mateAEncoding=\$(<mateAEncoding)
 
         if [ "$params.trimmomaticAdaptorsFile" = "NA" ]; then
-            java org.usadellab.trimmomatic.TrimmomaticPE \\
+            java -jar /usr/share/java/trimmomatic.jar PE \\
                 -trimlog trimLog.txt $sampleFile -\$mateAEncoding \\
                 -baseout sample ILLUMINACLIP:/usr/local/bin/All_adaptors-PE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         else
-            java org.usadellab.trimmomatic.TrimmomaticPE \\
+            java -jar /usr/share/java/trimmomatic.jar PE \\
                 -trimlog trimLog.txt $sampleFile -\$mateAEncoding \\
                 -baseout sample ILLUMINACLIP:$params.trimmomaticAdaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         fi
@@ -131,11 +131,11 @@ process trimmomatic {
         mateAEncoding=\$(<mateAEncoding)
 
         if [ "$params.trimmomaticAdaptorsFile" = "NA" ]; then
-            java org.usadellab.trimmomatic.TrimmomaticSE \\
+            java -jar /usr/share/java/trimmomatic.jar SE \\
                 -trimlog trimLog.txt $sampleFile \\
                 -\$mateAEncoding sample_1P ILLUMINACLIP:/usr/local/bin/All_adaptors-PE.fa:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         else
-            java org.usadellab.trimmomatic.TrimmomaticSE \\
+            java -jar /usr/share/java/trimmomatic.jar SE \\
                 -trimlog trimLog.txt $sampleFile \\
                 -\$mateAEncoding sample_1P ILLUMINACLIP:$params.trimmomaticAdaptorsFile:2:30:10 LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:20
         fi

@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process bwaIndex {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container = 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
    path genomeFasta
@@ -44,7 +44,7 @@ process bwaIndex {
 }
 
 process bwaMem {
-    container = 'veupathdb/shortreadaligner:1.0.0'
+  container = 'veupathdb/dnaseqanalysis:1.0.0'
 
     input:
       tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p)
@@ -198,7 +198,8 @@ process gatk {
     tuple val(sampleName), path(genomeReorderedDict), path(picardBam), path(picardBamIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.bam"), path("${sampleName}.bam.bai")
+    tuple val(sampleName), path("${sampleName}.bam"), path("${sampleName}.bam.bai"), emit: bamTuple
+    path("${sampleName}.bam"), emit: bamFiles
 
   script:
     """

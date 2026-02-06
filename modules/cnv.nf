@@ -28,7 +28,7 @@ process genomecov {
 }
 
 process bedGraphToBigWig {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container = 'veupathdb/shortreadaligner:1.1.0'
 
   publishDir "$params.outputDir", mode: "copy"
 
@@ -216,7 +216,7 @@ process makeSnpDensity {
   container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
     tuple path(windows), path(genome)
 
   output:
@@ -245,7 +245,7 @@ process makeSnpDensity {
 }
 
 process makeDensityBigwigs {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container = 'veupathdb/shortreadaligner:1.1.0'
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 

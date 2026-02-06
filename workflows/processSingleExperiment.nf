@@ -24,7 +24,7 @@ include { filterIndels } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
-include { bcftoolsConsensus } from '../modules/snp.nf'
+include { bcftoolsConsensusAndMask } from '../modules/snp.nf'
 include { addSampleToDefline } from '../modules/snp.nf'
 
 // CNV
@@ -102,7 +102,7 @@ workflow ps {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    freebayesResults = freebayes(gatkResults, reorderFastaResults)
+    freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
 
     concatSnpsAndIndelsResults = concatSnpsAndIndels(freebayesResults.vcf_files)
 
@@ -117,15 +117,15 @@ workflow ps {
 
     makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVariantIndexResults, reorderFastaResults)
+    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(makeCombinedVariantIndexResults, reorderFastaResults, gatkResults.bamFiles.collect())
 
-    addSampleToDefline(bcftoolsConsensusResults)
+    addSampleToDefline(bcftoolsConsensusAndMaskResults)
 
-    genomecovResults = genomecov(gatkResults, reorderFastaResults)
+    genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 
     bedgraphToBigWigResults = bedGraphToBigWig(reorderFastaResults, genomecovResults)
 
-    sortForCountingResults = sortForCounting(gatkResults)
+    sortForCountingResults = sortForCounting(gatkResults.bamTuple)
 
     htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
 
@@ -135,7 +135,7 @@ workflow ps {
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
-    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults)
+    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults.bamTuple)
 
     normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics))
 
