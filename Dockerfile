@@ -1,11 +1,11 @@
-FROM ubuntu:focal
+FROM ubuntu:noble
 
 # set environment variables
 ENV TABIX_VERSION 0.2.6
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools default-jre python3 python tabix samtools perl default-jre unzip cpanminus bioperl libaio1 emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl openjdk-8-jdk libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa freebayes trimmomatic && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools python3 tabix samtools perl default-jre unzip cpanminus bioperl libaio1t64 emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa trimmomatic openjdk-21-jre-headless && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
 
 WORKDIR /gusApp
 WORKDIR /gusApp/gus_home
@@ -88,6 +88,10 @@ WORKDIR /usr/local/
 RUN cpanm Bio::Perl Bio::Seq Bio::Tools::GFF Bio::Coordinate::GeneMapper Bio::Coordinate::Pair Bio::Location::Simple Bio::Tools::CodonTable VCF DBD::Oracle DBI Set::CrossProduct Test2::V0
 
 WORKDIR /usr/bin/
+
+RUN wget https://github.com/freebayes/freebayes/releases/download/v1.3.7/freebayes \
+  && chmod +x freebayes \
+  && mv freebayes /usr/local/bin/
 
 RUN wget https://snpeff-public.s3.amazonaws.com/versions/snpEff_latest_core.zip \
   && unzip snpEff_latest_core.zip \
