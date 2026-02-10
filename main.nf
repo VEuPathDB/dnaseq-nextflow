@@ -16,43 +16,38 @@ include { tests } from './modules/runTests.nf'
 
 workflow processSingleExperiment {
 
-  if(!params.input) {
-    throw new Exception("Missing parameter params.input")
+  if(!params.samplesheet) {
+    throw new Exception("Missing parameter params.samplesheet")
   }
-   
+
   if(!params.genomeFastaFile) {
     throw new Exception("Missing parameter params.genomeFastaFile")
   }
-  
+
   if(!params.gtfFile) {
     throw new Exception("Missing parameter params.gtfFile")
   }
-  
+
   if(!params.footprintFile) {
     throw new Exception("Missing parameter params.footprintFile")
   }
-  
-  if(!params.trimmomaticAdaptorsFile) {
-    throw new Exception("Missing parameter params.trimmomaticAdaptorsFile")
-  }
-  
-  if(params.fromBAM && params.local) {
-    samples_qch = Channel.fromPath([params.input + '/**/*.bam'])
-                    .map { file -> tuple(file.baseName, [file]) }
-  }
 
-  else if(params.isPaired && params.local) {
-    samples_qch = Channel.fromFilePairs([params.input + '/**/*_{1,2}.fastq', params.input + '/**/*_{1,2}.fastq.gz', params.input + '/**/*_{1,2}.fq.gz'])
-  }
+  // Parse samplesheet and create input channel
+  Channel
+    .fromPath(params.samplesheet)
+    .splitCsv(header: true)
+    .map { row ->
+      def sample_id = row.sample
+      def fastq_1 = file(row.fastq_1, checkIfExists: true)
+      def fastq_2 = row.fastq_2 ? file(row.fastq_2, checkIfExists: true) : null
+      def is_paired = row.fastq_2 ? true : false
 
-  else if(!params.local) {
-    samples_qch = Channel.fromPath(params.input).splitCsv(sep: '\t')
-  }
+      // Create file list based on pairing
+      def files = fastq_2 ? [fastq_1, fastq_2] : [fastq_1]
 
-  else {
-    samples_qch = Channel.fromPath([params.input + '/**/*.fastq', params.input + '/**/*.fastq.gz', params.input + '/**/*.fq.gz'])
-                                                                                             .map { file -> tuple(file.baseName, [file]) }
-  }
+      tuple(sample_id, files, is_paired)
+    }
+    .set { samples_qch }
 
   ps(samples_qch)
 
@@ -126,39 +121,38 @@ workflow runTests {
 
 workflow {
 
-  if(!params.input) {
-    throw new Exception("Missing parameter params.input")
+  if(!params.samplesheet) {
+    throw new Exception("Missing parameter params.samplesheet")
   }
-   
+
   if(!params.genomeFastaFile) {
     throw new Exception("Missing parameter params.genomeFastaFile")
   }
-  
+
   if(!params.gtfFile) {
     throw new Exception("Missing parameter params.gtfFile")
   }
-  
+
   if(!params.footprintFile) {
     throw new Exception("Missing parameter params.footprintFile")
   }
-  
-  if(!params.trimmomaticAdaptorsFile) {
-    throw new Exception("Missing parameter params.trimmomaticAdaptorsFile")
-  }
-  
-  if(params.fromBAM) {
-    samples_qch = Channel.fromPath([params.input + '/**/*.bam'])
-                    .map { file -> tuple(file.baseName, [file]) }
-  }
-  
-  else if(params.isPaired) {
-    samples_qch = Channel.fromFilePairs([params.input + '/**/*_{1,2}.fastq', params.input + '/**/*_{1,2}.fastq.gz', params.input + '/**/*_{1,2}.fq.gz'])
-  }
-  
-  else {
-    samples_qch = Channel.fromPath([params.input + '/**/*.fastq', params.input + '/**/*.fastq.gz', params.input + '/**/*.fq.gz'])
-                                                                                             .map { file -> tuple(file.baseName, [file]) }
-  }
+
+  // Parse samplesheet and create input channel
+  Channel
+    .fromPath(params.samplesheet)
+    .splitCsv(header: true)
+    .map { row ->
+      def sample_id = row.sample
+      def fastq_1 = file(row.fastq_1, checkIfExists: true)
+      def fastq_2 = row.fastq_2 ? file(row.fastq_2, checkIfExists: true) : null
+      def is_paired = row.fastq_2 ? true : false
+
+      // Create file list based on pairing
+      def files = fastq_2 ? [fastq_1, fastq_2] : [fastq_1]
+
+      tuple(sample_id, files, is_paired)
+    }
+    .set { samples_qch }
 
   ps(samples_qch)
 

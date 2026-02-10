@@ -5,7 +5,7 @@ ENV TABIX_VERSION 0.2.6
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools default-jre python3 python tabix samtools perl default-jre unzip cpanminus bioperl libaio1 emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl openjdk-8-jdk libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa freebayes && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools default-jre python3 python tabix samtools perl default-jre unzip cpanminus bioperl libaio1 emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl openjdk-8-jdk libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa freebayes trimmomatic && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
 
 ENV JULIA_VERSION=1.10.10
 RUN wget -q https://julialang-s3.julialang.org/bin/linux/x64/1.10/julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
@@ -112,5 +112,7 @@ RUN cd /usr/bin \
   && chmod +x *.sh
 
 ADD /testing/lib/*.pm /usr/lib/x86_64-linux-gnu/perl5/5.30/VEuPath/
+
+ADD /bin/All_adaptors* /usr/local/bin/
 
 WORKDIR /work

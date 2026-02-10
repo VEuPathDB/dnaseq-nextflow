@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process freebayes {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container = 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir/freebayes", pattern: "${sampleName}.coverage.txt", mode: "copy"
 
@@ -11,7 +11,7 @@ process freebayes {
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    tuple val(sampleName), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), path('genome_masked.fa'), emit: vcf_files
+    tuple val(sampleName), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
     path "${sampleName}.coverage.txt"
 
   script:
@@ -38,18 +38,6 @@ process freebayes {
 
     # Calculate coverage from BAM using samtools
     samtools depth -a $resultSortedGatkBam | awk '{sum+=\$3; count++} END {print "Average_Coverage\\t" sum/count "\\nTotal_Positions\\t" count}' > ${sampleName}.coverage.txt
-
-    # Create masked genome based on low coverage regions
-    samtools mpileup -f $genomeReorderedFasta -A -B $resultSortedGatkBam > temp.pileup
-
-    perl /usr/bin/maskGenome.pl \\
-      -p temp.pileup \\
-      -f $genomeReorderedFastaIndex \\
-      -dc $params.minCoverage \\
-      -o masked.fa
-
-    fold -w 60 masked.fa > genome_masked.fa
-    rm temp.pileup
     """
 
   stub:
@@ -58,7 +46,6 @@ process freebayes {
     touch freebayes.snps.vcf.gz.tbi
     touch freebayes.indels.vcf.gz
     touch freebayes.indels.vcf.gz.tbi
-    touch genome_masked.fa
     touch ${sampleName}.coverage.txt
     """
 }
@@ -67,10 +54,10 @@ process concatSnpsAndIndels {
   container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
 
   output:
-    tuple val(sampleName), path('variants.concat.vcf'), path('genome_masked.fa')
+    tuple val(sampleName), path('variants.concat.vcf')
 
   script:
     """
@@ -83,7 +70,6 @@ process concatSnpsAndIndels {
   stub:
     """
     touch variants.concat.vcf
-    touch genome_masked.fa
     """
 
 }
@@ -95,10 +81,10 @@ process makeCombinedVariantIndex {
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz.tbi", mode: "copy"
 
   input:
-    tuple val(sampleName), path(concatVcf), path(genomeMaskedFasta)
+    tuple val(sampleName), path(concatVcf)
 
   output:
-    tuple val(sampleName), path('*.concat.vcf.gz'), path('*.concat.vcf.gz.tbi'), path('genome_masked.fa')
+    tuple val(sampleName), path('*.concat.vcf.gz'), path('*.concat.vcf.gz.tbi')
 
   script:
     """
@@ -112,7 +98,6 @@ process makeCombinedVariantIndex {
     """
     touch ${sampleName}.concat.vcf.gz
     touch ${sampleName}.concat.vcf.gz.tbi
-    touch genome_masked.fa
     """
 
 }
@@ -121,7 +106,7 @@ process filterIndels {
   container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
 
   input:
-    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
 
   output:
     tuple val(sampleName), path('output.recode.vcf')
@@ -228,27 +213,38 @@ process makeMergedVariantIndex {
 
 }
 
-process bcftoolsConsensus {
-  container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+process bcftoolsConsensusAndMask {
+  container = 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
-    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+    path(bamFile)
 
   output:
-    tuple val(sampleName), path('cons.fa')
+    tuple val(sampleName), path('cons_masked.fa')
 
   script:
     """
     set -euo pipefail
+
     bcftools consensus \\
       -I \\
-      -f $genomeMaskedFasta $concatVcfGz > cons.fa
+      -f $genomeReorderedFasta $concatVcfGz > cons.fa
+
+    samtools mpileup -f cons.fa -A -B ${sampleName}.bam > temp.pileup
+
+    # Index the unmasked consensus
+    samtools faidx cons.fa
+
+    perl /usr/bin/maskGenome.pl -p temp.pileup -f cons.fa.fai -dc $params.minCoverage -o masked.fa
+    fold -w 60 masked.fa > cons_masked.fa
+    rm temp.pileup
     """
 
   stub:
     """
-    touch cons.fa
+    touch cons_masked.fa
     """
 
 }

@@ -2,8 +2,6 @@
 nextflow.enable.dsl=2
 
 // Preprocessing
-include { downloadBAMFromEBI } from '../modules/preprocessing.nf'
-include { downloadFiles } from '../modules/preprocessing.nf'
 include { fastqc } from '../modules/preprocessing.nf'
 include { fastqc_check } from '../modules/preprocessing.nf'
 include { trimmomatic } from '../modules/preprocessing.nf'
@@ -24,7 +22,7 @@ include { filterIndels } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
-include { bcftoolsConsensus } from '../modules/snp.nf'
+include { bcftoolsConsensusAndMask } from '../modules/snp.nf'
 include { addSampleToDefline } from '../modules/snp.nf'
 
 // CNV
@@ -53,46 +51,30 @@ workflow ps {
 
     genome_fasta_file = file(params.genomeFastaFile)
 
-    bwaIndexResults = bwaIndex(genome_fasta_file, params.fromBAM, params.createIndex)
+    bwaIndexResults = bwaIndex(genome_fasta_file)
 
-    if(!params.local && !params.fromBAM) {
+    // Extract is_paired and files channels separately
+    samples_qch
+      .map { sample_id, files, is_paired -> tuple(sample_id, files) }
+      .set { files_only_qch }
 
-        downloadFilesResults = downloadFiles(samples_qch)
+    samples_qch
+      .map { sample_id, files, is_paired -> tuple(sample_id, is_paired) }
+      .set { paired_info_qch }
 
-        fastqcResults = fastqc(downloadFilesResults.files, params.fromBAM)
+    fastqcResults = fastqc(files_only_qch)
 
-        fastqc_checkResults = fastqc_check(downloadFilesResults.files.join(fastqcResults), params.fromBAM)
+    fastqc_checkResults = fastqc_check(files_only_qch.join(fastqcResults))
 
-        trimmomaticResults = trimmomatic(downloadFilesResults.files.join(fastqc_checkResults), params.fromBAM, downloadFilesResults.isPaired)
+    trimmomaticResults = trimmomatic(
+      files_only_qch.join(fastqc_checkResults).join(paired_info_qch)
+    )
 
-        bwaMemResults = bwaMem(downloadFilesResults.files.join(fastqc_checkResults).join(trimmomaticResults), bwaIndexResults.index_files, bwaIndexResults.genome_fasta, params.fromBAM, downloadFilesResults.isPaired)
-    }
-
-    else if(!params.local && params.fromBAM) {
-
-        files = downloadBAMFromEBI(samples_qch)
-
-        fastqcResults = fastqc(files, params.fromBAM)
-
-        fastqc_checkResults = fastqc_check(files.join(fastqcResults), params.fromBAM)
-
-        trimmomaticResults = trimmomatic(files.join(fastqc_checkResults), params.fromBAM, 'NA')
-
-        bwaMemResults = bwaMem(files.join(fastqc_checkResults).join(trimmomaticResults), bwaIndexResults.index_files, bwaIndexResults.genome_fasta, params.fromBAM, 'NA')
-
-    }
-
-    else {
-
-        fastqcResults = fastqc(samples_qch, params.fromBAM)
-
-        fastqc_checkResults = fastqc_check(samples_qch.join(fastqcResults), params.fromBAM)
-
-        trimmomaticResults = trimmomatic(samples_qch.join(fastqc_checkResults), params.fromBAM, params.isPaired)
-
-        bwaMemResults = bwaMem(samples_qch.join(fastqc_checkResults).join(trimmomaticResults), bwaIndexResults.index_files, bwaIndexResults.genome_fasta, params.fromBAM, params.isPaired)
-
-    }
+    bwaMemResults = bwaMem(
+      files_only_qch.join(fastqc_checkResults).join(trimmomaticResults).join(paired_info_qch),
+      bwaIndexResults.index_files,
+      bwaIndexResults.genome_fasta
+    )
 
     reorderFastaResults = reorderFasta(bwaMemResults.first(), genome_fasta_file)
 
@@ -102,7 +84,7 @@ workflow ps {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    freebayesResults = freebayes(gatkResults, reorderFastaResults)
+    freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
 
     concatSnpsAndIndelsResults = concatSnpsAndIndels(freebayesResults.vcf_files)
 
@@ -117,15 +99,15 @@ workflow ps {
 
     makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    bcftoolsConsensusResults = bcftoolsConsensus(makeCombinedVariantIndexResults, reorderFastaResults)
+    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(makeCombinedVariantIndexResults, reorderFastaResults, gatkResults.bamFiles.collect())
 
-    addSampleToDefline(bcftoolsConsensusResults)
+    addSampleToDefline(bcftoolsConsensusAndMaskResults)
 
-    genomecovResults = genomecov(gatkResults, reorderFastaResults)
+    genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 
     bedgraphToBigWigResults = bedGraphToBigWig(reorderFastaResults, genomecovResults)
 
-    sortForCountingResults = sortForCounting(gatkResults)
+    sortForCountingResults = sortForCounting(gatkResults.bamTuple)
 
     htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
 
@@ -135,7 +117,7 @@ workflow ps {
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
-    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults)
+    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults.bamTuple)
 
     normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics))
 
