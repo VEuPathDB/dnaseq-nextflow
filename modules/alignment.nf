@@ -6,8 +6,6 @@ process bwaIndex {
 
   input:
    path genomeFasta
-   val fromBam
-   val createIndex
 
   output:
    path 'genomeIndex.*', emit: index_files
@@ -16,25 +14,9 @@ process bwaIndex {
   script:
     """
     set -euo pipefail
-
-    if [ "$fromBam" = true ]; then
-        # Create dummy index files for stub mode
-        touch genomeIndex.amb genomeIndex.ann genomeIndex.bwt genomeIndex.pac genomeIndex.sa
-        samtools faidx $genomeFasta
-    elif [ "$createIndex" = true ]; then
-        cp $genomeFasta genomeIndex
-        bwa index genomeIndex
-        samtools faidx $genomeFasta
-    else
-        TMP=$params.bwaIndex
-        cp \$TMP genomeIndex
-        cp \${TMP}.amb genomeIndex.amb
-        cp \${TMP}.ann genomeIndex.ann
-        cp \${TMP}.bwt genomeIndex.bwt
-        cp \${TMP}.pac genomeIndex.pac
-        cp \${TMP}.sa genomeIndex.sa
-        samtools faidx $genomeFasta
-    fi
+    cp $genomeFasta genomeIndex
+    bwa index genomeIndex
+    samtools faidx $genomeFasta
     """
 
   stub:
@@ -47,11 +29,9 @@ process bwaMem {
   container = 'veupathdb/dnaseqanalysis:1.0.0'
 
     input:
-      tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p)
+      tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p), val(isPaired)
       path indexFiles
       path genomeFasta
-      val fromBam
-      val isPaired
 
     output:
       tuple val(sampleName), path('result_sorted.bam')
@@ -60,9 +40,7 @@ process bwaMem {
       """
       set -euo pipefail
 
-      if [ "$fromBam" = true ]; then
-          samtools view -bS $sampleFile | samtools sort - > result_sorted.bam
-      elif [ "$isPaired" = true ]; then
+      if [ "$isPaired" = true ]; then
           bwa mem \\
               -t $params.bwaThreads \\
               -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
