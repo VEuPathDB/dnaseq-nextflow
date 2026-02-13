@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process bwaIndex {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
    path genomeFasta
@@ -26,7 +26,7 @@ process bwaIndex {
 }
 
 process bwaMem {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
     input:
       tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p), val(isPaired)
@@ -71,7 +71,7 @@ process bwaMem {
 }
 
 process reorderFasta {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple val(sampleName), path(resultSortedBam)
@@ -97,7 +97,7 @@ process reorderFasta {
 }
 
 process subsample {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple val(sampleName), path(resultSortedBam)
@@ -135,7 +135,7 @@ process subsample {
 }
 
 process picard {
-  container = 'broadinstitute/picard:2.25.0'
+  container 'broadinstitute/picard:2.25.0'
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -166,7 +166,7 @@ process picard {
 }
 
 process gatk {
-  container = 'broadinstitute/gatk3:3.8-1'
+  container 'broadinstitute/gatk3:3.8-1'
 
   publishDir "$params.outputDir", pattern: "*.bam", mode: "copy"
   publishDir "$params.outputDir", pattern: "*.bai", mode: "copy"

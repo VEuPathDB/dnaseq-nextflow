@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process genomecov {
-  container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkIndex)
@@ -28,7 +28,7 @@ process genomecov {
 }
 
 process bedGraphToBigWig {
-  container = 'veupathdb/shortreadaligner:1.1.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
 
@@ -54,7 +54,7 @@ process bedGraphToBigWig {
 }
 
 process sortForCounting {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
     input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
@@ -76,9 +76,9 @@ process sortForCounting {
 }
 
 process htseqCount {
-  container = 'biocontainers/htseq:v0.11.2-1-deb-py3_cv1'
+  container 'biocontainers/htseq:v0.11.2-1-deb-py3_cv1'
 
-  publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.counts" }
+  //publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.counts" }
 
   input:
     tuple val(sampleName), path(resultSortByNameBam)
@@ -105,7 +105,7 @@ process htseqCount {
 }
 
 process calculateTPM {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir/CNVs", mode: "copy"
 
@@ -133,7 +133,7 @@ process calculateTPM {
 }
 
 process makeWindowFile {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -159,7 +159,7 @@ process makeWindowFile {
 }
 
 process bedtoolsWindowed {
-  container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple path(windows), path(genome)
@@ -187,15 +187,15 @@ process bedtoolsWindowed {
 }
 
 process normaliseCoverage {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
-  publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
+  //publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
   input:
     tuple val(sampleName), path(windowedCoverage), path(summaryMetrics)
 
   output:
-    path 'normalisedCoverage.bed'
+    tuple val(sampleName), path('normalisedCoverage.bed')
 
   script:
     """
@@ -245,7 +245,7 @@ process makeSnpDensity {
 }
 
 process makeDensityBigwigs {
-  container = 'veupathdb/shortreadaligner:1.1.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
@@ -273,7 +273,7 @@ process makeDensityBigwigs {
 }
 
 process getHeterozygousSNPs {
-  container = 'veupathdb/vcf_parser_cnv:1.0.0'
+  container 'veupathdb/vcf_parser_cnv:1.0.0'
 
   input:
     tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(genomeMaskedFasta)
@@ -294,7 +294,7 @@ process getHeterozygousSNPs {
 }
 
 process makeHeterozygousDensityBed {
-  container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple path(windows), path(genome)
@@ -321,7 +321,7 @@ process makeHeterozygousDensityBed {
 }
 
 process makeHeterozygousDensityBigwig {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
 
@@ -346,7 +346,7 @@ process makeHeterozygousDensityBigwig {
 }
 
 process calculatePloidyAndGeneCNV {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
 

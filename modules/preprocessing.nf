@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process fastqc {
-  container = 'biocontainers/fastqc:v0.11.9_cv7'
+  container 'biocontainers/fastqc:v0.11.9_cv7'
 
   input:
     tuple val(sampleName), path(sampleFile)
@@ -24,7 +24,7 @@ process fastqc {
 }
 
 process fastqc_check {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple val(sampleName), path(sampleFile), path(fastqc_output)
@@ -46,7 +46,7 @@ process fastqc_check {
 }
 
 process trimmomatic {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
     tuple val(sampleName), path(sampleFile), path('mateAEncoding'), val(isPaired)

@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process freebayes {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir/freebayes", pattern: "${sampleName}.coverage.txt", mode: "copy"
 
@@ -51,7 +51,7 @@ process freebayes {
 }
 
 process concatSnpsAndIndels {
-  container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
     tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
@@ -75,7 +75,7 @@ process concatSnpsAndIndels {
 }
 
 process makeCombinedVariantIndex {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz", mode: "copy"
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz.tbi", mode: "copy"
@@ -103,7 +103,7 @@ process makeCombinedVariantIndex {
 }
 
 process filterIndels {
-  container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
+  container 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
 
   input:
     tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
@@ -129,7 +129,7 @@ process filterIndels {
 }
 
 process makeIndelTSV {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", pattern: "output.tsv", mode: "copy", saveAs: { filename -> "${sampleName}.indel.tsv" }
 
@@ -156,7 +156,7 @@ process makeIndelTSV {
 }
 
 process mergeVcfs {
-  container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
     val vcfCount
@@ -184,7 +184,7 @@ process mergeVcfs {
 }
 
 process makeMergedVariantIndex {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
 
@@ -214,7 +214,7 @@ process makeMergedVariantIndex {
 }
 
 process bcftoolsConsensusAndMask {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
     tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
@@ -250,7 +250,7 @@ process bcftoolsConsensusAndMask {
 }
 
 process addSampleToDefline {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
 
