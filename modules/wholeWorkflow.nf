@@ -5,7 +5,7 @@ nextflow.enable.dsl=2
 //-------------------- ProcessSingleExperiment --------------------------
 
 process downloadBAMFromEBI {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
   input:
     val id
 
@@ -17,7 +17,7 @@ process downloadBAMFromEBI {
 }
 
 process downloadFiles {
-  container = 'veupathdb/humann:1.0.0'
+  container 'veupathdb/humann:1.0.0'
   input:
     tuple val(strain), val(idList)
 
@@ -30,7 +30,7 @@ process downloadFiles {
 }
 
 process hisat2Index {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
    path genomeFasta  
@@ -51,7 +51,7 @@ process hisat2Index {
 }
 
 process fastqc {
-  container = 'biocontainers/fastqc:v0.11.9_cv7'
+  container 'biocontainers/fastqc:v0.11.9_cv7'
 
   input:
     tuple val(sampleName), path(sampleFile)
@@ -70,7 +70,7 @@ process fastqc {
 }
 
 process fastqc_check {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple val(sampleName), path(sampleFile), path(fastqc_output)
@@ -89,7 +89,7 @@ process fastqc_check {
 }
 
 process trimmomatic {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple val(sampleName), path(sampleFile), path('mateAEncoding') 
@@ -110,7 +110,7 @@ process trimmomatic {
 }
 
 process hisat2 {
-    container = 'veupathdb/shortreadaligner:1.0.0'
+    container 'veupathdb/shortreadaligner:1.0.0'
 
     input:
       tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p) 
@@ -132,7 +132,7 @@ process hisat2 {
 }
 
 process reorderFasta {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
    
   input:
     tuple val(sampleName), path(resultSortedBam)
@@ -152,7 +152,7 @@ process reorderFasta {
 }
 
 process subsample {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple val(sampleName), path(resultSortedBam)
@@ -170,7 +170,7 @@ process subsample {
 }
 
 process picard {
-  container = 'broadinstitute/picard:2.25.0'
+  container 'broadinstitute/picard:2.25.0'
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -193,7 +193,7 @@ process picard {
 }
 
 process gatk {
-  container = 'broadinstitute/gatk3:3.8-1'
+  container 'broadinstitute/gatk3:3.8-1'
 
   publishDir "$params.outputDir", pattern: "*.bam", mode: "copy" 
   publishDir "$params.outputDir", pattern: "*.bai", mode: "copy" 
@@ -217,7 +217,7 @@ process gatk {
 }
 
 process mpileup {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir", pattern: "result.pileup", mode: "copy", saveAs: { filename -> "${sampleName}.result.pileup" }
 
@@ -238,7 +238,7 @@ process mpileup {
 }
 
 process varscan {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir/varscanCons", pattern: "${sampleName}.coverage.txt", mode: "copy" 
 
@@ -265,7 +265,7 @@ process varscan {
 }
 
 process concatSnpsAndIndels {
-  container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
     tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta)
@@ -284,7 +284,7 @@ process concatSnpsAndIndels {
 }
 
 process makeCombinedVarscanIndex {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
   
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz", mode: "copy"
    publishDir "$params.outputDir", pattern: "*.concat.vcf.gz.tbi", mode: "copy"
@@ -307,7 +307,7 @@ process makeCombinedVarscanIndex {
 }
 
 process filterIndels {
-  container = 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
+  container 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
 
   input:
     tuple val(sampleName), path(varscanConcatVcfGz), path(varscanConcatVcfGzTbi), path(genomeMaskedFasta)
@@ -325,7 +325,7 @@ process filterIndels {
 }
 
 process makeIndelTSV {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", pattern: "output.tsv", mode: "copy", saveAs: { filename -> "${sampleName}.indel.tsv" }
 
@@ -345,7 +345,7 @@ process makeIndelTSV {
 }
 
 process mergeVcfs {
-  container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
     val vcfCount
@@ -364,7 +364,7 @@ process mergeVcfs {
 }
 
 process makeMergedVarscanIndex {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
 
@@ -385,7 +385,7 @@ process makeMergedVarscanIndex {
 }
 
 process bcftoolsConsensus {
-  container = 'biocontainers/bcftools:v1.9-1-deb_cv1'
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
     tuple val(sampleName), path(varscanConcatVcfGz), path(varscanConcatVcfGzTbi), path(genomeMaskedFasta)
@@ -404,7 +404,7 @@ process bcftoolsConsensus {
 }
 
 process addSampleToDefline {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
 
@@ -424,7 +424,7 @@ process addSampleToDefline {
 }
 
 process genomecov {
-  container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkIndex) 
@@ -444,7 +444,7 @@ process genomecov {
 }
 
 process bedGraphToBigWig {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy" 
 
@@ -465,7 +465,7 @@ process bedGraphToBigWig {
 }
 
 process sortForCounting {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
     input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
@@ -483,7 +483,7 @@ process sortForCounting {
 }
 
 process htseqCount {
-  container = 'biocontainers/htseq:v0.11.2-1-deb-py3_cv1'
+  container 'biocontainers/htseq:v0.11.2-1-deb-py3_cv1'
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.counts" }
 
@@ -504,7 +504,7 @@ process htseqCount {
 }
 
 process calculateTPM {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir/CNVs", mode: "copy"
 
@@ -525,7 +525,7 @@ process calculateTPM {
 }
 
 process makeWindowFile {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -545,7 +545,7 @@ process makeWindowFile {
 }
 
 process bedtoolsWindowed {
-  container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple path(windows), path(genome) 
@@ -564,7 +564,7 @@ process bedtoolsWindowed {
 }
 
 process normaliseCoverage {
-  container = 'veupathdb/shortreadaligner:1.0.0' 
+  container 'veupathdb/shortreadaligner:1.0.0' 
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
@@ -584,7 +584,7 @@ process normaliseCoverage {
 }
 
 process makeSnpDensity {
-  container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta) 
@@ -604,7 +604,7 @@ process makeSnpDensity {
 }
 
 process makeDensityBigwigs {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
@@ -626,7 +626,7 @@ process makeDensityBigwigs {
 }
 
 process getHeterozygousSNPs {
-  container = 'veupathdb/vcf_parser_cnv:1.0.0'
+  container 'veupathdb/vcf_parser_cnv:1.0.0'
 
   input:
     tuple val(sampleName), path(varscanSnpsVcfGz), path(varscanSnpsVcfGzTbi), path(varscanIndelsVcfGz), path(varscanIndelsVcfGzTbi), path(genomeMaskedFasta)
@@ -644,7 +644,7 @@ process getHeterozygousSNPs {
 }
 
 process makeHeterozygousDensityBed {
-  container = 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple path(windows), path(genome) 
@@ -663,7 +663,7 @@ process makeHeterozygousDensityBed {
 }
 
 process makeHeterozygousDensityBigwig {
-  container = 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
 
@@ -685,7 +685,7 @@ process makeHeterozygousDensityBigwig {
 }
 
 process calculatePloidyAndGeneCNV {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
   
@@ -738,7 +738,7 @@ process loadIndels {
 // ---------------- MergeExperiments -----------------------------------
 
 process checkUniqueIds {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
   
   input:
     path 'consensus.fa.gz'
@@ -756,7 +756,7 @@ process checkUniqueIds {
 }
 
 process mergeVcfsMergeExperiment {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
   publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
 
   input:
@@ -776,7 +776,7 @@ process mergeVcfsMergeExperiment {
 }
 
 process makeSnpFile {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
     path 'merged.vcf.gz'
@@ -798,7 +798,7 @@ process makeSnpFile {
 }
 
 process processSeqVars {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
   publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
@@ -858,7 +858,7 @@ process addExtDbRlsIdToVariation {
 }
 
 process snpEff {
-  container = 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
   publishDir "$params.outputDir", mode: "copy"
 
   input:
