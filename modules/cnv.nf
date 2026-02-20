@@ -28,7 +28,7 @@ process genomecov {
 }
 
 process bedGraphToBigWig {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:377--h0b8a92a_2'
 
   publishDir "$params.outputDir", mode: "copy"
 
@@ -245,7 +245,7 @@ process makeSnpDensity {
 }
 
 process makeDensityBigwigs {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:377--h0b8a92a_2'
 
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 

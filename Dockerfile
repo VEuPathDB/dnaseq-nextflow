@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcft
 
 WORKDIR /gusApp/gus_home/lib/perl
 
-ADD /lib/perl/* /gusApp/gus_home/lib/perl/
+ADD /lib/perl/ /gusApp/gus_home/lib/perl/
 ENV PERL5LIB=/gusApp/gus_home/lib/perl
 
 # Install Perl modules (no database modules needed)
