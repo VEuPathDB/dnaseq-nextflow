@@ -248,6 +248,7 @@ process makeSnpDensity {
 process makeDensityBigwigs {
 
   container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
+
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
   input:
