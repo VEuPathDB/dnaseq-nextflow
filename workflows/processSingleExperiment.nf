@@ -27,7 +27,7 @@ include { addSampleToDefline } from '../modules/snp.nf'
 // CNV
 include { genomecov } from '../modules/cnv.nf'
 include { bedGraphToBigWig } from '../modules/cnv.nf'
-include { bedGraphToBigWig as normaliseCoverageToBigWig } from '../modules/cnv.nf'
+include { normaliseCoverageToBigWig } from '../modules/cnv.nf'
 
 include { sortForCounting } from '../modules/cnv.nf'
 include { htseqCount } from '../modules/cnv.nf'

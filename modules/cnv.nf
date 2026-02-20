@@ -32,7 +32,7 @@ process bedGraphToBigWig {
     container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
 
     publishDir "$params.outputDir", mode: "copy"
-  
+
     input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
     tuple val(sampleName), path(coverageBed)
@@ -50,6 +50,31 @@ process bedGraphToBigWig {
     stub:
     """
     touch coverage.bw
+    """
+}
+
+process normaliseCoverageToBigWig {
+    container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
+
+    publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_normalisedCoverage.bw" }
+
+    input:
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+    tuple val(sampleName), path(coverageBed)
+
+    output:
+    path "${sampleName}.bw"
+
+    script:
+    """
+    LC_COLLATE=C sort -k1,1 -k2,2n $coverageBed > sorted_input.bedgraph
+
+    bedGraphToBigWig sorted_input.bedgraph $genomeReorderedFastaIndex ${sampleName}.bw
+    """
+
+    stub:
+    """
+    touch ${sampleName}.bw
     """
 }
 

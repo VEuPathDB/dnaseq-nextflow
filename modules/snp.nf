@@ -4,8 +4,6 @@ nextflow.enable.dsl=2
 process freebayes {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir/freebayes", pattern: "${sampleName}.coverage.txt", mode: "copy"
-
   input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)

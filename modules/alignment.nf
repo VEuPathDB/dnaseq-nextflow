@@ -143,9 +143,6 @@ process picard {
 process gatk {
   container 'broadinstitute/gatk3:3.8-1'
 
-  publishDir "$params.outputDir", pattern: "*.bam", mode: "copy"
-  publishDir "$params.outputDir", pattern: "*.bai", mode: "copy"
-
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
     tuple val(sampleName), path(genomeReorderedDict), path(picardBam), path(picardBamIndex)
