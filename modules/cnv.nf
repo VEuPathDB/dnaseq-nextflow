@@ -27,31 +27,32 @@ process genomecov {
 
 }
 
+
 process bedGraphToBigWig {
-  container 'veupathdb/shortreadaligner:1.0.0'
+    container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
 
-  publishDir "$params.outputDir", mode: "copy"
-
-  input:
+    publishDir "$params.outputDir", mode: "copy"
+  
+    input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
     tuple val(sampleName), path(coverageBed)
 
-  output:
+    output:
     path "${sampleName}.bw"
 
-  script:
+    script:
     """
-    set -euo pipefail
-    LC_COLLATE=C sort -k1,1 -k2,2n $coverageBed > sorted.coverage.bed
-    bedGraphToBigWig sorted.coverage.bed $genomeReorderedFastaIndex ${sampleName}.bw
+    LC_COLLATE=C sort -k1,1 -k2,2n $coverageBed > sorted_input.bedgraph
+
+    bedGraphToBigWig sorted_input.bedgraph $genomeReorderedFastaIndex ${sampleName}.bw
     """
 
-  stub:
+    stub:
     """
     touch coverage.bw
     """
-
 }
+
 
 process sortForCounting {
   container 'veupathdb/shortreadaligner:1.0.0'
@@ -213,7 +214,7 @@ process normaliseCoverage {
 }
 
 process makeSnpDensity {
-  container= 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+  container  'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
     tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
@@ -245,8 +246,8 @@ process makeSnpDensity {
 }
 
 process makeDensityBigwigs {
-  container 'veupathdb/shortreadaligner:1.0.0'
 
+  container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
   publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
   input:

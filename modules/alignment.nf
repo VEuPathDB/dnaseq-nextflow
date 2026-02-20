@@ -96,44 +96,12 @@ process reorderFasta {
 
 }
 
-process subsample {
-  container 'veupathdb/shortreadaligner:1.0.0'
 
-  input:
-    tuple val(sampleName), path(resultSortedBam)
-
-  output:
-    tuple val(sampleName), path('result_sorted_ds.bam')
-
-  script:
-    """
-    set -euo pipefail
-    samtools index result_sorted.bam
-
-    # number of mapped reads is col 3 from idxstats
-    frac=\$( samtools idxstats $resultSortedBam | awk 'BEGIN {total=0} {total += \$3} END {frac=$params.maxNumberOfReads/total;  if (frac > 1) {print 1} else {print frac}}' )
-
-    # this will subsample fraction of mapped reads
-    if awk "BEGIN {exit !(\$frac >= 1)}"
-     then
-       ln -s $resultSortedBam result_sorted_ds.bam
-    else
-       samtools view -b -s \$frac $resultSortedBam > result_sorted_ds.bam
-    fi
-
-    lineCount=\$(wc -l result_sorted_ds.bam)
-
-    if [\$lineCount = 0]; then
-        exit 1
-    fi
-    """
-
-  stub:
-    """
-    touch result_sorted_ds.bam
-    """
-}
-
+// Prepares the BAM file for GATK processing:
+//   1. AddOrReplaceReadGroups   - adds required read group metadata (sample name, platform, etc.)
+//   2. CreateSequenceDictionary - builds a .dict file from the reference FASTA that GATK requires
+//   3. BuildBamIndex            - indexes the BAM for random access by genomic position
+//   4. CollectAlignmentSummaryMetrics - generates QC stats (% mapped reads, mismatch rate, etc.)
 process picard {
   container 'broadinstitute/picard:2.25.0'
 
@@ -149,7 +117,9 @@ process picard {
     """
     set -euo pipefail
     JARPATH="/usr/picard/picard.jar"
+    # GATK requires read group tags to be present in the BAM header
     java -jar \$JARPATH AddOrReplaceReadGroups I=$resultSortedDsBam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
+    # GATK requires a sequence dictionary alongside the reference FASTA
     java -jar \$JARPATH CreateSequenceDictionary R=$genomeReorderedFasta UR=$genomeReorderedFasta
     java -jar \$JARPATH BuildBamIndex I=picard.bam
     java -jar \$JARPATH CollectAlignmentSummaryMetrics R=$genomeReorderedFasta I=picard.bam O=summaryMetrics.txt
@@ -165,6 +135,11 @@ process picard {
 
 }
 
+// Performs local indel realignment using GATK3 to reduce false-positive SNP calls.
+// BWA-MEM aligns reads independently, so reads spanning an indel can be positioned
+// inconsistently. Realignment considers all reads in a region together to fix this.
+//   1. RealignerTargetCreator - identifies intervals likely to harbor misaligned reads near indels
+//   2. IndelRealigner         - locally realigns reads within those intervals
 process gatk {
   container 'broadinstitute/gatk3:3.8-1'
 
@@ -183,11 +158,13 @@ process gatk {
     """
     set -euo pipefail
     JARPATH="/usr/GenomeAnalysisTK.jar"
+    # Scan the BAM to find genomic intervals where reads show signs of indel misalignment
     java -jar \$JARPATH \\
       -I $picardBam \\
       -R $genomeReorderedFasta \\
       -T RealignerTargetCreator \\
       -o forIndelRealigner.intervals 2>realaligner.err
+    # Locally realign reads within the target intervals to produce a cleaner BAM
     java -jar \$JARPATH \\
       -I $picardBam \\
       -R $genomeReorderedFasta \\

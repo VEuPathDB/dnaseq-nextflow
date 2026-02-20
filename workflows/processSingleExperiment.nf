@@ -10,7 +10,6 @@ include { trimmomatic } from '../modules/preprocessing.nf'
 include { bwaIndex } from '../modules/alignment.nf'
 include { bwaMem } from '../modules/alignment.nf'
 include { reorderFasta } from '../modules/alignment.nf'
-include { subsample } from '../modules/alignment.nf'
 include { picard } from '../modules/alignment.nf'
 include { gatk } from '../modules/alignment.nf'
 
@@ -80,9 +79,8 @@ workflow ps {
 
     reorderFastaResults = reorderFasta(bwaMemResults.first(), genome_fasta_file)
 
-    subsampleResults = subsample(bwaMemResults)
 
-    picardResults = picard(reorderFastaResults, subsampleResults)
+    picardResults = picard(reorderFastaResults, bwaMemResults)
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
