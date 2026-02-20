@@ -36,8 +36,9 @@ process freebayes {
     bgzip freebayes.indels.vcf
     tabix -fp vcf freebayes.indels.vcf.gz
 
-    # Calculate coverage from BAM using samtools
-    samtools depth -a $resultSortedGatkBam | awk '{sum+=\$3; count++} END {print "Average_Coverage\\t" sum/count "\\nTotal_Positions\\t" count}' > ${sampleName}.coverage.txt
+    ## Aren't we calculating stats elsewhere?
+    ## Calculate coverage from BAM using samtools
+    ##samtools depth -a $resultSortedGatkBam | awk '{sum+=\$3; count++} END {print "Average_Coverage\\t" sum/count "\\nTotal_Positions\\t" count}' > ${sampleName}.coverage.txt
     """
 
   stub:
