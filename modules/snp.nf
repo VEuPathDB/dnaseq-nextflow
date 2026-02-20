@@ -12,7 +12,6 @@ process freebayes {
 
   output:
     tuple val(sampleName), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
-    path "${sampleName}.coverage.txt"
 
   script:
     """
