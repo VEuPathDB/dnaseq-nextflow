@@ -11,7 +11,7 @@ process freebayes {
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    tuple val(sampleName), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
+    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
 
   script:
     """
@@ -30,17 +30,22 @@ process freebayes {
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
     bcftools view -v indels freebayes.vcf > freebayes.indels.vcf
 
-    # Compress and index
+    # Compress and index split VCFs
     bgzip freebayes.snps.vcf
     tabix -fp vcf freebayes.snps.vcf.gz
     bgzip freebayes.indels.vcf
     tabix -fp vcf freebayes.indels.vcf.gz
+
+    # Compress and index unfiltered VCF; name by sample so files are unique when merged across samples
     bgzip freebayes.vcf
-    tabix -fp vcf freebayes.vcf.gz
+    mv freebayes.vcf.gz ${sampleName}.vcf.gz
+    tabix -fp vcf ${sampleName}.vcf.gz
     """
 
   stub:
     """
+    touch ${sampleName}.vcf.gz
+    touch ${sampleName}.vcf.gz.tbi
     touch freebayes.snps.vcf.gz
     touch freebayes.snps.vcf.gz.tbi
     touch freebayes.indels.vcf.gz
@@ -49,91 +54,13 @@ process freebayes {
     """
 }
 
-process concatSnpsAndIndels {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
-
-  input:
-    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
-
-  output:
-    tuple val(sampleName), path('variants.concat.vcf')
-
-  script:
-    """
-    set -euo pipefail
-    bcftools concat \\
-      -a \\
-      -o variants.concat.vcf $snpsVcfGz $indelsVcfGz
-    """
-
-  stub:
-    """
-    touch variants.concat.vcf
-    """
-
-}
-
-process makeCombinedVariantIndex {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
-
-   publishDir "$params.outputDir", pattern: "*.concat.vcf.gz", mode: "copy"
-   publishDir "$params.outputDir", pattern: "*.concat.vcf.gz.tbi", mode: "copy"
-
-  input:
-    tuple val(sampleName), path(concatVcf)
-
-  output:
-    tuple val(sampleName), path('*.concat.vcf.gz'), path('*.concat.vcf.gz.tbi')
-
-  script:
-    """
-    set -euo pipefail
-    mv $concatVcf ${sampleName}.concat.vcf
-    bgzip ${sampleName}.concat.vcf
-    tabix -fp vcf ${sampleName}.concat.vcf.gz
-    """
-
-  stub:
-    """
-    touch ${sampleName}.concat.vcf.gz
-    touch ${sampleName}.concat.vcf.gz.tbi
-    """
-
-}
-
-process filterIndels {
-  container 'biocontainers/vcftools:v0.1.16-1-deb_cv1'
-
-  input:
-    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
-
-  output:
-    tuple val(sampleName), path('output.recode.vcf')
-
-  script:
-    """
-    set -euo pipefail
-    vcftools \\
-        --gzvcf $concatVcfGz \\
-        --keep-only-indels \\
-        --out output \\
-        --recode
-    """
-
-  stub:
-    """
-    touch output.recode.vcf
-    """
-
-}
-
 process makeIndelTSV {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", pattern: "output.tsv", mode: "copy", saveAs: { filename -> "${sampleName}.indel.tsv" }
 
   input:
-    tuple val(sampleName), path(outputRecodeVcf)
+    tuple val(sampleName), path(indelsVcfGz)
 
   output:
     path('output.tsv')
@@ -142,7 +69,7 @@ process makeIndelTSV {
     """
     set -euo pipefail
     findValues.pl \\
-       -i $outputRecodeVcf \\
+       -i $indelsVcfGz \\
        -s ${sampleName} \\
        -o output.tsv
     """

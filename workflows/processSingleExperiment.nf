@@ -18,9 +18,6 @@ include { mergeAlignmentStats } from '../modules/alignment.nf'
 
 // SNP
 include { freebayes } from '../modules/snp.nf'
-include { concatSnpsAndIndels } from '../modules/snp.nf'
-include { makeCombinedVariantIndex } from '../modules/snp.nf'
-include { filterIndels } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
@@ -89,20 +86,22 @@ workflow ps {
 
     freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
 
-    concatSnpsAndIndelsResults = concatSnpsAndIndels(freebayesResults.vcf_files)
+    // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
+    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+        tuple(sampleName, vcfGz, vcfGzTbi)
+    }
 
-    makeCombinedVariantIndexResults = makeCombinedVariantIndex(concatSnpsAndIndelsResults)
-
-    filterIndelsResults = filterIndels(makeCombinedVariantIndexResults)
-
-    makeIndelTSV(filterIndelsResults)
+    // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
+    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+        tuple(sampleName, indelsVcfGz)
+    })
 
     // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
-    mergeVcfsResults = mergeVcfs(makeCombinedVariantIndexResults.count(), makeCombinedVariantIndexResults.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
+    mergeVcfsResults = mergeVcfs(combinedVcf.count(), combinedVcf.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
 
     makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(makeCombinedVariantIndexResults, reorderFastaResults, gatkResults.bamFiles.collect())
+    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(combinedVcf, reorderFastaResults, gatkResults.bamFiles.collect())
 
     addSampleToDefline(bcftoolsConsensusAndMaskResults)
 

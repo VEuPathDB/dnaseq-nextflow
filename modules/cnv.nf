@@ -217,7 +217,7 @@ process makeSnpDensity {
   container  'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
+    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
     tuple path(windows), path(genome)
 
   output:
@@ -278,7 +278,7 @@ process getHeterozygousSNPs {
   container 'veupathdb/vcf_parser_cnv:1.0.0'
 
   input:
-    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(genomeMaskedFasta)
+    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
 
   output:
     tuple val(sampleName), path('heterozygousSNPs.vcf')
