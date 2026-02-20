@@ -180,3 +180,124 @@ process gatk {
     touch result_sorted_gatk.bai
     """
 }
+
+// Extracts per-sample alignment metrics from the samtools stats SN (summary numbers) section:
+//   raw total sequences, reads mapped, mapped read percentage, average read length
+process samtoolsStats {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+    
+  input:
+    tuple val(sampleName), path(bamFile), path(bamIndex)
+
+  output:
+    tuple val(sampleName), path("${sampleName}.samtools.tsv")
+
+  script:
+    """
+    set -euo pipefail
+
+    # samtools stats SN lines have the form:  SN  <label>:  <value>  [# comment]
+    # grep ^SN filters to summary numbers; cut -f 3 takes the numeric value column
+    samtools stats ${bamFile} > samtools_stats.txt
+    raw_total=\$(grep '^SN.*raw total sequences:' samtools_stats.txt | cut -f 3)
+    reads_mapped=\$(grep '^SN.*reads mapped:'      samtools_stats.txt | cut -f 3)
+    avg_length=\$(grep   '^SN.*average length:'    samtools_stats.txt | cut -f 3)
+
+    mapped_pct=\$(echo "\$reads_mapped \$raw_total" | awk '{printf "%.4f", \$1/\$2}')
+
+    printf 'sample\traw_total_sequences\treads_mapped\tmapped_read_pct\taverage_read_length\n' \
+      > ${sampleName}.samtools.tsv
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "${sampleName}" "\$raw_total" "\$reads_mapped" "\$mapped_pct" "\$avg_length" \
+      >> ${sampleName}.samtools.tsv
+    """
+
+  stub:
+    """
+    touch ${sampleName}.samtools.tsv
+    """
+}
+
+// Computes mean genome coverage per sample using a bedtools genomecov frequency histogram.
+// Without -bg, bedtools emits rows: chrom, depth, numBases, chromSize, fraction.
+// The "genome" rows aggregate across all chromosomes.
+// mean_coverage = sum(depth * numBases) / sum(numBases)  i.e. total bases covered / genome size
+process bedtoolsGenomecovStats {
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+
+  input:
+    tuple val(sampleName), path(bamFile), path(bamIndex)
+    tuple path(genomeFasta), path(genomeFastaIndex)
+
+  output:
+    tuple val(sampleName), path("${sampleName}.genomecov.tsv")
+
+  script:
+    """
+    set -euo pipefail
+
+    mean_cov=\$(bedtools genomecov -ibam ${bamFile} -g ${genomeFastaIndex} \
+      | awk '
+          /^genome/ {
+            total_base_coverage += \$2 * \$3   # depth * numBases_at_that_depth
+            genome_size         += \$3
+          }
+          END { printf "%.2f", total_base_coverage / genome_size }
+        ')
+
+    printf 'sample\tmean_coverage\n' > ${sampleName}.genomecov.tsv
+    printf '%s\t%s\n' "${sampleName}" "\$mean_cov" >> ${sampleName}.genomecov.tsv
+    """
+
+  stub:
+    """
+    touch ${sampleName}.genomecov.tsv
+    """
+}
+
+// Joins per-sample samtools and genomecov stats and publishes a single TSV for all samples.
+// Columns: sample, raw_total_sequences, reads_mapped, mapped_read_pct, average_read_length, mean_coverage
+process mergeAlignmentStats {
+  container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
+
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    path samtoolsFiles
+    path genomecovFiles
+
+  output:
+    path 'alignment_stats.tsv'
+
+  script:
+    """
+    set -euo pipefail
+
+    # Join the two per-sample TSVs by sample name.
+    # FILENAME matching routes columns into named arrays; END block prints joined rows.
+    awk -F'\t' '
+      FNR == 1 { next }   # skip header in each input file
+      FILENAME ~ /samtools/ {
+        raw_total[   \$1] = \$2
+        reads_mapped[\$1] = \$3
+        mapped_pct[  \$1] = \$4
+        avg_length[  \$1] = \$5
+      }
+      FILENAME ~ /genomecov/ { mean_cov[\$1] = \$2 }
+      END {
+        for (sample in raw_total)
+          print sample "\t" raw_total[sample] "\t" reads_mapped[sample] "\t" \
+                mapped_pct[sample] "\t" avg_length[sample] "\t" mean_cov[sample]
+      }
+    ' *.samtools.tsv *.genomecov.tsv | sort > data.tsv
+
+    printf 'sample\traw_total_sequences\treads_mapped\tmapped_read_pct\taverage_read_length\tmean_coverage\n' \
+      > alignment_stats.tsv
+    cat data.tsv >> alignment_stats.tsv
+    """
+
+  stub:
+    """
+    touch alignment_stats.tsv
+    """
+}

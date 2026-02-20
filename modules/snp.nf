@@ -26,7 +26,7 @@ process freebayes {
       --min-alternate-fraction $params.freebayesMinAltFraction \\
       $resultSortedGatkBam > freebayes.vcf
 
-    # Split into SNPs and indels
+    # Split into SNPs and indels for use in CNV
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
     bcftools view -v indels freebayes.vcf > freebayes.indels.vcf
 
@@ -35,10 +35,8 @@ process freebayes {
     tabix -fp vcf freebayes.snps.vcf.gz
     bgzip freebayes.indels.vcf
     tabix -fp vcf freebayes.indels.vcf.gz
-
-    ## Aren't we calculating stats elsewhere?
-    ## Calculate coverage from BAM using samtools
-    ##samtools depth -a $resultSortedGatkBam | awk '{sum+=\$3; count++} END {print "Average_Coverage\\t" sum/count "\\nTotal_Positions\\t" count}' > ${sampleName}.coverage.txt
+    bgzip freebayes.vcf
+    tabix -fp vcf freebayes.vcf.gz
     """
 
   stub:

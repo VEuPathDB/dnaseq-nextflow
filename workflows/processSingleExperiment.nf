@@ -12,6 +12,9 @@ include { bwaMem } from '../modules/alignment.nf'
 include { reorderFasta } from '../modules/alignment.nf'
 include { picard } from '../modules/alignment.nf'
 include { gatk } from '../modules/alignment.nf'
+include { samtoolsStats } from '../modules/alignment.nf'
+include { bedtoolsGenomecovStats } from '../modules/alignment.nf'
+include { mergeAlignmentStats } from '../modules/alignment.nf'
 
 // SNP
 include { freebayes } from '../modules/snp.nf'
@@ -138,5 +141,14 @@ workflow ps {
 
       makeHeterozygousDensityBigwig(makeHeterozygousDensityBedResults, reorderFastaResults)
     }
+
+    // Alignment statistics: run samtools and bedtools in parallel on the final GATK BAM,
+    // then merge all per-sample results into a single published TSV
+    samtoolsStatsResults = samtoolsStats(gatkResults.bamTuple)
+    bedtoolsGenomecovStatsResults = bedtoolsGenomecovStats(gatkResults.bamTuple, reorderFastaResults)
+    mergeAlignmentStats(
+      samtoolsStatsResults.map { sampleName, tsv -> tsv }.collect(),
+      bedtoolsGenomecovStatsResults.map { sampleName, tsv -> tsv }.collect()
+    )
 
 }
