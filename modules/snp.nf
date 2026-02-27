@@ -20,6 +20,7 @@ process freebayes {
       -f $genomeReorderedFasta \\
       -p $params.ploidy \\
       --gvcf \\
+      --gvcf-dont-use-chunk \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction $params.freebayesMinAltFraction \\
       $resultSortedGatkBam > freebayes.vcf
