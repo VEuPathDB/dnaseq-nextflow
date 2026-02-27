@@ -23,6 +23,8 @@ include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
 include { bcftoolsConsensusAndMask } from '../modules/snp.nf'
 include { addSampleToDefline } from '../modules/snp.nf'
+include { bcftoolsMpileupGvcf } from '../modules/snp.nf'
+include { mergeGvcfs } from '../modules/snp.nf'
 
 // CNV
 include { genomecov } from '../modules/cnv.nf'
@@ -94,7 +96,7 @@ workflow ps {
     // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
     makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
-    })
+    }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
     // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
     mergeVcfsResults = mergeVcfs(combinedVcf.count(), combinedVcf.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
@@ -104,6 +106,14 @@ workflow ps {
     bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(combinedVcf, reorderFastaResults, gatkResults.bamFiles.collect())
 
     addSampleToDefline(bcftoolsConsensusAndMaskResults)
+
+    mpileupGvcfResults = bcftoolsMpileupGvcf(gatkResults.bamTuple, reorderFastaResults)
+
+    mergeGvcfs(
+        mpileupGvcfResults.count(),
+        mpileupGvcfResults.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
+            .groupTuple(by: 2, sort: { a, b -> a <=> b })
+    )
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 

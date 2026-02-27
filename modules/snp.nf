@@ -19,8 +19,6 @@ process freebayes {
     freebayes \\
       -f $genomeReorderedFasta \\
       -p $params.ploidy \\
-      --gvcf \\
-      --gvcf-dont-use-chunk \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction $params.freebayesMinAltFraction \\
       $resultSortedGatkBam > freebayes.vcf
@@ -56,8 +54,6 @@ process freebayes {
 process makeIndelTSV {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", pattern: "output.tsv", mode: "copy", saveAs: { filename -> "${sampleName}.indel.tsv" }
-
   input:
     tuple val(sampleName), path(indelsVcfGz)
 
@@ -79,6 +75,7 @@ process makeIndelTSV {
     """
 
 }
+
 
 process mergeVcfs {
   container 'biocontainers/bcftools:v1.9-1-deb_cv1'
@@ -136,6 +133,65 @@ process makeMergedVariantIndex {
     touch result.vcf.gz.tbi
     """
 
+}
+
+process bcftoolsMpileupGvcf {
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
+
+  input:
+    tuple val(sampleName), path(bamFile), path(bamIndex)
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+
+  output:
+    tuple val(sampleName), path("${sampleName}.g.vcf.gz"), path("${sampleName}.g.vcf.gz.tbi")
+
+  script:
+    """
+    set -euo pipefail
+    bcftools mpileup \\
+      --gvcf $params.minCoverage \\
+      -f $genomeReorderedFasta \\
+      -O z \\
+      -o ${sampleName}.g.vcf.gz \\
+      $bamFile
+    bcftools index -t ${sampleName}.g.vcf.gz
+    """
+
+  stub:
+    """
+    touch ${sampleName}.g.vcf.gz
+    touch ${sampleName}.g.vcf.gz.tbi
+    """
+}
+
+process mergeGvcfs {
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
+
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    val gvcfCount
+    tuple path(gvcfFiles), path(gvcfIndexes), val(key)
+
+  output:
+    tuple path('merged.g.vcf.gz'), path('merged.g.vcf.gz.tbi')
+
+  script:
+    """
+    set -euo pipefail
+    if [ $gvcfCount -gt 1 ]; then
+        bcftools merge -O z -o merged.g.vcf.gz *.g.vcf.gz
+    else
+        cp *.g.vcf.gz merged.g.vcf.gz
+    fi
+    bcftools index -t merged.g.vcf.gz
+    """
+
+  stub:
+    """
+    touch merged.g.vcf.gz
+    touch merged.g.vcf.gz.tbi
+    """
 }
 
 process bcftoolsConsensusAndMask {
