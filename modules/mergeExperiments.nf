@@ -108,6 +108,7 @@ process processSeqVars {
     """
     set -euo pipefail
 
+
     julia /usr/bin/processSequenceVariations.jl \\
       --snp_file $snpFile \\
       --cache_file $cacheFile \\

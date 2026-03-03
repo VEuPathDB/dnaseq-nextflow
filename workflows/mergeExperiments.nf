@@ -30,6 +30,7 @@ workflow me {
     coverages = coverage_qch.collectFile(storeDir: params.coverage_directory)
 
     combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
+    combinedIndels = indels_qch.collectFile(name: 'indel.tsv')
 
     checkUniqueIds(combinedFastagz)
 
@@ -38,6 +39,7 @@ workflow me {
     mergedVcf = mergeVcfs(allvcfs)
 
     makeSnpFileResults = makeSnpFile(mergedVcf)
+
 
     // Placeholder channels — wired to upstream transcript-prep process once it exists
     transcriptDb = Channel.of(params.transcriptDb)
