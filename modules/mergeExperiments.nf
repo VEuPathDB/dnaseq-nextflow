@@ -4,7 +4,6 @@ nextflow.enable.dsl=2
 
 process checkUniqueIds {
   container 'veupathdb/dnaseqanalysis:1.0.0'
-
   input:
     path 'consensus.fa.gz'
 
