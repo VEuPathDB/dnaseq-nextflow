@@ -10,24 +10,27 @@ include { trimmomatic } from '../modules/preprocessing.nf'
 include { bwaIndex } from '../modules/alignment.nf'
 include { bwaMem } from '../modules/alignment.nf'
 include { reorderFasta } from '../modules/alignment.nf'
-include { subsample } from '../modules/alignment.nf'
 include { picard } from '../modules/alignment.nf'
 include { gatk } from '../modules/alignment.nf'
+include { samtoolsStats } from '../modules/alignment.nf'
+include { bedtoolsGenomecovStats } from '../modules/alignment.nf'
+include { mergeAlignmentStats } from '../modules/alignment.nf'
 
 // SNP
 include { freebayes } from '../modules/snp.nf'
-include { concatSnpsAndIndels } from '../modules/snp.nf'
-include { makeCombinedVariantIndex } from '../modules/snp.nf'
-include { filterIndels } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
 include { bcftoolsConsensusAndMask } from '../modules/snp.nf'
 include { addSampleToDefline } from '../modules/snp.nf'
+include { bcftoolsMpileupGvcf } from '../modules/snp.nf'
+include { mergeGvcfs } from '../modules/snp.nf'
 
 // CNV
 include { genomecov } from '../modules/cnv.nf'
 include { bedGraphToBigWig } from '../modules/cnv.nf'
+include { normaliseCoverageToBigWig } from '../modules/cnv.nf'
+
 include { sortForCounting } from '../modules/cnv.nf'
 include { htseqCount } from '../modules/cnv.nf'
 include { calculateTPM } from '../modules/cnv.nf'
@@ -78,30 +81,39 @@ workflow ps {
 
     reorderFastaResults = reorderFasta(bwaMemResults.first(), genome_fasta_file)
 
-    subsampleResults = subsample(bwaMemResults)
 
-    picardResults = picard(reorderFastaResults, subsampleResults)
+    picardResults = picard(reorderFastaResults, bwaMemResults)
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
     freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
 
-    concatSnpsAndIndelsResults = concatSnpsAndIndels(freebayesResults.vcf_files)
+    // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
+    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+        tuple(sampleName, vcfGz, vcfGzTbi)
+    }
 
-    makeCombinedVariantIndexResults = makeCombinedVariantIndex(concatSnpsAndIndelsResults)
-
-    filterIndelsResults = filterIndels(makeCombinedVariantIndexResults)
-
-    makeIndelTSV(filterIndelsResults)
+    // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
+    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+        tuple(sampleName, indelsVcfGz)
+    }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
     // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
-    mergeVcfsResults = mergeVcfs(makeCombinedVariantIndexResults.count(), makeCombinedVariantIndexResults.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
+    mergeVcfsResults = mergeVcfs(combinedVcf.count(), combinedVcf.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
 
     makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(makeCombinedVariantIndexResults, reorderFastaResults, gatkResults.bamFiles.collect())
+    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(combinedVcf, reorderFastaResults, gatkResults.bamFiles.collect())
 
     addSampleToDefline(bcftoolsConsensusAndMaskResults)
+
+    mpileupGvcfResults = bcftoolsMpileupGvcf(gatkResults.bamTuple, reorderFastaResults)
+
+    mergeGvcfs(
+        mpileupGvcfResults.count(),
+        mpileupGvcfResults.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
+            .groupTuple(by: 2, sort: { a, b -> a <=> b })
+    )
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 
@@ -121,6 +133,11 @@ workflow ps {
 
     normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics))
 
+    normaliseCoverageToBigWigResults = normaliseCoverageToBigWig(reorderFastaResults, normaliseCoverageResults)
+
+    // CONVERT bed to bw here
+
+    
     makeSnpDensityResults = makeSnpDensity(freebayesResults.vcf_files, makeWindowFileResults)
 
     makeDensityBigwigsResults = makeDensityBigwigs(makeSnpDensityResults, reorderFastaResults)
@@ -133,5 +150,14 @@ workflow ps {
 
       makeHeterozygousDensityBigwig(makeHeterozygousDensityBedResults, reorderFastaResults)
     }
+
+    // Alignment statistics: run samtools and bedtools in parallel on the final GATK BAM,
+    // then merge all per-sample results into a single published TSV
+    samtoolsStatsResults = samtoolsStats(gatkResults.bamTuple)
+    bedtoolsGenomecovStatsResults = bedtoolsGenomecovStats(gatkResults.bamTuple, reorderFastaResults)
+    mergeAlignmentStats(
+      samtoolsStatsResults.map { sampleName, tsv -> tsv }.collect(),
+      bedtoolsGenomecovStatsResults.map { sampleName, tsv -> tsv }.collect()
+    )
 
 }

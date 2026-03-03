@@ -16,7 +16,7 @@ my ($vcfFile,$outputFile,$sample,$refPos,$shift_count,$refAllele,$altAllele, $re
 open(O,">$outputFile");
 
 # Starting output fasta file with defline. Retrieving total length of sequence.
-open(I,"$vcfFile") || die "Unable to open $vcfFile";
+open(I,"zcat $vcfFile |") || die "Unable to open $vcfFile";
 
 while(<I>){
     if (/^(.+)\t(\d+)\t\.\t(\w+)\t(\w+)/) {

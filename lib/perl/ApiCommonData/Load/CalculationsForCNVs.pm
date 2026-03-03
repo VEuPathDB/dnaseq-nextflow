@@ -4,7 +4,6 @@ use lib "$ENV{GUS_HOME}/lib/perl";
 use strict;
 use warnings;
 use Statistics::Descriptive;
-use CBIL::Util::PropertySet;
 use Data::Dumper;
 
 # Common subroutines used by CNV scripts
