@@ -6,3 +6,5 @@ modules/
 
 #Ignoring data folder
 data/
+
+work/

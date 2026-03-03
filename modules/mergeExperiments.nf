@@ -4,7 +4,6 @@ nextflow.enable.dsl=2
 
 process checkUniqueIds {
   container 'veupathdb/dnaseqanalysis:1.0.0'
-  
   input:
     path 'consensus.fa.gz'
 
@@ -12,7 +11,10 @@ process checkUniqueIds {
     stdout
 
   script:
-    template 'checkUniqueIds.bash'
+    """
+    set -euo pipefail
+    checkUniqueIds.sh
+    """
 
   stub:
     """
@@ -32,7 +34,18 @@ process mergeVcfs {
     path 'merged.vcf.gz'
 
   script:
-    template 'mergeVcfsMergeExperiments.bash'
+    """
+    set -euo pipefail
+
+    for i in *.vcf.gz; do cp \$i \$i.tmp.vcf.gz; gunzip \$i.tmp.vcf.gz; bgzip \$i.tmp.vcf; cp \$i.tmp.vcf.gz \$i; rm \$i.tmp.vcf.gz; tabix \$i; done
+    bcftools merge \\
+          -o merged.vcf.gz \\
+          -O z *.vcf.gz
+    cp merged.vcf.gz merge.vcf.gz
+    gunzip merge.vcf.gz
+    sed -i 's/\\%//g' merge.vcf
+    mv merge.vcf merged.vcf
+    """
 
   stub:
     """
@@ -78,7 +91,7 @@ process processSeqVars {
     path undoneStrainsFile
     val  organism_abbrev
     val  reference_strain
-    path varscanDir
+    path coverageDir
     path genomeFasta
     path consensusFasta
     path indelFile
@@ -86,15 +99,34 @@ process processSeqVars {
     path coverageComplete
     path bigwigsComplete
     path bamsComplete
-  
+
   output:
     path cacheFile
     path 'variationFeature.dat', emit: variationFile
     path 'allele.dat', emit: alleleFile
     path 'product.dat', emit: productFile
-  
+
   script:
-    template 'processSeqVars.bash'
+    """
+    set -euo pipefail
+
+    cp $consensusFasta unzipped.fa.gz;
+    gunzip unzipped.fa.gz;
+
+    perl /usr/bin/processSequenceVariationsNew.pl \\
+      --new_sample_file $snpFile \\
+      --cache_file $cacheFile \\
+      --undone_strains_file $undoneStrainsFile \\
+      --organism_abbrev $organism_abbrev \\
+      --reference_strain $reference_strain  \\
+      --coverage_directory $coverageDir \\
+      --genome $genomeFasta \\
+      --consensus unzipped.fa \\
+      --indelFile $indelFile \\
+      --gtfFile $gtfFile
+
+    mv snpFeature.dat variationFeature.dat
+    """
 
   stub:
     """
@@ -107,16 +139,21 @@ process processSeqVars {
 
 process addFeatureIdsToVariation {
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeatureFinal.dat'
-  
+
   input:
     path variationFile
     path gusConfig
-  
+
   output:
     path 'variationFeatureFinal.dat'
-  
+
   script:
-    template 'addFeatureIdsToVariation.bash'
+    """
+    set -euo pipefail
+    addFeatureIdsToVariation.pl \\
+         --variationFile $variationFile \\
+         --gusConfig $gusConfig
+    """
 
   stub:
     """
@@ -135,7 +172,16 @@ process insertVariation {
     stdout
 
   script:
-    template 'insertVariation.bash'
+    """
+    set -euo pipefail
+
+    ga ApiCommonData::Load::Plugin::InsertVariant \\
+      --extDbRlsSpec '$extDbRlsSpec' \\
+      --variantFile '$variationFile' \\
+      --commit
+
+    echo "DONE"
+    """
 
   stub:
     """
@@ -154,7 +200,15 @@ process insertProduct {
     stdout
 
   script:
-    template 'insertProduct.bash'
+    """
+    set -euo pipefail
+
+    ga ApiCommonData::Load::Plugin::InsertVariantProductSummary \\
+      --variantProductFile '$productFile' \\
+      --commit
+
+    echo "DONE"
+    """
 
   stub:
     """
@@ -173,7 +227,15 @@ process insertAllele {
     stdout
 
   script:
-    template 'insertAllele.bash'
+    """
+    set -euo pipefail
+
+    ga ApiCommonData::Load::Plugin::InsertVariantAlleleSummary \\
+      --variantAlleleFile '$alleleFile' \\
+      --commit
+
+    echo "DONE"
+    """
 
   stub:
     """
@@ -195,52 +257,19 @@ process snpEff {
     path 'merged.ann.vcf'
 
   script:
-    template 'snpEff.bash'    
+    """
+    set -euo pipefail
+    mkdir genome
+    mv $genesGtf genome/genes.gtf
+    mv $sequencesFa genome/sequences.fa
+    gzip -f genome/sequences.fa
+    cp /usr/bin/snpEff/snpEff.config .
+    java -jar /usr/bin/snpEff/snpEff.jar build -gtf22 -noCheckCds -noCheckProtein -v genome
+    java -Xmx4g -jar /usr/bin/snpEff/snpEff.jar genome $mergedVcf > merged.ann.vcf
+    """
 
   stub:
     """
     touch merged.ann.vcf
     """
-}
-
-
-workflow me {
- 
-  take:
-
-    fastas_qch
-    vcfs_qch
-    indels_qch
-    coverage_qch
-    bw_qch
-    bam_qch
-
-  main:
-
-    bigwigs = bw_qch.collectFile(storeDir: params.webServicesDir)
-    bams = bam_qch.collectFile(storeDir: params.webServicesDir)
-
-    coverages = coverage_qch.collectFile(storeDir: params.varscan_directory)
-
-    combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
-    combinedIndels = indels_qch.collectFile(name: 'indel.tsv') 
-
-    checkUniqueIds(combinedFastagz) 
-
-    allvcfs = vcfs_qch.collect()
-
-    mergedVcf = mergeVcfs(allvcfs)    
-  
-    makeSnpFileResults = makeSnpFile(mergedVcf)
-    
-    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.cacheFile, params.undoneStrains, params.organism_abbrev, params.reference_strain, params.varscan_directory, params.genomeFastaFile, combinedFastagz, combinedIndels, params.gtfFile, coverages, bigwigs, bams)
-
-    addFeatureIdsToVariationResults = addFeatureIdsToVariation(processSeqVarsResults.variationFile, params.gusConfig)
-    
-    insertVariation(params.extDbRlsSpec, addFeatureIdsToVariationResults)
-    insertProduct(processSeqVarsResults.productFile)
-    insertAllele(processSeqVarsResults.alleleFile)
-
-    snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
-
 }
