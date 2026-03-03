@@ -133,8 +133,6 @@ process htseqCount {
 process calculateTPM {
   container 'veupathdb/shortreadaligner:1.0.0'
 
-  publishDir "$params.outputDir/CNVs", mode: "copy"
-
   input:
     tuple val(sampleName), path(counts)
     path geneFootprintFile
@@ -375,7 +373,7 @@ process makeHeterozygousDensityBigwig {
 process calculatePloidyAndGeneCNV {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy"
+  publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> filename.endsWith("_CNVestimations.tsv") ? null : filename }
 
   input:
     tuple val(sampleName), path(sampleFile)

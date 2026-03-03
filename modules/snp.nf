@@ -174,23 +174,23 @@ process mergeGvcfs {
     tuple path(gvcfFiles), path(gvcfIndexes), val(key)
 
   output:
-    tuple path('merged.g.vcf.gz'), path('merged.g.vcf.gz.tbi')
+    tuple path('coverage.g.vcf.gz'), path('coverage.g.vcf.gz.tbi')
 
   script:
     """
     set -euo pipefail
     if [ $gvcfCount -gt 1 ]; then
-        bcftools merge -O z -o merged.g.vcf.gz *.g.vcf.gz
+        bcftools merge -O z -o coverage.g.vcf.gz *.g.vcf.gz
     else
-        cp *.g.vcf.gz merged.g.vcf.gz
+        cp *.g.vcf.gz coverage.g.vcf.gz
     fi
-    bcftools index -t merged.g.vcf.gz
+    bcftools index -t coverage.g.vcf.gz
     """
 
   stub:
     """
-    touch merged.g.vcf.gz
-    touch merged.g.vcf.gz.tbi
+    touch coverage.g.vcf.gz
+    touch coverage.g.vcf.gz.tbi
     """
 }
 
@@ -218,7 +218,7 @@ process bcftoolsConsensusAndMask {
     # Index the unmasked consensus
     samtools faidx cons.fa
 
-    perl /usr/bin/maskGenome.pl -p temp.pileup -f cons.fa.fai -dc $params.minCoverage -o masked.fa
+    maskGenome.pl -p temp.pileup -f cons.fa.fai -dc $params.minCoverage -o masked.fa
     fold -w 60 masked.fa > cons_masked.fa
     rm temp.pileup
     """
