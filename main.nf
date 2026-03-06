@@ -79,22 +79,12 @@ workflow processSingleExperiment {
 //---------------------------------------------------------------
 
 workflow mergeExperiments {
+  fastas_qch  = Channel.fromPath(params.relativeConsensusFilePattern)
+  vcfs_qch    = Channel.fromPath(params.vcfFiles)
+  gvcfs_qch   = Channel.fromPath(params.gVcfFiles)
+  indels_qch  = Channel.fromPath(params.indelsFiles)
 
-  if(params.inputDir) {
-    fastas_qch = Channel.fromPath(params.inputDir + '/*.fa.gz')
-    vcfs_qch = Channel.fromPath(params.inputDir + '/result.vcf.gz')
-    indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv')
-    bam_qch = Channel.fromPath(params.inputDir + '/*.bam')
-    bw_qch = Channel.fromPath(params.inputDir + '/*.bw')
-    coverage_qch = Channel.fromPath(params.coverageFilePath + '/*.coverage.txt')
-  }
-
-  else {
-    throw new Exception("Missing parameter params.inputDir")
-  }
-   
-  me(fastas_qch, vcfs_qch, indels_qch, coverage_qch, bam_qch, bw_qch)
-
+  me(fastas_qch, vcfs_qch, gvcfs_qch, indels_qch)
 }
 
 

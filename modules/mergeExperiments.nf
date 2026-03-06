@@ -80,7 +80,7 @@ process makeSnpFile {
 
 process processSeqVars {
   container 'veupathdb/dnaseqanalysis:1.0.0'
-  publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
+  publishDir "$params.outputDir", mode: "copy", pattern: "$params.vcfCacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
@@ -90,13 +90,9 @@ process processSeqVars {
     path cacheFile
     path undoneStrainsFile
     val  reference_strain
-    path coverageDir
     path transcriptDb
     path indelDb
     path gtfFile
-    path coverageComplete
-    path bigwigsComplete
-    path bamsComplete
 
   output:
     path cacheFile
@@ -108,13 +104,11 @@ process processSeqVars {
     """
     set -euo pipefail
 
-
     julia /usr/bin/processSequenceVariations.jl \\
       --snp_file $snpFile \\
       --cache_file $cacheFile \\
       --undone_strains_file $undoneStrainsFile \\
       --reference_strain $reference_strain \\
-      --coverage_directory $coverageDir \\
       --transcript_db $transcriptDb \\
       --indel_db $indelDb \\
       --gtf_file $gtfFile
@@ -128,112 +122,6 @@ process processSeqVars {
     touch snpFeature.dat
     touch allele.dat
     touch product.dat
-    """
-}
-
-process addFeatureIdsToVariation {
-  publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeatureFinal.dat'
-
-  input:
-    path variationFile
-    path gusConfig
-
-  output:
-    path 'variationFeatureFinal.dat'
-
-  script:
-    """
-    set -euo pipefail
-    addFeatureIdsToVariation.pl \\
-         --variationFile $variationFile \\
-         --gusConfig $gusConfig
-    """
-
-  stub:
-    """
-    touch variationFeatureFinal.dat
-    """
-}
-
-process insertVariation {
-  tag "plugin"
-
-  input:
-    val extDbRlsSpec
-    path variationFile
-
-  output:
-    stdout
-
-  script:
-    """
-    set -euo pipefail
-
-    ga ApiCommonData::Load::Plugin::InsertVariant \\
-      --extDbRlsSpec '$extDbRlsSpec' \\
-      --variantFile '$variationFile' \\
-      --commit
-
-    echo "DONE"
-    """
-
-  stub:
-    """
-    echo "insert variation"
-    """
-}
-
-
-process insertProduct {
-  tag "plugin"
-
-  input:
-    path productFile
-
-  output:
-    stdout
-
-  script:
-    """
-    set -euo pipefail
-
-    ga ApiCommonData::Load::Plugin::InsertVariantProductSummary \\
-      --variantProductFile '$productFile' \\
-      --commit
-
-    echo "DONE"
-    """
-
-  stub:
-    """
-    echo "insert product"
-    """
-}
-
-
-process insertAllele {
-  tag "plugin"
-
-  input:
-    path alleleFile
-
-  output:
-    stdout
-
-  script:
-    """
-    set -euo pipefail
-
-    ga ApiCommonData::Load::Plugin::InsertVariantAlleleSummary \\
-      --variantAlleleFile '$alleleFile' \\
-      --commit
-
-    echo "DONE"
-    """
-
-  stub:
-    """
-    echo "insert allele"
     """
 }
 
