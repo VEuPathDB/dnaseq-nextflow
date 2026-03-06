@@ -1,16 +1,16 @@
 # Plan: Rewrite processSequenceVariations in Julia
 
 ## Scope
-Rewrite `bin/processSequenceVariationsNew.pl` as `bin/processSequenceVariations.jl`. The upstream transcript FASTA / transcript-space indels creation is out of scope (separate task). Update the Nextflow process definition and Dockerfile accordingly.
+Rewrite `bin/processSequenceVariationsNew.pl` as `bin/processSequenceVariations.jl`. The upstream preparation of CDS sequences and CDS-space indels (from genomic indels + GTF + consensus FASTA) is now in scope as separate Nextflow processes. Update the Nextflow process definition and Dockerfile accordingly.
 
 ## Architecture Overview
 
 ### Sequence access — single SQLite DB:
-All transcript/CDS sequences (reference AND per-strain) live in one SQLite database. No genomic FASTA access needed at all — the upstream process splices CDS sequences for every strain including the reference.
+All CDS sequences (reference AND per-strain) live in one SQLite database. No genomic FASTA access needed at all — the upstream process splices CDS sequences for every strain including the reference.
 
-**Transcript sequences DB** (`transcripts.db`) — produced by the upstream transcript-prep process (out of scope). Schema:
+**Coding sequences DB** (`codingSequences.db`) — produced by the upstream CDS-prep process. Schema:
 ```sql
-CREATE TABLE sequences (
+CREATE TABLE coding_sequences (
   strain TEXT NOT NULL,
   transcript_id TEXT NOT NULL,
   sequence TEXT NOT NULL,
@@ -18,16 +18,16 @@ CREATE TABLE sequences (
 );
 ```
 - The reference strain is included as a row (e.g. `strain='pfal3D7'`).
-- When the script moves to a new transcript, it fetches ALL strains for that transcript in a single query: `SELECT strain, sequence FROM sequences WHERE transcript_id=?`. Result is cached as a `Dict{String, String}` (strain → sequence). Individual codon lookups then hit this Dict — O(1), no SQL.
-- Cache is cleared when moving to the next transcript — keeps memory bounded.
-- One query per transcript regardless of strain count. Scales to 1000s of genomes efficiently.
+- When the script moves to a new CDS, it fetches ALL strains for that transcript_id in a single query: `SELECT strain, sequence FROM coding_sequences WHERE transcript_id=?`. Result is cached as a `Dict{String, String}` (strain → sequence). Individual codon lookups then hit this Dict — O(1), no SQL.
+- Cache is cleared when moving to the next CDS — keeps memory bounded.
+- One query per CDS regardless of strain count. Scales to 1000s of genomes efficiently.
 
-**Indels DB** (`indels.db`) — produced by the upstream transcript-prep process (out of scope). Schema:
+**Indels DB** (`codingIndels.db`) — produced by the upstream CDS-prep process. Schema:
 ```sql
 CREATE TABLE indels (
   strain TEXT NOT NULL,
   transcript_id TEXT NOT NULL,
-  position INTEGER NOT NULL,    -- position in transcript, reference coordinates
+  position INTEGER NOT NULL,    -- position in CDS, reference coordinates
   shift_amount INTEGER NOT NULL -- per-indel shift (not cumulative; e.g. +3 for insertion, -1 for deletion)
 );
 CREATE INDEX idx_indels ON indels(transcript_id, strain, position);
@@ -37,16 +37,16 @@ CREATE INDEX idx_indels ON indels(transcript_id, strain, position);
   SELECT COALESCE(SUM(shift_amount), 0) FROM indels
   WHERE transcript_id = ? AND strain = ? AND position < ?
   ```
-  Returns the total shift to apply to reference position P → adjusted position P' in the per-strain sequence.
-- **Frameshift detection** (computed once at startup): for each (strain, transcript) that has indels, fetch all indels sorted by position, compute running cumulative sum, and record whether any prefix sum is not divisible by 3 (and if so, at what position). Stored in a `Dict` in memory for O(1) lookup during the main loop.
+  Returns the total shift to apply to reference CDS position P → adjusted position P' in the per-strain CDS sequence.
+- **Frameshift detection** (computed once at startup): for each (strain, CDS) that has indels, fetch all indels sorted by position, compute running cumulative sum, and record whether any prefix sum is not divisible by 3 (and if so, at what position). Stored in a `Dict` in memory for O(1) lookup during the main loop.
 
-**Position adjustment for per-strain sequences:** Per-strain transcript sequences incorporate indels relative to the reference, so a variant at reference CDS position P maps to a different position P' in the per-strain sequence. The rule is simple: P' = P + (sum of all indel shifts in this transcript for this strain where indel_position < P). This sum is computed via a single SQL query against the indels DB (see indels DB schema below). Used only internally for codon extraction — not an output column.
+**Position adjustment for per-strain sequences:** Per-strain CDS sequences incorporate indels relative to the reference, so a variant at reference CDS position P maps to a different position P' in the per-strain sequence. The rule is simple: P' = P + (sum of all indel shifts in this CDS for this strain where indel_position < P). This sum is computed via a single SQL query against the indels DB (see indels DB schema below). Used only internally for codon extraction — not an output column.
 
 ### Why this fixes the performance:
 - The Perl `getVariations` uses `sed "${line}q;d"` per line → O(N²) subprocess spawns. **Replaced with sequential file reads** (two open handles, single-pass merge).
-- The Perl `getCodingSequence` shells out to `samtools faidx` per call. **Replaced with one bulk SQLite SELECT per transcript** (fetches all strains at once) + in-memory Dict cache. Zero subprocesses. The inner loop is pure Dict lookups + string slicing.
+- The Perl `getCodingSequence` shells out to `samtools faidx` per call. **Replaced with one bulk SQLite SELECT per CDS** (fetches all strains at once) + in-memory Dict cache. Zero subprocesses. The inner loop is pure Dict lookups + string slicing.
 - The Perl `addTranscript` linear-scans all transcripts per variant. **Replaced with sorted interval array + binary search** → O(log N).
-- The Perl coordinate-shifting logic (200+ lines) for per-strain CDS extraction is **eliminated** — transcript sequences are pre-spliced and pre-shifted by the upstream process.
+- The Perl coordinate-shifting logic (200+ lines) for per-strain CDS extraction is **eliminated** — CDS sequences are pre-spliced and pre-shifted by the upstream process.
 
 ---
 
@@ -55,9 +55,18 @@ CREATE INDEX idx_indels ON indels(transcript_id, strain, position);
 | File | Change |
 |---|---|
 | `bin/processSequenceVariations.jl` | **NEW** — the Julia script (replaces the Perl script's role) |
-| `modules/mergeExperiments.nf` | Update `processSeqVars` process: new inputs, Julia invocation |
-| `workflows/mergeExperiments.nf` | Update `processSeqVars` call site with new input channels |
+| `modules/mergeExperiments.nf` | Add `makeGenomicIndelDb`, `makeCodingData`, `makeCodingIndelsDb`, `makeCodingSequencesDb` processes; update `processSeqVars` inputs |
+| `workflows/mergeExperiments.nf` | Wire new CDS-prep processes; update `processSeqVars` call site |
 | `Dockerfile` | Add Julia runtime + SQLite.jl precompilation |
+
+### New upstream processes (CDS-prep pipeline)
+
+| Process | Inputs | Outputs | Description |
+|---|---|---|---|
+| `makeGenomicIndelDb` | `indels.tsv` (combined) | `genomicIndels.db` | Load per-strain genomic indels into SQLite |
+| `makeCodingData` | `genomicIndels.db`, GTF, consensus FASTAs | `codingSequences.fa`, `codingIndels.tsv` | Splice CDS sequences per strain; project genomic indels to CDS coordinates |
+| `makeCodingSequencesDb` | `codingSequences.fa` | `codingSequences.db` | Load spliced CDS sequences into SQLite |
+| `makeCodingIndelsDb` | `codingIndels.tsv` | `codingIndels.db` | Load CDS-space indels into SQLite with index |
 
 The Perl script (`bin/processSequenceVariationsNew.pl`) is kept in place — it's still copied into the image by `ADD /bin/*`. It just won't be called anymore. Remove it in a follow-up cleanup if desired.
 
@@ -71,8 +80,8 @@ The Perl script (`bin/processSequenceVariationsNew.pl`) is kept in place — it'
 | `--cache_file` | `cacheFile` (existing) | 20-col TSV, same columns as output cache. May be empty on first run. |
 | `--undone_strains_file` | `undoneStrainsFile` (existing) | One strain name per line |
 | `--coverage_directory` | `coverageDir` (existing) | Per-strain `*.coverage.txt` files |
-| `--transcript_db` | **NEW** | Path to SQLite DB with transcript/CDS sequences for all strains including reference |
-| `--indel_db` | **NEW** | SQLite DB with per-strain indels in transcript coordinates. Used for position adjustment and frameshift detection. See schema below. |
+| `--cds_db` | **NEW** | Path to SQLite DB (`codingSequences.db`) with CDS sequences for all strains including reference |
+| `--indel_db` | **NEW** | SQLite DB (`codingIndels.db`) with per-strain indels in CDS coordinates. Used for position adjustment and frameshift detection. See schema below. |
 | `--gtf_file` | `gtfFile` (existing) | Gene annotations (CDS intervals for transcript/exon lookup) |
 | `--reference_strain` | param (existing) | Strain name to use when looking up reference sequences in transcript DB |
 
@@ -108,9 +117,9 @@ One row per expanded (non-ambiguous) codon per variant position. IUPAC ambiguity
 
 ### 1. Startup / initialization
 - Parse CLI args (use a simple hand-rolled parser — no package dependency needed for ~10 flags)
-- Open SQLite DB connections: `transcripts.db` (sequences) and `indels.db` (indels)
-- Parse GTF → build sorted `CDSInterval` array + per-transcript CDS exon list (exon order and lengths needed for position_in_cds computation)
-- Precompute frameshift info from indels DB: query all (strain, transcript) combinations that have indels, compute running cumulative sum per combination, record first position where cumulative sum % 3 ≠ 0. Store in `frameshift_info::Dict{String, Dict{String, Tuple{Bool, Int}}}` (strain → transcript → (has_frameshift, frameshift_position))
+- Open SQLite DB connections: `codingSequences.db` (CDS sequences) and `codingIndels.db` (CDS-space indels)
+- Parse GTF → build sorted `CDSInterval` array + per-CDS exon list (exon order and lengths needed for position_in_cds computation)
+- Precompute frameshift info from indels DB: query all (strain, transcript_id) combinations that have indels, compute running cumulative sum per combination, record first position where cumulative sum % 3 ≠ 0. Store in `frameshift_info::Dict{String, Dict{String, Tuple{Bool, Int}}}` (strain → transcript_id → (has_frameshift, frameshift_position))
 - Open all per-strain coverage files; build `Dict{String, CoverageReader}`
 - Open output file handles (cache, snpFeature, allele, product)
 
@@ -133,7 +142,7 @@ a) Determine (seq_id, location) from the batch
 b) Binary search CDSInterval array → is it coding? Which transcript? Which CDS exon?
 c) If coding:
      - Compute position_in_cds (sum prior exon lengths + offset in current exon, from GTF)
-     - If transcript changed: bulk-fetch all strains' sequences for this transcript (one SQL query → Dict cache)
+     - If CDS changed: bulk-fetch all strains' sequences for this transcript_id (one SQL query → Dict cache)
      - Extract reference codon at position_in_cds from cached reference sequence; translate → reference product
      - For each strain variation:
          - Look up strain's sequence from the Dict cache (O(1))
@@ -154,23 +163,23 @@ j) If coding: write allele and product summary records
 
 **Sequence access via SQLite + in-memory caching:**
 ```julia
-# When transcript changes, bulk-fetch all strains at once:
-function load_transcript_sequences(db, transcript_id) -> Dict{String, String}
-    # SELECT strain, sequence FROM sequences WHERE transcript_id = ?
+# When CDS (transcript_id) changes, bulk-fetch all strains at once:
+function load_cds_sequences(db, transcript_id) -> Dict{String, String}
+    # SELECT strain, sequence FROM coding_sequences WHERE transcript_id = ?
     # Returns Dict mapping strain -> sequence for all strains
 end
 
-# Cache: current_transcript_seqs::Dict{String, String}
+# Cache: current_cds_seqs::Dict{String, String}
 # Cleared and reloaded when transcript_id changes.
-# Per-variant lookup is just: current_transcript_seqs[strain] → O(1)
+# Per-variant lookup is just: current_cds_seqs[strain] → O(1)
 
 # Position adjustment for per-strain sequences:
-# For a variant at reference position P in transcript T for strain S:
+# For a variant at reference CDS position P in transcript_id T for strain S:
 #   shift = SQL: SELECT COALESCE(SUM(shift_amount), 0) FROM indels
 #                WHERE transcript_id=T AND strain=S AND position < P
 #   adjusted_P = P + shift
 #
-# adjusted_P indexes into the per-strain transcript sequence.
+# adjusted_P indexes into the per-strain CDS sequence.
 # For the reference strain there are no indels, so shift=0 and adjusted_P == P.
 ```
 
@@ -183,7 +192,7 @@ end
 O(log N) per variant. N = total CDS exons across all transcripts.
 
 **Frameshift detection:**
-At startup, for each (strain, transcript): scan transcript-space indels in order, accumulate shift. Record the position of the first indel where cumulative_shift % 3 ≠ 0. At runtime: if variant's position_in_cds > that position → downstream_of_frameshift = 1. (Transcript coordinates are always 5'→3', so comparison direction is always `>`  regardless of strand — simplification over the Perl code.)
+At startup, for each (strain, transcript_id): scan CDS-space indels in order, accumulate shift. Record the position of the first indel where cumulative_shift % 3 ≠ 0. At runtime: if variant's position_in_cds > that position → downstream_of_frameshift = 1. (CDS coordinates are always 5'→3', so comparison direction is always `>` regardless of strand — simplification over the Perl code.)
 
 **IUPAC codon expansion:**
 Cartesian product of expanded bases at each position. E.g. codon "RYA" → {A,G} × {C,T} × {A} = ["ACA","ATA","GCA","GTA"]. Each expanded codon is translated independently.
@@ -192,7 +201,7 @@ Cartesian product of expanded bases at each position. E.g. codon "RYA" → {A,G}
 Same sequential-scan approach as the Perl code. Each coverage file is sorted by (seq_id, start). Maintain a cursor per strain. For each variant position, advance each strain's cursor until the current span covers the position (or passes it). Extract coverage/percent from the span's arrays by offset.
 
 ### 5. Reverse complement
-All transcript sequences in the DB are assumed to already be in sense (5'→3') orientation — the upstream process is responsible for reverse-complementing minus-strand genes when splicing CDS. The Julia script does not need to reverse-complement anything. (If this assumption is violated, the upstream process has a bug.)
+All CDS sequences in the DB are assumed to already be in sense (5'→3') orientation — the upstream CDS-prep process is responsible for reverse-complementing minus-strand genes when splicing CDS. The Julia script does not need to reverse-complement anything. (If this assumption is violated, the upstream process has a bug.)
 
 ---
 
@@ -201,8 +210,8 @@ All transcript sequences in the DB are assumed to already be in sense (5'→3') 
 ### modules/mergeExperiments.nf — `processSeqVars` process
 
 **New inputs to add:**
-- `path transcriptDb` — SQLite DB with transcript/CDS sequences (all strains + reference)
-- `path indelDb` — SQLite DB with per-strain indels in transcript coordinates (position adjustment + frameshift detection)
+- `path cdsDb` — SQLite DB (`codingSequences.db`) with CDS sequences (all strains + reference)
+- `path indelDb` — SQLite DB (`codingIndels.db`) with per-strain indels in CDS coordinates (position adjustment + frameshift detection)
 
 **Remove:** `path genomeFasta`, `path consensusFasta`, and the `gunzip` step (all sequence access now via SQLite)
 
@@ -210,7 +219,7 @@ All transcript sequences in the DB are assumed to already be in sense (5'→3') 
 
 ### workflows/mergeExperiments.nf — call site
 
-Add placeholder channels for `transcriptDb` and `indelDb` (these will be wired to the upstream transcript-prep process once that exists). Update the `processSeqVars(...)` argument list accordingly.
+Wire `cdsDb` and `indelDb` to the outputs of the upstream CDS-prep processes (`makeCodingSequencesDb` and `makeCodingIndelsDb`). Update the `processSeqVars(...)` argument list accordingly.
 
 ---
 

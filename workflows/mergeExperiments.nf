@@ -1,9 +1,9 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-include { checkUniqueIds } from '../modules/mergeExperiments.nf'
 include { mergeVcfs } from '../modules/mergeExperiments.nf'
-include { makeSnpFile } from '../modules/mergeExperiments.nf'
+include { makeGenomicIndelDb } from '../modules/mergeExperiments.nf'
+include { makeCodingData } from '../modules/mergeExperiments.nf'
 include { processSeqVars } from '../modules/mergeExperiments.nf'
 include { snpEff } from '../modules/mergeExperiments.nf'
 
@@ -17,22 +17,18 @@ workflow me {
 
   main:
 
-    combinedFastagz = fastas_qch.collectFile(name: 'CombinedFasta.fa.gz')
     combinedIndels = indels_qch.collectFile(name: 'indel.tsv')
+    allFastas      = fastas_qch.collect()
 
-    checkUniqueIds(combinedFastagz)
+    genomicIndelDb = makeGenomicIndelDb(combinedIndels)
+
+    codingData = makeCodingData(allFastas, genomicIndelDb, params.gtfFile, params.genomeFastaFile)
 
     allvcfs = vcfs_qch.collect()
 
     mergedVcf = mergeVcfs(allvcfs)
 
-    makeSnpFileResults = makeSnpFile(mergedVcf)
-
-    // Placeholder channels — wired to upstream transcript-prep process once it exists
-    transcriptDb = Channel.of(params.transcriptDb)
-    indelDb = Channel.of(params.indelDb)
-
-    processSeqVarsResults = processSeqVars(makeSnpFileResults.snpFile, params.vcfCacheFile, params.undoneStrains, params.reference_strain, transcriptDb, indelDb, params.gtfFile)
+    processSeqVarsResults = processSeqVars(mergedVcf, params.vcfCacheFile, params.undoneStrains, params.reference_strain, codingData.codingSequencesDb, codingData.codingIndelsDb, params.gtfFile)
 
     snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
 

@@ -55,25 +55,66 @@ process mergeVcfs {
 }
 
 
-process makeSnpFile {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+process makeCodingData {
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   input:
-    path 'merged.vcf.gz'
+    path fastas
+    path genomicIndelDb
+    path gtfFile
+    path genomeFastaFile
 
-  output: 
-    path 'snpFile.tsv', emit: snpFile
+  output:
+    path 'codingSequences.db', emit: codingSequencesDb
+    path 'codingIndels.db',    emit: codingIndelsDb
 
   script:
     """
-    cp merged.vcf.gz hold.vcf.gz
-    gunzip hold.vcf.gz
-    perl /usr/bin/makeSnpFile.pl --vcf hold.vcf --output snpFile.tsv
+    set -euo pipefail
+    makeCodingData.jl \\
+      --genomic_indel_db $genomicIndelDb \\
+      --gtf_file $gtfFile \\
+      --genome_fasta $genomeFastaFile \\
+      --cds_db_out codingSequences.db \\
+      --indels_db_out codingIndels.db
     """
 
   stub:
     """
-    touch snpFile.tsv
+    touch codingSequences.db
+    touch codingIndels.db
+    """
+}
+
+
+process makeGenomicIndelDb {
+  container 'veupathdb/shortreadaligner:1.0.0'
+
+  input:
+    path 'indels.tsv'
+
+  output:
+    path 'genomicIndels.db'
+
+  script:
+    """
+    set -euo pipefail
+    sqlite3 genomicIndels.db <<'SQL'
+CREATE TABLE genomic_indels (
+  strain      TEXT    NOT NULL,
+  sequence_id TEXT    NOT NULL,
+  position    INTEGER NOT NULL,
+  shift       INTEGER NOT NULL
+);
+.separator "\\t"
+.import indels.tsv genomic_indels
+CREATE INDEX idx_genomic_indels ON genomic_indels(sequence_id, strain, position);
+SQL
+    """
+
+  stub:
+    """
+    touch genomicIndels.db
     """
 }
 
@@ -86,7 +127,7 @@ process processSeqVars {
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
 
   input:
-    path snpFile
+    path vcfFile
     path cacheFile
     path undoneStrainsFile
     val  reference_strain
@@ -105,7 +146,7 @@ process processSeqVars {
     set -euo pipefail
 
     julia /usr/bin/processSequenceVariations.jl \\
-      --snp_file $snpFile \\
+      --vcf_file $vcfFile \\
       --cache_file $cacheFile \\
       --undone_strains_file $undoneStrainsFile \\
       --reference_strain $reference_strain \\
