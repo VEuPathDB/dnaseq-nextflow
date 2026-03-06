@@ -87,9 +87,6 @@ function parse_gtf(gtf_file::String)
         end
     end
 
-    # Sort intervals by (seq_id, start) for binary search
-    intervals = sort(exons, by = e -> (e.seq_id, e.start))
-
     # Group by transcript and sort in 5'→3' order
     by_transcript = TranscriptExons()
     for e in exons
@@ -109,6 +106,13 @@ function parse_gtf(gtf_file::String)
             end
         end
     end
+
+    # Build intervals after exon_number reassignment so they stay consistent
+    all_exons = CdsExon[]
+    for exon_list in values(by_transcript)
+        append!(all_exons, exon_list)
+    end
+    intervals = sort(all_exons, by = e -> (e.seq_id, e.start))
 
     return intervals, by_transcript
 end

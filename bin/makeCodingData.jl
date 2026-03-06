@@ -252,4 +252,6 @@ function main()
     println(stderr, "Done. Wrote $cds_db_out and $indels_db_out")
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end
