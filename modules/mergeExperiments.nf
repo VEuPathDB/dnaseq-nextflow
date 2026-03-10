@@ -25,10 +25,9 @@ process checkUniqueIds {
 
 process mergeVcfs {
   container 'veupathdb/dnaseqanalysis:1.0.0'
-  publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
 
   input:
-    path '*.vcf.gz'
+    path "*.vcf.gz"
 
   output:
     path 'merged.vcf.gz'
@@ -37,26 +36,19 @@ process mergeVcfs {
     """
     set -euo pipefail
 
-    for i in *.vcf.gz; do cp \$i \$i.tmp.vcf.gz; gunzip \$i.tmp.vcf.gz; bgzip \$i.tmp.vcf; cp \$i.tmp.vcf.gz \$i; rm \$i.tmp.vcf.gz; tabix \$i; done
-    bcftools merge \\
-          -o merged.vcf.gz \\
-          -O z *.vcf.gz
-    cp merged.vcf.gz merge.vcf.gz
-    gunzip merge.vcf.gz
-    sed -i 's/\\%//g' merge.vcf
-    mv merge.vcf merged.vcf
+    for vcf in *.vcf.gz; do bcftools index --tbi \$vcf; done
+    bcftools merge -O z -o merged.vcf.gz *.vcf.gz
     """
 
   stub:
     """
     touch merged.vcf.gz
-    touch merged.vcf
     """
 }
 
 
 process makeCodingData {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
     path fastas
@@ -88,7 +80,7 @@ process makeCodingData {
 
 
 process makeGenomicIndelDb {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
     path 'indels.tsv'
@@ -121,6 +113,7 @@ SQL
 
 process processSeqVars {
   container 'veupathdb/dnaseqanalysis:1.0.0'
+
   publishDir "$params.outputDir", mode: "copy", pattern: "$params.vcfCacheFile"
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'

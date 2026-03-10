@@ -197,13 +197,15 @@ process mergeGvcfs {
 process bcftoolsConsensusAndMask {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
+  publishDir "$params.outputDir", mode: "copy", saveAs: { "${sampleName}_consensus.fa.gz" }
+
   input:
     tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
     path(bamFile)
 
   output:
-    tuple val(sampleName), path('cons_masked.fa')
+    path 'consensus.fa.gz'
 
   script:
     """
@@ -221,39 +223,13 @@ process bcftoolsConsensusAndMask {
     maskGenome.pl -p temp.pileup -f cons.fa.fai -dc $params.minCoverage -o masked.fa
     fold -w 60 masked.fa > cons_masked.fa
     rm temp.pileup
+    bgzip -c cons_masked.fa > consensus.fa.gz
     """
 
   stub:
     """
-    touch cons_masked.fa
+    touch consensus.fa.gz
     """
 
 }
 
-process addSampleToDefline {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
-
-  publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
-
-  input:
-  tuple val(sampleName), path(consFasta)
-
-  output:
-    path 'unique_ids.fa.gz'
-
-  script:
-    """
-    set -euo pipefail
-    addSampleToDefline.pl \\
-         -i $consFasta \\
-         -o unique_ids.fa \\
-         -s $sampleName
-    gzip unique_ids.fa
-    """
-
-  stub:
-    """
-    touch unique_ids.fa.gz
-    """
-
-}
