@@ -5,7 +5,17 @@ ENV TABIX_VERSION=0.2.6
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools python3 tabix samtools perl default-jre unzip cpanminus bioperl emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa trimmomatic openjdk-21-jre-headless && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools python3 tabix samtools perl default-jre unzip cpanminus bioperl emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa trimmomatic openjdk-21-jre-headless sqlite3 && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+
+ENV JULIA_VERSION=1.10.10
+RUN wget -q https://julialang-s3.julialang.org/bin/linux/x64/1.10/julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
+    && tar xzf julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
+    && mv julia-${JULIA_VERSION} /opt/julia \
+    && rm julia-${JULIA_VERSION}-linux-x86_64.tar.gz
+ENV PATH=/opt/julia/bin:$PATH
+
+# Precompile SQLite.jl (only external dependency)
+RUN julia -e 'using Pkg; Pkg.add("SQLite"); using SQLite'
 
 WORKDIR /gusApp/gus_home/lib/perl
 
