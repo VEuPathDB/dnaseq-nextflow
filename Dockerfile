@@ -14,8 +14,8 @@ RUN wget -q https://julialang-s3.julialang.org/bin/linux/x64/1.10/julia-${JULIA_
     && rm julia-${JULIA_VERSION}-linux-x86_64.tar.gz
 ENV PATH=/opt/julia/bin:$PATH
 
-# Precompile SQLite.jl (only external dependency)
-RUN julia -e 'using Pkg; Pkg.add("SQLite"); using SQLite'
+RUN julia -e 'using Pkg; Pkg.add("SQLite"); Pkg.precompile()'
+ENV JULIA_PROJECT=@v1.10
 
 WORKDIR /gusApp/gus_home/lib/perl
 
