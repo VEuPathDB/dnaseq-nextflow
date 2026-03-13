@@ -21,7 +21,7 @@ include { freebayes } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
-include { bcftoolsConsensusAndMask } from '../modules/snp.nf'
+include { makeConsensusFromGvcf } from '../modules/snp.nf'
 include { bcftoolsMpileupGvcf } from '../modules/snp.nf'
 include { mergeGvcfs } from '../modules/snp.nf'
 
@@ -102,9 +102,9 @@ workflow ps {
 
     makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(combinedVcf, reorderFastaResults, gatkResults.bamFiles.collect())
-
     mpileupGvcfResults = bcftoolsMpileupGvcf(gatkResults.bamTuple, reorderFastaResults)
+
+    makeConsensusFromGvcf(mpileupGvcfResults, reorderFastaResults)
 
     mergeGvcfs(
         mpileupGvcfResults.count(),

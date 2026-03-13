@@ -194,15 +194,14 @@ process mergeGvcfs {
     """
 }
 
-process bcftoolsConsensusAndMask {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+process makeConsensusFromGvcf {
+  container 'veupathdb/shortreadaligner:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy", saveAs: { "${sampleName}_consensus.fa.gz" }
 
   input:
-    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
+    tuple val(sampleName), path(gvcfGz), path(gvcfGzTbi)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
-    path(bamFile)
 
   output:
     path 'consensus.fa.gz'
@@ -210,20 +209,13 @@ process bcftoolsConsensusAndMask {
   script:
     """
     set -euo pipefail
-
-    bcftools consensus \\
-      -I \\
-      -f $genomeReorderedFasta $concatVcfGz > cons.fa
-
-    samtools mpileup -f cons.fa -A -B ${sampleName}.bam > temp.pileup
-
-    # Index the unmasked consensus
-    samtools faidx cons.fa
-
-    maskGenome.pl -p temp.pileup -f cons.fa.fai -dc $params.minCoverage -o masked.fa
-    fold -w 60 masked.fa > cons_masked.fa
-    rm temp.pileup
-    bgzip -c cons_masked.fa > consensus.fa.gz
+    makeConsensusFastaFromGvcf.py \\
+      --gvcf $gvcfGz \\
+      --ref $genomeReorderedFasta \\
+      --fai $genomeReorderedFastaIndex \\
+      --min-coverage $params.minCoverage \\
+      --output consensus.fa
+    bgzip consensus.fa
     """
 
   stub:
