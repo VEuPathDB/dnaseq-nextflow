@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-include { mergeVcfs; mergeVcfs as mergeGvcfs } from '../modules/mergeExperiments.nf'
+include { mergeVcfs; mergeGvcfs } from '../modules/mergeExperiments.nf'
 include { makeGenomicIndelDb } from '../modules/mergeExperiments.nf'
 include { makeCodingData } from '../modules/mergeExperiments.nf'
 include { processSeqVars } from '../modules/mergeExperiments.nf'
@@ -27,7 +27,7 @@ workflow me {
     allgvcfs = gvcfs_qch.collect().branch { single: it.size() == 1; multiple: true }
 
     mergedVcf  = allvcfs.single.map { it[0] }.mix(mergeVcfs(allvcfs.multiple))
-    mergedGvcf = allgvcfs.single.map { it[0] }.mix(mergeGvcfs(allgvcfs.multiple))
+    mergedGvcf = allgvcfs.single.map { it[0] }.mix(mergeGvcfs(allgvcfs.multiple, file(params.genomeFastaFile)))
 
     codingData = makeCodingData(allFastas, genomicIndelDb, params.gtfFile, params.genomeFastaFile)
 

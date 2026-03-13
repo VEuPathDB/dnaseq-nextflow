@@ -47,6 +47,31 @@ process mergeVcfs {
 }
 
 
+process mergeGvcfs {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  input:
+    path "*.vcf.gz"
+    path genomeFastaFile
+
+  output:
+    path 'merged.vcf.gz'
+
+  script:
+    """
+    set -euo pipefail
+
+    for vcf in *.vcf.gz; do bcftools index --tbi \$vcf; done
+    bcftools merge --gvcf $genomeFastaFile -O z -o merged.vcf.gz *.vcf.gz
+    """
+
+  stub:
+    """
+    touch merged.vcf.gz
+    """
+}
+
+
 process makeCodingData {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
