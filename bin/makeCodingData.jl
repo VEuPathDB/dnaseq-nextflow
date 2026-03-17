@@ -78,24 +78,52 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    extract_cds_sequence(genome_seqs, exon_list) -> String
+    fasta_offset(indel_db, strain, seq_id, before_pos) -> Int
+
+Return the cumulative indel shift for `strain` on `seq_id` at all positions
+strictly less than `before_pos`. Used to convert a reference genomic coordinate
+to the corresponding position in a consensus FASTA that embeds genomic indels.
+"""
+function fasta_offset(indel_db::SQLite.DB, strain::String, seq_id::String, before_pos::Int)
+    row = first(execute(indel_db,
+        "SELECT COALESCE(SUM(shift), 0) FROM genomic_indels
+         WHERE strain = ? AND sequence_id = ? AND position < ?",
+        [strain, seq_id, before_pos]))
+    row[1]
+end
+
+"""
+    extract_cds_sequence(genome_seqs, exon_list, strain, indel_db) -> String
 
 Splice and return the CDS sequence for a transcript from genome sequences.
 `exon_list` must be in 5'→3' order (as returned by parse_gtf).
 Reverse-complements minus-strand transcripts using IUPAC-aware complement.
 Returns "" if any exon's seq_id is missing from genome_seqs.
+
+For non-reference strains, pass `strain` and `indel_db` so that exon slice
+coordinates are adjusted for upstream genomic indels embedded in the consensus
+FASTA.
 """
-function extract_cds_sequence(genome_seqs::Dict{String,String}, exon_list::Vector{CdsExon})
+function extract_cds_sequence(genome_seqs::Dict{String,String}, exon_list::Vector{CdsExon},
+                               strain::String="reference",
+                               indel_db::Union{SQLite.DB,Nothing}=nothing)
     isempty(exon_list) && return ""
     parts = String[]
     for e in exon_list
         seq = get(genome_seqs, e.seq_id, nothing)
         seq === nothing && return ""
-        push!(parts, seq[e.start:e.stop])
+        if indel_db !== nothing
+            fstart = e.start + fasta_offset(indel_db, strain, e.seq_id, e.start)
+            fstop  = e.stop  + fasta_offset(indel_db, strain, e.seq_id, e.stop + 1)
+        else
+            fstart, fstop = e.start, e.stop
+        end
+        push!(parts, seq[fstart:fstop])
     end
-    cds = join(parts)
-    if exon_list[1].strand == '-'
-        cds = reverse_complement(cds)
+    if exon_list[1].strand != '-'
+        cds = join(parts)
+    else
+        cds = join(reverse_complement(p) for p in parts)
     end
     cds
 end
@@ -185,8 +213,9 @@ end
 
 function process_strain(strain, genome_seqs, by_transcript, indel_src_db,
                         cds_insert_stmt, indels_insert_stmt)
+    db_for_coords = strain == "reference" ? nothing : indel_src_db
     for (transcript_id, exon_list) in by_transcript
-        seq = extract_cds_sequence(genome_seqs, exon_list)
+        seq = extract_cds_sequence(genome_seqs, exon_list, strain, db_for_coords)
         isempty(seq) && continue
         execute(cds_insert_stmt, [strain, transcript_id, seq])
 

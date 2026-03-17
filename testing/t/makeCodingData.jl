@@ -120,11 +120,11 @@ end
 
 @testset "extract_cds_sequence minus strand two exons (5'→3' order)" begin
     # Minus-strand gene: exon1 (5') at 7-9 "CCC", exon2 (3') at 1-3 "ATG"
-    # Spliced before rc: "CCC" + "ATG" = "CCCATG"
+    # Each exon is individually RC'd then concatenated: RC("CCC") + RC("ATG") = "GGG" + "CAT"
     genome = Dict("chr1" => "ATGNNNCCC")
     exon1 = CdsExon("chr1", 7, 9, '-', "T1", 1)
     exon2 = CdsExon("chr1", 1, 3, '-', "T1", 2)
-    @test extract_cds_sequence(genome, [exon1, exon2]) == reverse_complement("CCCATG")
+    @test extract_cds_sequence(genome, [exon1, exon2]) == "GGGCAT"
 end
 
 @testset "extract_cds_sequence missing seq_id returns empty" begin
@@ -137,6 +137,31 @@ end
     genome = Dict("chr1" => "ATGNRYATGC")
     exon = CdsExon("chr1", 4, 6, '+', "T1", 1)   # "NRY"
     @test extract_cds_sequence(genome, [exon]) == "NRY"
+end
+
+@testset "extract_cds_sequence plus strand with upstream deletion in FASTA" begin
+    # Reference exon: chr1 6-8 = "TGC" in the reference
+    # Strain has a -2 deletion at position 3 (upstream of exon)
+    # So in the strain FASTA the exon is shifted left by 2: positions 4-6 = "TGC"
+    # FASTA: "AATGCCC..." (2 bases removed at pos 3 → AAATGCCCCC becomes AATGCCCCC)
+    ref_genome   = Dict("chr1" => "AAAAATGCCCCC")  # ref: exon 6-8 = "TGC"
+    strain_fasta = Dict("chr1" => "AAATGCCCCC")    # 2 bases deleted before pos 6
+    exon = CdsExon("chr1", 6, 8, '+', "T1", 1)
+    db = make_genomic_indel_db([("strainA", "chr1", 3, -2)])
+    @test extract_cds_sequence(ref_genome,   [exon])                        == "TGC"
+    @test extract_cds_sequence(strain_fasta, [exon], "strainA", db)         == "TGC"
+end
+
+@testset "extract_cds_sequence plus strand with upstream insertion in FASTA" begin
+    # Reference exon: chr1 4-6 = "CAT"
+    # Strain has a +3 insertion at position 1 (upstream)
+    # FASTA is shifted right by 3: exon is at positions 7-9 in FASTA
+    ref_genome   = Dict("chr1" => "AAACATGG")
+    strain_fasta = Dict("chr1" => "AAATTTCATGG")  # 3 bases inserted at pos 1
+    exon = CdsExon("chr1", 4, 6, '+', "T1", 1)
+    db = make_genomic_indel_db([("strainA", "chr1", 1, 3)])
+    @test extract_cds_sequence(ref_genome,   [exon])                == "CAT"
+    @test extract_cds_sequence(strain_fasta, [exon], "strainA", db) == "CAT"
 end
 
 # ---------------------------------------------------------------------------
