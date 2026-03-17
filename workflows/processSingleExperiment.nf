@@ -22,7 +22,6 @@ include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
 include { makeConsensusFromGvcf } from '../modules/snp.nf'
-include { bcftoolsMpileupGvcf } from '../modules/snp.nf'
 include { mergeGvcfs } from '../modules/snp.nf'
 
 // CNV
@@ -88,12 +87,12 @@ workflow ps {
     freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
 
     // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
-    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
         tuple(sampleName, vcfGz, vcfGzTbi)
     }
 
     // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
-    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
     }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
@@ -102,13 +101,15 @@ workflow ps {
 
     makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    mpileupGvcfResults = bcftoolsMpileupGvcf(gatkResults.bamTuple, reorderFastaResults)
+    freebayesGvcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
+        tuple(sampleName, gvcfGz, gvcfGzTbi)
+    }
 
-    makeConsensusFromGvcf(mpileupGvcfResults, reorderFastaResults)
+    makeConsensusFromGvcf(freebayesGvcf, reorderFastaResults)
 
     mergeGvcfs(
-        mpileupGvcfResults.count(),
-        mpileupGvcfResults.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
+        freebayesGvcf.count(),
+        freebayesGvcf.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
             .groupTuple(by: 2, sort: { a, b -> a <=> b })
     )
 
