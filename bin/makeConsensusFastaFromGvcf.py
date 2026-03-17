@@ -77,6 +77,11 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, min_coverage):
             ref_pos = pos + len(v.REF)
             continue
 
+        if 'GT' not in v.FORMAT:
+            segments.append('N' * len(v.REF))
+            ref_pos = pos + len(v.REF)
+            continue
+
         gt_str = v.gt_bases[0]   # e.g. 'A/G' or 'A|G' for the single sample
         if '.' in gt_str:
             segments.append('N' * len(v.REF))
