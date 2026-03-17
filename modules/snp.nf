@@ -151,9 +151,12 @@ process bcftoolsMpileupGvcf {
     bcftools mpileup \\
       --gvcf $params.minCoverage \\
       -f $genomeReorderedFasta \\
+      $bamFile \\
+    | bcftools call \\
+      -m \\
+      --gvcf $params.minCoverage \\
       -O z \\
-      -o ${sampleName}.g.vcf.gz \\
-      $bamFile
+      -o ${sampleName}.g.vcf.gz
     bcftools index -t ${sampleName}.g.vcf.gz
     """
 
@@ -195,7 +198,7 @@ process mergeGvcfs {
 }
 
 process makeConsensusFromGvcf {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy", saveAs: { "${sampleName}_consensus.fa.gz" }
 
