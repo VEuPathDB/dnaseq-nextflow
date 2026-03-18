@@ -29,7 +29,10 @@ process freebayes {
 
     # Split into SNPs and indels for use in CNV
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
-    bcftools view -v indels freebayes.vcf > freebayes.indels.vcf
+    # Split multi-allelic records, then select indels by length difference (catches complex variants
+    # missed by -v indels) while excluding symbolic alleles like <*>
+    bcftools norm -m- freebayes.vcf | \
+      bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<"' > freebayes.indels.vcf
 
     # Compress and index split VCFs
     bgzip freebayes.snps.vcf
