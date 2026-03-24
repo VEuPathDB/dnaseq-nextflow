@@ -80,11 +80,10 @@ workflow processSingleExperiment {
 
 workflow mergeExperiments {
   fastas_qch  = Channel.fromPath(params.relativeConsensusFilePattern)
-  vcfs_qch    = Channel.fromPath(params.vcfFiles)
   gvcfs_qch   = Channel.fromPath(params.gVcfFiles)
   indels_qch  = Channel.fromPath(params.indelsFiles)
-    
-  me(fastas_qch, vcfs_qch, gvcfs_qch, indels_qch)
+
+  me(fastas_qch, gvcfs_qch, indels_qch)
 }
 
 

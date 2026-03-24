@@ -121,8 +121,6 @@ process mergeVcfs {
 process makeMergedVariantIndex {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy"
-
   input:
     path(resultVcfGz)
 
