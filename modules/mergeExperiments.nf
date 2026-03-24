@@ -170,14 +170,15 @@ process processSeqVars {
       --reference_strain $reference_strain \\
       --transcript_db $transcriptDb \\
       --indel_db $indelDb \\
-      --gtf_file $gtfFile
+      --gtf_file $gtfFile \\
+      --min_coverage $params.minCoverage
 
     mv snpFeature.dat variationFeature.dat
     """
 
   stub:
     """
-    touch cache.txt
+    touch cache.vcf
     touch snpFeature.dat
     touch allele.dat
     touch product.dat
