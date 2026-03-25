@@ -139,7 +139,8 @@ SQL
 process processSeqVars {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy", pattern: "$params.vcfCacheFile"
+  publishDir "$params.outputDir", mode: "copy", pattern: 'output.vcf.gz', saveAs: { params.vcfCacheFile }
+  publishDir "$params.outputDir", mode: "copy", pattern: 'output.vcf.gz.tbi'
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
@@ -154,7 +155,8 @@ process processSeqVars {
     path gtfFile
 
   output:
-    path cacheFile
+    path 'output.vcf.gz', emit: outputVcf
+    path 'output.vcf.gz.tbi', emit: outputVcfIndex
     path 'variationFeature.dat', emit: variationFile
     path 'allele.dat', emit: alleleFile
     path 'product.dat', emit: productFile
@@ -163,7 +165,7 @@ process processSeqVars {
     """
     set -euo pipefail
 
-    julia /usr/bin/processSequenceVariations.jl \\
+    processSequenceVariations.jl \\
       --vcf_file $vcfFile \\
       --cache_file $cacheFile \\
       --undone_strains_file $undoneStrainsFile \\
@@ -171,14 +173,18 @@ process processSeqVars {
       --transcript_db $transcriptDb \\
       --indel_db $indelDb \\
       --gtf_file $gtfFile \\
-      --min_coverage $params.minCoverage
+      --min_coverage $params.minCoverage \\
+      --output_vcf output.vcf
 
     mv snpFeature.dat variationFeature.dat
+    bgzip output.vcf
+    tabix -p vcf output.vcf.gz
     """
 
   stub:
     """
-    touch cache.vcf
+    touch output.vcf.gz
+    touch output.vcf.gz.tbi
     touch snpFeature.dat
     touch allele.dat
     touch product.dat

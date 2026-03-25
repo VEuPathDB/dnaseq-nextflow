@@ -7,6 +7,7 @@
 #   cache.vcf (CANN-annotated VCF cache), snpFeature.dat, allele.dat, product.dat
 
 using SQLite
+using SQLite.DBInterface: execute
 using Printf
 
 # ---------------------------------------------------------------------------
@@ -247,9 +248,6 @@ function precompute_frameshifts(indel_db::SQLite.DB, transcript_info::Dict{Strin
     debug_log("Precomputing frameshift information...")
     fs_info = Dict{String, Dict{String, Tuple{Bool, Int}}}()
 
-    stmt = SQLite.Stmt(indel_db,
-        "SELECT strain, transcript_id, position, shift_amount FROM indels ORDER BY strain, transcript_id, position")
-
     current_strain = ""
     current_tid = ""
     cumsum = 0
@@ -265,7 +263,8 @@ function precompute_frameshifts(indel_db::SQLite.DB, transcript_info::Dict{Strin
         end
     end
 
-    for row in SQLite.rows(stmt)
+    for row in execute(indel_db,
+        "SELECT strain, transcript_id, position, shift_amount FROM indels ORDER BY strain, transcript_id, position")
         strain = row[1]::String
         tid = row[2]::String
         pos = row[3]::Int
@@ -313,18 +312,17 @@ end
 # ---------------------------------------------------------------------------
 
 function load_transcript_sequences(db::SQLite.DB, transcript_id::String)
-    stmt = SQLite.Stmt(db, "SELECT strain, sequence FROM sequences WHERE transcript_id = ?")
     result = Dict{String,String}()
-    for row in SQLite.rows(stmt, transcript_id)
+    for row in execute(db, "SELECT strain, sequence FROM coding_sequences WHERE transcript_id = ?", [transcript_id])
         result[row[1]::String] = row[2]::String
     end
     result
 end
 
 function get_indel_shift(db::SQLite.DB, transcript_id::String, strain::String, position::Int)
-    stmt = SQLite.Stmt(db,
-        "SELECT COALESCE(SUM(shift_amount), 0) FROM indels WHERE transcript_id = ? AND strain = ? AND position < ?")
-    row = first(SQLite.rows(stmt, transcript_id, strain, position))
+    row = first(execute(db,
+        "SELECT COALESCE(SUM(shift_amount), 0) FROM indels WHERE transcript_id = ? AND strain = ? AND position < ?",
+        [transcript_id, strain, position]))
     row[1]::Int
 end
 
@@ -339,6 +337,7 @@ struct GVCFRecord
     alts::Vector{String}
     is_ref_block::Bool
     end_pos::Int                  # = pos for variants; = INFO/END for REF blocks
+    info::String
     format_keys::Vector{String}
     sample_data::Vector{String}   # raw per-sample FORMAT strings
 end
@@ -463,10 +462,13 @@ names from #CHROM line. Leaves io positioned at first data line.
 function parse_gvcf_header(io::IO)
     chrom_rank = Dict{String,Int}()
     all_strains = String[]
+    info_headers = String[]
     contig_count = 0
 
     for line in eachline(io)
-        if startswith(line, "##contig")
+        if startswith(line, "##INFO")
+            push!(info_headers, line)
+        elseif startswith(line, "##contig")
             m = match(r"##contig=<ID=([^,>]+)", line)
             if !isnothing(m)
                 contig_count += 1
@@ -478,26 +480,25 @@ function parse_gvcf_header(io::IO)
             all_strains = String[String(fields[i]) for i in 10:length(fields)]
             break
         end
-        # other ## lines: skip
     end
 
     debug_log("GVCF header: ", length(all_strains), " samples, ",
               length(chrom_rank), " contigs")
-    (all_strains, chrom_rank)
+    (all_strains, chrom_rank, info_headers)
 end
 
 """
-    open_gvcf_peeked(path) -> (PeekedFile, all_strains, chrom_rank)
+    open_gvcf_peeked(path) -> (PeekedFile, all_strains, chrom_rank, info_headers)
 
 Opens a bgzip-compressed GVCF via subprocess, parses its header, returns
 a PeekedFile positioned at the first data line.
 """
 function open_gvcf_peeked(path::String)
     io = open(`bgzip -d -c $path`)
-    (all_strains, chrom_rank) = parse_gvcf_header(io)
+    (all_strains, chrom_rank, info_headers) = parse_gvcf_header(io)
     pf = PeekedFile(io, "", false)
     advance!(pf)
-    (pf, all_strains, chrom_rank)
+    (pf, all_strains, chrom_rank, info_headers)
 end
 
 """
@@ -523,7 +524,7 @@ function parse_gvcf_record(line::String, n_samples::Int)::GVCFRecord
     format_keys = String[String(k) for k in split(fmt, ':')]
     sample_data = String[String(fields[9+i]) for i in 1:n_samples if 9+i <= length(fields)]
 
-    GVCFRecord(chrom, pos, ref, alts, is_ref_block, end_pos, format_keys, sample_data)
+    GVCFRecord(chrom, pos, ref, alts, is_ref_block, end_pos, info, format_keys, sample_data)
 end
 
 """
@@ -602,18 +603,24 @@ function parse_cache_vcf_record(line::String)
     (chrom, pos, ref, alt, cann_str, ref_codon, cds_number)
 end
 
-function write_vcf_cache_header(fh::IO)
+function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_headers::Vector{String})
     write(fh, "##fileformat=VCFv4.2\n")
+    for h in info_headers
+        write(fh, h, "\n")
+    end
     write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation: key:codon:alt_aa:effect:transcript_id:pos_in_cds:pos_in_codon\">\n")
     write(fh, "##INFO=<ID=RC,Number=1,Type=String,Description=\"Reference codon\">\n")
     write(fh, "##INFO=<ID=CDSNR,Number=1,Type=Integer,Description=\"CDS exon number\">\n")
-    write(fh, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+    chrom_line = join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", all_strains...], '\t')
+    write(fh, chrom_line, "\n")
 end
 
 function write_vcf_cache_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
-                                cann_str::String, ref_codon::String, cds_number::Int)
-    info = "CANN=$(cann_str);RC=$(ref_codon);CDSNR=$(cds_number)"
-    write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info], '\t'), "\n")
+                                cann_str::String, ref_codon::String, cds_number::Int,
+                                gvcf_info::String, format_keys::Vector{String}, sample_data::Vector{String})
+    info   = "$(gvcf_info);CANN=$(cann_str);RC=$(ref_codon);CDSNR=$(cds_number)"
+    format = join(format_keys, ':')
+    write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info, format, sample_data...], '\t'), "\n")
 end
 
 # ---------------------------------------------------------------------------
@@ -813,8 +820,8 @@ function initialize_processing_context(args, all_strains::Vector{String}, min_co
 
     (cds_intervals, transcript_info) = parse_gtf(args["gtf_file"])
 
-    transcript_db = SQLite.DB(args["transcript_db"]; readonly=true)
-    indel_db      = SQLite.DB(args["indel_db"];      readonly=true)
+    transcript_db = SQLite.DB(args["transcript_db"])
+    indel_db      = SQLite.DB(args["indel_db"])
 
     fs_info = precompute_frameshifts(indel_db, transcript_info)
 
@@ -832,21 +839,15 @@ function initialize_processing_context(args, all_strains::Vector{String}, min_co
 end
 
 """
-    open_output_writers(cache_file) -> (OutputWriters, temp_cache_file)
+    open_output_writers(output_vcf) -> OutputWriters
 """
-function open_output_writers(cache_file)
-    cache_dir        = dirname(abspath(cache_file))
-    temp_cache_file  = joinpath(cache_dir, "cache.tmp.vcf")
-    snp_output_file  = joinpath(cache_dir, "snpFeature.dat")
-    allele_output_file = joinpath(cache_dir, "allele.dat")
-    product_output_file = joinpath(cache_dir, "product.dat")
+function open_output_writers(output_vcf)
+    vcf_cache_fh = open(output_vcf, "w")
+    snp_fh       = open("snpFeature.dat", "w")
+    allele_fh    = open("allele.dat", "w")
+    product_fh   = open("product.dat", "w")
 
-    vcf_cache_fh = open(temp_cache_file, "w")
-    snp_fh       = open(snp_output_file, "w")
-    allele_fh    = open(allele_output_file, "w")
-    product_fh   = open(product_output_file, "w")
-
-    (OutputWriters(vcf_cache_fh, snp_fh, allele_fh, product_fh), temp_cache_file)
+    OutputWriters(vcf_cache_fh, snp_fh, allele_fh, product_fh)
 end
 
 function close_processing_context(ctx::ProcessingContext)
@@ -1306,7 +1307,8 @@ function handle_variant_record!(
 
         cann_str = build_cann_string(record.ref, alt, v, annotation)
         write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
-                              cann_str, annotation.ref_codon, annotation.cds_number)
+                              cann_str, annotation.ref_codon, annotation.cds_number,
+                              record.info, record.format_keys, record.sample_data)
     end
 
     write_snp_feature(writers.snp_fh, variations, annotation, seq_id, location, ctx.reference_strain)
@@ -1328,7 +1330,7 @@ function main()
 
     # Open GVCF and parse header
     debug_log("Opening GVCF: ", args["vcf_file"])
-    (gvcf_pf, all_strains, chrom_rank) = open_gvcf_peeked(args["vcf_file"])
+    (gvcf_pf, all_strains, chrom_rank, info_headers) = open_gvcf_peeked(args["vcf_file"])
     debug_log("GVCF: ", length(all_strains), " strains")
 
     # Open VCF cache (may be absent/empty on first run)
@@ -1341,8 +1343,8 @@ function main()
               length(ctx.cds_intervals), " CDS intervals")
 
     # Open output writers and write VCF cache header
-    (writers, temp_cache_file) = open_output_writers(args["cache_file"])
-    write_vcf_cache_header(writers.vcf_cache_fh)
+    writers = open_output_writers(args["output_vcf"])
+    write_vcf_cache_header(writers.vcf_cache_fh, ctx.all_strains, info_headers)
 
     transcript_cache = TranscriptSequenceCache("", Dict{String,String}())
 
@@ -1404,11 +1406,6 @@ function main()
     close_peeked(cache_pf)
     close_output_writers(writers)
     close_processing_context(ctx)
-
-    # Atomically replace cache file
-    cache_file = args["cache_file"]
-    isfile(cache_file) && rm(cache_file)
-    mv(temp_cache_file, cache_file)
 
     debug_log("Done!")
 end
