@@ -1,12 +1,10 @@
 #!/usr/bin/env julia
 
 # processSequenceVariations.jl
-# Replaces bin/processSequenceVariationsNew.pl
-#
-# Reads a sorted SNP file and a sorted cache file, merges them in a single
-# pass, annotates coding variants with codon/product information via SQLite
-# sequence and indel databases, and writes four output files:
-#   cache (variationFeature.dat after rename), snpFeature.dat, allele.dat, product.dat
+# Reads a merged multi-sample FreeBayes GVCF and a coordinate-sorted VCF cache file,
+# streams them concurrently in a sorted merge, annotates coding variants via SQLite
+# transcript/indel databases, and writes four output files:
+#   cache.vcf (CANN-annotated VCF cache), snpFeature.dat, allele.dat, product.dat
 
 using SQLite
 using Printf
@@ -17,11 +15,6 @@ using Printf
 
 global DEBUG = false
 
-"""
-    debug_log(msg...)
-
-Print debug message if DEBUG is enabled.
-"""
 function debug_log(msg...)
     DEBUG && println(stderr, "[DEBUG] ", msg...)
 end
@@ -35,12 +28,12 @@ function parse_args(args::Vector{String})
     i = 1
     while i <= length(args)
         if startswith(args[i], "--")
-            key = args[i][3:end]  # strip leading --
+            key = args[i][3:end]
             if i + 1 <= length(args) && !startswith(args[i+1], "--")
                 flags[key] = args[i+1]
                 i += 2
             else
-                flags[key] = ""   # boolean flag
+                flags[key] = ""
                 i += 1
             end
         else
@@ -74,7 +67,7 @@ const CODON_TABLE = Dict{String,String}(
 )
 
 # ---------------------------------------------------------------------------
-# IUPAC ambiguity expansion
+# IUPAC ambiguity tables
 # ---------------------------------------------------------------------------
 
 const IUPAC_EXPAND = Dict{Char,Vector{Char}}(
@@ -85,11 +78,16 @@ const IUPAC_EXPAND = Dict{Char,Vector{Char}}(
     'N'=>['A','G','C','T']
 )
 
+# Reverse IUPAC: Set of two bases -> ambiguity code (for diploid het calls)
+const IUPAC_COMPRESS = Dict{Set{Char},Char}(
+    Set(['A','G'])=>'R', Set(['C','T'])=>'Y', Set(['G','T'])=>'K',
+    Set(['A','C'])=>'M', Set(['G','C'])=>'S', Set(['A','T'])=>'W',
+)
+
 """
     expand_codon(codon::String) -> Vector{String}
 
 Cartesian product expansion of IUPAC ambiguity codes in a 3-character codon.
-If the codon is not exactly 3 characters, returns ["NNN"] expanded (i.e. all 64 codons).
 """
 function expand_codon(codon::String)
     c = uppercase(codon)
@@ -104,9 +102,6 @@ function expand_codon(codon::String)
     codons
 end
 
-"""
-    translate_codon(codon::String) -> String
-"""
 function translate_codon(codon::String)
     get(CODON_TABLE, uppercase(codon), "X")
 end
@@ -115,16 +110,6 @@ end
 # GTF parsing → CDS interval structures
 # ---------------------------------------------------------------------------
 
-"""
-    struct CDSInterval
-        seq_id::String          # chromosome / sequence source id
-        start_pos::Int          # 1-based inclusive start (genomic)
-        end_pos::Int            # 1-based inclusive end (genomic)
-        strand::Int             # +1 or -1
-        transcript_id::String
-        cds_number::Int         # exon order within this transcript (1-based)
-    end
-"""
 struct CDSInterval
     seq_id::String
     start_pos::Int
@@ -134,50 +119,34 @@ struct CDSInterval
     cds_number::Int
 end
 
-"""
-    TranscriptInfo holds the ordered CDS exons for one transcript.
-    exons are stored in genomic order (sorted by start_pos).
-"""
 struct TranscriptInfo
     seq_id::String
     strand::Int
     exons::Vector{CDSInterval}   # sorted by start_pos
 end
 
-"""
-    parse_gtf(gtf_file::String) -> (Vector{CDSInterval}, Dict{String, TranscriptInfo})
-
-Parse a GTF file, extracting CDS features. Returns:
-  - sorted array of all CDS intervals (for binary search)
-  - per-transcript info dict
-"""
 function parse_gtf(gtf_file::String)
     debug_log("Parsing GTF file: ", gtf_file)
-    # First pass: collect CDS entries grouped by transcript
-    transcript_cds = Dict{String, Vector{Tuple{String,Int,Int,Int}}}()  # tid -> [(seq_id, start, end, strand)]
-    transcript_order = String[]  # preserve first-seen order
+    transcript_cds = Dict{String, Vector{Tuple{String,Int,Int,Int}}}()
+    transcript_order = String[]
 
     open(gtf_file, "r") do fh
         for line in eachline(fh)
             startswith(line, '#') && continue
             fields = split(line, '\t')
             length(fields) < 9 && continue
-            feature = fields[3]
-            feature == "CDS" || continue
+            fields[3] == "CDS" || continue
 
             seq_id = fields[1]
             start_pos = parse(Int, fields[4])
             end_pos = parse(Int, fields[5])
-            strand_str = fields[7]
-            strand = (strand_str == "-") ? -1 : 1
+            strand = (fields[7] == "-") ? -1 : 1
             attributes = fields[9]
 
-            # Extract transcript_id from attributes
             tid = ""
             for attr in split(attributes, ';')
                 attr = strip(attr)
                 if startswith(attr, "transcript_id")
-                    # transcript_id "VALUE" or transcript_id VALUE
                     parts = split(attr, ' '; limit=2)
                     if length(parts) == 2
                         tid = replace(parts[2], "\"" => "")
@@ -195,13 +164,11 @@ function parse_gtf(gtf_file::String)
         end
     end
 
-    # Build structures
     all_intervals = CDSInterval[]
     transcript_info = Dict{String, TranscriptInfo}()
 
     for tid in transcript_order
         entries = transcript_cds[tid]
-        # Sort exons by start position (genomic order)
         sort!(entries; by = e -> e[2])
 
         seq_id = entries[1][1]
@@ -217,29 +184,19 @@ function parse_gtf(gtf_file::String)
         transcript_info[tid] = TranscriptInfo(seq_id, strand, exons)
     end
 
-    # Sort all_intervals by (seq_id, start_pos) for binary search
     sort!(all_intervals; by = iv -> (iv.seq_id, iv.start_pos))
-
     debug_log("GTF parsed: ", length(transcript_info), " transcripts, ",
               length(all_intervals), " CDS intervals")
-
     (all_intervals, transcript_info)
 end
 
-# ---------------------------------------------------------------------------
-# Binary search: find CDS interval containing a genomic location
-# Returns nothing if not in any CDS
-# ---------------------------------------------------------------------------
-
 function find_cds(intervals::Vector{CDSInterval}, seq_id::String, location::Int)
-    # Binary search for the rightmost interval with start_pos <= location on matching seq_id
     lo, hi = 1, length(intervals)
-    candidate = 0   # index of rightmost interval with (seq_id, start_pos) <= (seq_id, location)
+    candidate = 0
 
     while lo <= hi
         mid = (lo + hi) ÷ 2
         iv = intervals[mid]
-        # Compare (seq_id, start_pos) vs (seq_id, location)
         if iv.seq_id < seq_id || (iv.seq_id == seq_id && iv.start_pos <= location)
             candidate = mid
             lo = mid + 1
@@ -248,58 +205,36 @@ function find_cds(intervals::Vector{CDSInterval}, seq_id::String, location::Int)
         end
     end
 
-    if candidate == 0
-        return nothing
-    end
+    candidate == 0 && return nothing
 
     iv = intervals[candidate]
     if iv.seq_id == seq_id && location >= iv.start_pos && location <= iv.end_pos
         return iv
     end
-
     nothing
 end
-
-# ---------------------------------------------------------------------------
-# Compute position_in_cds from transcript info + genomic location
-# position_in_cds is 1-based: sum of lengths of all prior exons + offset in current exon
-# ---------------------------------------------------------------------------
 
 function compute_position_in_cds(tinfo::TranscriptInfo, location::Int, cds_number::Int)
     prior_len = 0
     for (idx, exon) in enumerate(tinfo.exons)
         if idx == cds_number
-            # offset within this exon (1-based)
             return prior_len + (location - exon.start_pos) + 1
         end
-        # exon length = end - start + 1, but Perl uses end - start (no +1 for prior lengths)
-        # Matching Perl: prior_ref_cds_len += cds_end - cds_start
         prior_len += exon.end_pos - exon.start_pos
     end
-    # Should not reach here if cds_number is valid
     error("cds_number $cds_number out of range for transcript")
 end
-
-# ---------------------------------------------------------------------------
-# position_in_codon (called position_in_protein in product file)
-# Matches Perl: (pos % 3 == 0) ? 3 : (pos % 3)
-# ---------------------------------------------------------------------------
 
 function position_in_codon(pos_in_cds::Int)
     r = pos_in_cds % 3
     r == 0 ? 3 : r
 end
 
-# ---------------------------------------------------------------------------
-# Extract codon from a sequence given a 1-based position_in_cds
-# ---------------------------------------------------------------------------
-
 function extract_codon(sequence::String, pos_in_cds::Int)
     pic = position_in_codon(pos_in_cds)
-    # codon_start is 0-based index of first base of the codon
-    codon_start = pos_in_cds - pic  # 0-based
+    codon_start = pos_in_cds - pic  # 0-based index of first base
     if codon_start + 3 > length(sequence)
-        return "NNN"   # incomplete codon at end of CDS
+        return "NNN"
     end
     sequence[codon_start+1 : codon_start+3]
 end
@@ -308,22 +243,10 @@ end
 # Frameshift precomputation
 # ---------------------------------------------------------------------------
 
-"""
-    frameshift_info::Dict{String, Dict{String, Tuple{Bool, Int}}}
-    strain -> transcript -> (has_frameshift, frameshift_position)
-
-    frameshift_position is the genomic position of the first indel in that
-    transcript where the cumulative shift % 3 != 0.
-"""
-
 function precompute_frameshifts(indel_db::SQLite.DB, transcript_info::Dict{String,TranscriptInfo})
     debug_log("Precomputing frameshift information...")
-    # For each (strain, transcript) that has indels, compute running cumulative sum
-    # and record first position where cumsum % 3 != 0
     fs_info = Dict{String, Dict{String, Tuple{Bool, Int}}}()
 
-    # Get all distinct (strain, transcript_id) pairs that have indels
-    # For each, get indels sorted by position
     stmt = SQLite.Stmt(indel_db,
         "SELECT strain, transcript_id, position, shift_amount FROM indels ORDER BY strain, transcript_id, position")
 
@@ -358,7 +281,6 @@ function precompute_frameshifts(indel_db::SQLite.DB, transcript_info::Dict{Strin
         end
 
         cumsum += shift
-
         if !found_frameshift && (cumsum % 3 != 0)
             found_frameshift = true
             frameshift_pos = pos
@@ -366,16 +288,10 @@ function precompute_frameshifts(indel_db::SQLite.DB, transcript_info::Dict{Strin
     end
     flush_current()
 
-    # Count how many strain-transcript pairs have frameshifts
-    fs_count = sum(length(v) for v in values(fs_info))
+    fs_count = sum(length(v) for v in values(fs_info); init=0)
     debug_log("Frameshift precomputation complete: ", fs_count, " strain-transcript pairs with indels")
-
     fs_info
 end
-
-# ---------------------------------------------------------------------------
-# Check downstream-of-frameshift for a variant
-# ---------------------------------------------------------------------------
 
 function check_downstream_of_frameshift(
     fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}},
@@ -385,14 +301,10 @@ function check_downstream_of_frameshift(
 )
     strain_fs = get(fs_info, strain, nothing)
     isnothing(strain_fs) && return 0
-
     tid_fs = get(strain_fs, transcript, nothing)
     isnothing(tid_fs) && return 0
-
     has_fs, fs_pos = tid_fs
     has_fs || return 0
-
-    # Per plan: transcript coordinates are always 5'→3', so comparison is always >
     location > fs_pos ? 1 : 0
 end
 
@@ -400,10 +312,6 @@ end
 # SQLite sequence loading
 # ---------------------------------------------------------------------------
 
-"""
-    load_transcript_sequences(db, transcript_id) -> Dict{String,String}
-    Fetches all strain sequences for a transcript in one query.
-"""
 function load_transcript_sequences(db::SQLite.DB, transcript_id::String)
     stmt = SQLite.Stmt(db, "SELECT strain, sequence FROM sequences WHERE transcript_id = ?")
     result = Dict{String,String}()
@@ -413,10 +321,6 @@ function load_transcript_sequences(db::SQLite.DB, transcript_id::String)
     result
 end
 
-"""
-    get_indel_shift(db, transcript_id, strain, position) -> Int
-    Returns sum of shift_amount for indels before the given position.
-"""
 function get_indel_shift(db::SQLite.DB, transcript_id::String, strain::String, position::Int)
     stmt = SQLite.Stmt(db,
         "SELECT COALESCE(SUM(shift_amount), 0) FROM indels WHERE transcript_id = ? AND strain = ? AND position < ?")
@@ -425,104 +329,28 @@ function get_indel_shift(db::SQLite.DB, transcript_id::String, strain::String, p
 end
 
 # ---------------------------------------------------------------------------
-# Coverage file reader
+# GVCF record structure
 # ---------------------------------------------------------------------------
 
-"""
-    CoverageReader wraps an open coverage file with a peek buffer.
-    Coverage files are tab-separated: seq_id, start, end, coverage_array, percent_array
-"""
-struct CoverageReader
-    fh::IOStream
-    # Mutable state via a 1-element vector (workaround for immutable struct)
-    state::Vector{Any}  # [peek_fields, coverage_array, percents_array, exhausted]
-end
-
-function open_coverage_reader(path::String)
-    fh = open(path, "r")
-    cr = CoverageReader(fh, Any[nothing, nothing, nothing, false])
-    # Read first line into peek
-    advance_coverage!(cr)
-    cr
-end
-
-function advance_coverage!(cr::CoverageReader)
-    line = readline(cr.fh)
-    if isempty(line) && eof(cr.fh)
-        cr.state[1] = nothing
-        cr.state[4] = true   # exhausted
-    else
-        cr.state[1] = split(line, '\t')
-        cr.state[2] = nothing   # clear cached arrays
-        cr.state[3] = nothing
-    end
-end
-
-function coverage_exhausted(cr::CoverageReader)
-    cr.state[4] == true
-end
-
-function coverage_peek(cr::CoverageReader)
-    cr.state[1]  # returns the split fields or nothing
-end
-
-"""
-    get_coverage(cr, seq_id, location) -> (coverage, percent) or nothing
-    Advances the reader as needed. Returns nothing if position not covered.
-"""
-function get_coverage(cr::CoverageReader, seq_id::String, location::Int)
-    while !coverage_exhausted(cr)
-        peek = coverage_peek(cr)
-        isnothing(peek) && break
-
-        p_seq_id = peek[1]
-        p_start = parse(Int, peek[2])
-        p_end = parse(Int, peek[3])
-
-        # If current span covers the location, extract values
-        if p_seq_id == seq_id && location >= p_start && location <= p_end
-            # Lazily parse coverage/percent arrays
-            if isnothing(cr.state[2])
-                cr.state[2] = split(peek[4], ',')   # coverage array (strings)
-                cr.state[3] = split(peek[5], ',')   # percent array (strings)
-            end
-            idx = location - p_start + 1  # 1-based index
-            cov = cr.state[2][idx]
-            pct = cr.state[3][idx]
-            return (cov, pct)
-        end
-
-        # If we've passed the location, stop
-        if p_seq_id > seq_id || (p_seq_id == seq_id && p_start > location)
-            break
-        end
-
-        # Advance to next span
-        advance_coverage!(cr)
-    end
-    nothing
-end
-
-function close_coverage_reader(cr::CoverageReader)
-    close(cr.fh)
+struct GVCFRecord
+    chrom::String
+    pos::Int
+    ref::String
+    alts::Vector{String}
+    is_ref_block::Bool
+    end_pos::Int                  # = pos for variants; = INFO/END for REF blocks
+    format_keys::Vector{String}
+    sample_data::Vector{String}   # raw per-sample FORMAT strings
 end
 
 # ---------------------------------------------------------------------------
-# Open all coverage files in a directory
+# VCF cache entry (result of parsing one cache data line)
 # ---------------------------------------------------------------------------
 
-function open_coverage_files(coverage_dir::String)
-    debug_log("Opening coverage files from: ", coverage_dir)
-    readers = Dict{String, CoverageReader}()
-    for fname in readdir(coverage_dir)
-        if endswith(fname, ".coverage.txt")
-            strain = replace(fname, r"\.coverage\.txt$" => "")
-            path = joinpath(coverage_dir, fname)
-            readers[strain] = open_coverage_reader(path)
-        end
-    end
-    debug_log("Opened ", length(readers), " coverage files")
-    readers
+struct CacheEntry
+    cann_str::String
+    ref_codon::String
+    cds_number::Int
 end
 
 # ---------------------------------------------------------------------------
@@ -545,10 +373,10 @@ mutable struct Variation
     position_in_codon::Int
     downstream_of_frameshift::Int
     transcript::String
-    product::Vector{String}     # list of translated products
+    product::Vector{String}
     reference_codon::String
     codon::String
-    has_nonsynonomous::Int      # typo preserved per spec
+    has_nonsynonomous::Int
     cds_number::Int
     matches_reference::Int
 end
@@ -559,12 +387,9 @@ function Variation()
 end
 
 # ---------------------------------------------------------------------------
-# Processing data structures for refactored main()
+# Processing data structures
 # ---------------------------------------------------------------------------
 
-"""
-    ProcessingContext holds all read-only reference data and database connections.
-"""
 struct ProcessingContext
     reference_strain::String
     undone_strains::Set{String}
@@ -572,24 +397,18 @@ struct ProcessingContext
     transcript_info::Dict{String,TranscriptInfo}
     transcript_db::SQLite.DB
     indel_db::SQLite.DB
-    fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}  # frameshift info
-    coverage_readers::Dict{String, CoverageReader}
+    fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}
     all_strains::Vector{String}
+    min_coverage::Int
 end
 
-"""
-    OutputWriters encapsulates the four output file handles.
-"""
 struct OutputWriters
-    cache_fh::IOStream
-    snp_fh::IOStream
-    allele_fh::IOStream
-    product_fh::IOStream
+    vcf_cache_fh::IO
+    snp_fh::IO
+    allele_fh::IO
+    product_fh::IO
 end
 
-"""
-    PositionAnnotation bundles all annotation data computed for a genomic position.
-"""
 struct PositionAnnotation
     is_coding::Int
     transcript_id::String
@@ -600,93 +419,19 @@ struct PositionAnnotation
     ref_product::String
 end
 
-"""
-    TranscriptSequenceCache explicitly manages mutable state for transcript sequence caching.
-"""
 mutable struct TranscriptSequenceCache
     current_transcript_id::String
     current_transcript_seqs::Dict{String,String}
 end
 
 # ---------------------------------------------------------------------------
-# Parse a cache line (20 columns in new format) into a Variation
-# Cache columns: sequence_source_id, location, strain, reference, base,
-#   coverage, percent, quality, pvalue, snp_source_id, is_coding,
-#   position_in_cds, position_in_codon, downstream_of_frameshift,
-#   transcript, product, reference_codon, codon, has_nonsynonomous, cds_number
+# PeekedFile: one-line lookahead over any IO (file, subprocess pipe, IOBuffer)
 # ---------------------------------------------------------------------------
 
-function parse_cache_line(line::String)
-    fields = split(line, '\t')
-    length(fields) < 20 && return nothing
-
-    v = Variation()
-    v.sequence_source_id = fields[1]
-    v.location = parse(Int, fields[2])
-    v.strain = fields[3]
-    v.reference = fields[4]
-    v.base = fields[5]
-    v.coverage = fields[6]
-    v.percent = fields[7]
-    v.quality = fields[8]
-    v.pvalue = fields[9]
-    v.snp_source_id = fields[10]
-    v.is_coding = parse(Int, fields[11])
-    v.position_in_cds = parse(Int, fields[12])
-    v.position_in_codon = parse(Int, fields[13])
-    v.downstream_of_frameshift = parse(Int, fields[14])
-    v.transcript = fields[15]
-    v.product = split(fields[16], ':')
-    v.reference_codon = fields[17]
-    v.codon = fields[18]
-    v.has_nonsynonomous = parse(Int, fields[19])
-    v.cds_number = parse(Int, fields[20])
-    v
-end
-
-# ---------------------------------------------------------------------------
-# Parse a SNP file line (10 columns) into a Variation
-# SNP columns: seqId, location, strain, ref, base, coverage, percent, quality, pvalue, snp_source_id
-# ---------------------------------------------------------------------------
-
-function parse_snp_line(line::String)
-    fields = split(line, '\t')
-    length(fields) < 10 && return nothing
-
-    v = Variation()
-    v.sequence_source_id = fields[1]
-    v.location = parse(Int, fields[2])
-    v.strain = fields[3]
-    v.reference = fields[4]
-    v.base = fields[5]
-    v.coverage = fields[6]
-    v.percent = fields[7]
-    v.quality = fields[8]
-    v.pvalue = fields[9]
-    v.snp_source_id = fields[10]
-    v
-end
-
-# ---------------------------------------------------------------------------
-# Sorted-merge iteration helpers
-# ---------------------------------------------------------------------------
-
-"""
-    PeekedFile wraps a file handle with a one-line lookahead.
-    line: current peeked line (empty string if exhausted)
-    exhausted: true when EOF reached
-"""
 mutable struct PeekedFile
-    fh::IOStream
+    fh::IO
     line::String
     exhausted::Bool
-end
-
-function open_peeked(path::String)
-    fh = open(path, "r")
-    pf = PeekedFile(fh, "", false)
-    advance!(pf)
-    pf
 end
 
 function advance!(pf::PeekedFile)
@@ -705,35 +450,359 @@ function close_peeked(pf::PeekedFile)
     close(pf.fh)
 end
 
-# Extract (seq_id, location) from a peeked line for sorting
-# Cache line: col 0 = seq_id, col 1 = location
-# SNP line: col 0 = seq_id, col 1 = location
-function peek_sort_key(line::String)
-    # Find first two tab-separated fields
-    tab1 = findfirst('\t', line)
-    isnothing(tab1) && return ("", 0)
-    seq_id = line[1:tab1-1]
-    rest = line[tab1+1:end]
-    tab2 = findfirst('\t', rest)
-    loc_str = isnothing(tab2) ? rest : rest[1:tab2-1]
-    (seq_id, parse(Int, loc_str))
+# ---------------------------------------------------------------------------
+# GVCF I/O
+# ---------------------------------------------------------------------------
+
+"""
+    parse_gvcf_header(io) -> (all_strains, chrom_rank)
+
+Reads ## meta lines, builds chrom_rank from ##contig lines, extracts sample
+names from #CHROM line. Leaves io positioned at first data line.
+"""
+function parse_gvcf_header(io::IO)
+    chrom_rank = Dict{String,Int}()
+    all_strains = String[]
+    contig_count = 0
+
+    for line in eachline(io)
+        if startswith(line, "##contig")
+            m = match(r"##contig=<ID=([^,>]+)", line)
+            if !isnothing(m)
+                contig_count += 1
+                chrom_rank[m.captures[1]] = contig_count
+            end
+        elseif startswith(line, "#CHROM")
+            fields = split(line, '\t')
+            # Columns 10+ (1-based) are sample names
+            all_strains = String[String(fields[i]) for i in 10:length(fields)]
+            break
+        end
+        # other ## lines: skip
+    end
+
+    debug_log("GVCF header: ", length(all_strains), " samples, ",
+              length(chrom_rank), " contigs")
+    (all_strains, chrom_rank)
+end
+
+"""
+    open_gvcf_peeked(path) -> (PeekedFile, all_strains, chrom_rank)
+
+Opens a bgzip-compressed GVCF via subprocess, parses its header, returns
+a PeekedFile positioned at the first data line.
+"""
+function open_gvcf_peeked(path::String)
+    io = open(`bgzip -d -c $path`)
+    (all_strains, chrom_rank) = parse_gvcf_header(io)
+    pf = PeekedFile(io, "", false)
+    advance!(pf)
+    (pf, all_strains, chrom_rank)
+end
+
+"""
+    parse_gvcf_record(line, n_samples) -> GVCFRecord
+"""
+function parse_gvcf_record(line::String, n_samples::Int)::GVCFRecord
+    fields = split(line, '\t')
+    chrom = String(fields[1])
+    pos   = parse(Int, fields[2])
+    ref   = String(fields[4])
+    alts  = String[String(a) for a in split(fields[5], ',')]
+    info  = String(fields[8])
+    fmt   = String(fields[9])
+
+    is_ref_block = all(startswith(a, "<") for a in alts)
+
+    end_pos = pos
+    if is_ref_block
+        m = match(r"END=(\d+)", info)
+        !isnothing(m) && (end_pos = parse(Int, m.captures[1]))
+    end
+
+    format_keys = String[String(k) for k in split(fmt, ':')]
+    sample_data = String[String(fields[9+i]) for i in 1:n_samples if 9+i <= length(fields)]
+
+    GVCFRecord(chrom, pos, ref, alts, is_ref_block, end_pos, format_keys, sample_data)
+end
+
+"""
+    parse_format_field(format_keys, sample_str) -> Dict{String,String}
+"""
+function parse_format_field(format_keys::Vector{String}, sample_str::String)::Dict{String,String}
+    result = Dict{String,String}()
+    values = split(sample_str, ':')
+    for (i, key) in enumerate(format_keys)
+        i > length(values) && break
+        result[key] = String(values[i])
+    end
+    result
 end
 
 # ---------------------------------------------------------------------------
-# Resource management functions
+# VCF cache I/O
 # ---------------------------------------------------------------------------
 
 """
-    initialize_processing_context(args) -> ProcessingContext
+    open_cache_peeked(path) -> PeekedFile
 
-Initialize all read-only reference data and database connections.
-Loads undone strains, parses GTF, opens databases, precomputes frameshifts, opens coverage files.
+Opens the VCF cache file for reading. Returns a pre-exhausted PeekedFile
+if the file is absent or empty. Skips VCF header lines (#-prefixed).
 """
-function initialize_processing_context(args)
-    # Read undone strains
+function open_cache_peeked(path::String)::PeekedFile
+    if !isfile(path) || filesize(path) == 0
+        return PeekedFile(IOBuffer(""), "", true)
+    end
+
+    fh = open(path, "r")
+    # Skip header lines
+    while !eof(fh)
+        line = readline(fh)
+        if !startswith(line, '#')
+            pf = PeekedFile(fh, line, false)
+            if isempty(line) && eof(fh)
+                pf.exhausted = true
+            end
+            return pf
+        end
+    end
+    # File contained only headers
+    close(fh)
+    PeekedFile(IOBuffer(""), "", true)
+end
+
+"""
+    parse_cache_vcf_record(line) -> (chrom, pos, ref, alt, cann_str, ref_codon, cds_number) or nothing
+"""
+function parse_cache_vcf_record(line::String)
+    startswith(line, '#') && return nothing
+    fields = split(line, '\t')
+    length(fields) < 8 && return nothing
+
+    chrom = String(fields[1])
+    pos   = parse(Int, fields[2])
+    ref   = String(fields[4])
+    alt   = String(fields[5])
+    info  = String(fields[8])
+
+    cann_str   = "."
+    ref_codon  = ""
+    cds_number = 0
+
+    for part in split(info, ';')
+        if startswith(part, "CANN=")
+            cann_str = String(part[6:end])
+        elseif startswith(part, "RC=")
+            ref_codon = String(part[4:end])
+        elseif startswith(part, "CDSNR=")
+            cds_number = parse(Int, part[7:end])
+        end
+    end
+
+    (chrom, pos, ref, alt, cann_str, ref_codon, cds_number)
+end
+
+function write_vcf_cache_header(fh::IO)
+    write(fh, "##fileformat=VCFv4.2\n")
+    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation: key:codon:alt_aa:effect:transcript_id:pos_in_cds:pos_in_codon\">\n")
+    write(fh, "##INFO=<ID=RC,Number=1,Type=String,Description=\"Reference codon\">\n")
+    write(fh, "##INFO=<ID=CDSNR,Number=1,Type=Integer,Description=\"CDS exon number\">\n")
+    write(fh, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+end
+
+function write_vcf_cache_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
+                                cann_str::String, ref_codon::String, cds_number::Int)
+    info = "CANN=$(cann_str);RC=$(ref_codon);CDSNR=$(cds_number)"
+    write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info], '\t'), "\n")
+end
+
+# ---------------------------------------------------------------------------
+# Variation construction from GVCF
+# ---------------------------------------------------------------------------
+
+"""
+    gt_to_base(gt, ref, alts) -> String
+
+Converts a GT field value to a base/allele string.
+Returns "" for missing genotypes.
+For diploid hets with SNP alleles, returns IUPAC ambiguity code.
+"""
+function gt_to_base(gt::String, ref::String, alts::Vector{String})::String
+    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return ""
+
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+
+    if isnothing(sep_idx)
+        # Haploid
+        idx = parse(Int, gt)
+        return idx == 0 ? ref : alts[idx]
+    else
+        a1_str = gt[1:sep_idx-1]
+        a2_str = gt[sep_idx+1:end]
+        (a1_str == "." || a2_str == ".") && return ""
+
+        a1 = parse(Int, a1_str)
+        a2 = parse(Int, a2_str)
+
+        b1 = a1 == 0 ? ref : alts[a1]
+        b2 = a2 == 0 ? ref : alts[a2]
+
+        b1 == b2 && return b1  # homozygous
+
+        # Het: IUPAC for single-char SNPs
+        if length(b1) == 1 && length(b2) == 1
+            iupac = get(IUPAC_COMPRESS, Set([b1[1], b2[1]]), nothing)
+            !isnothing(iupac) && return string(iupac)
+        end
+
+        # Complex het: return the non-ref allele
+        return a1 != 0 ? b1 : b2
+    end
+end
+
+"""
+    gt_allele_idx(gt) -> Int
+
+Returns the primary alt allele index from GT (0 = ref). Used for percent computation.
+"""
+function gt_allele_idx(gt::String)::Int
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    isnothing(sep_idx) && return parse(Int, gt)
+    parse(Int, gt[1:sep_idx-1])
+end
+
+"""
+    compute_percent(fmt, allele_idx) -> String
+
+Computes AO/(RO+AO)*100 for alt allele. Returns "0.0" for ref or missing.
+"""
+function compute_percent(fmt::Dict{String,String}, allele_idx::Int)::String
+    allele_idx == 0 && return "0.0"
+
+    ao_str = get(fmt, "AO", "")
+    ro_str = get(fmt, "RO", "0")
+    isempty(ao_str) && return "0.0"
+
+    ao_values = split(ao_str, ',')
+    allele_idx > length(ao_values) && return "0.0"
+
+    ao = parse(Float64, ao_values[allele_idx])
+    ro = parse(Float64, isempty(ro_str) ? "0" : ro_str)
+    total = ro + ao
+    total <= 0 && return "0.0"
+
+    @sprintf("%.2f", ao / total * 100)
+end
+
+"""
+    build_variations_from_record(record, all_strains, undone_strains, min_coverage)
+        -> Vector{Variation}
+
+Builds per-strain Variation records from a GVCF variant record.
+Skips undone strains, missing GTs, and samples below min_coverage.
+"""
+function build_variations_from_record(
+    record::GVCFRecord,
+    all_strains::Vector{String},
+    undone_strains::Set{String},
+    min_coverage::Int
+)::Vector{Variation}
+    variations = Variation[]
+
+    for (i, strain) in enumerate(all_strains)
+        strain in undone_strains && continue
+        i > length(record.sample_data) && continue
+
+        fmt = parse_format_field(record.format_keys, record.sample_data[i])
+
+        gt = get(fmt, "GT", "")
+        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+
+        dp_str = get(fmt, "DP", "0")
+        dp = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
+        dp < min_coverage && continue
+
+        base = gt_to_base(gt, record.ref, record.alts)
+        isempty(base) && continue
+
+        aidx = gt_allele_idx(gt)
+        pct  = compute_percent(fmt, aidx)
+        gq   = get(fmt, "GQ", "0")
+
+        v = Variation()
+        v.sequence_source_id = record.chrom
+        v.location           = record.pos
+        v.strain             = strain
+        v.reference          = record.ref
+        v.base               = base
+        v.coverage           = string(dp)
+        v.percent            = pct
+        v.quality            = gq
+        v.pvalue             = "."
+        v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
+        v.matches_reference  = (base == record.ref) ? 1 : 0
+
+        push!(variations, v)
+    end
+
+    variations
+end
+
+# ---------------------------------------------------------------------------
+# Sorted-merge helpers: sort keys over VCF/GVCF lines
+# ---------------------------------------------------------------------------
+
+"""
+    peek_sort_key(line, chrom_rank) -> (Int, Int)
+
+Returns (chrom_rank, pos) from a VCF data line for sorted-merge ordering.
+"""
+function peek_sort_key(line::String, chrom_rank::Dict{String,Int})::Tuple{Int,Int}
+    tab1 = findfirst('\t', line)
+    isnothing(tab1) && return (typemax(Int), typemax(Int))
+    chrom = line[1:tab1-1]
+    rest  = line[tab1+1:end]
+    tab2  = findfirst('\t', rest)
+    pos_str = isnothing(tab2) ? rest : rest[1:tab2-1]
+    rank = get(chrom_rank, chrom, typemax(Int))
+    (rank, parse(Int, pos_str))
+end
+
+"""
+    peek_end_key(line, chrom_rank) -> (Int, Int)
+
+Returns (chrom_rank, END) for GVCF REF blocks; (chrom_rank, POS) for variants.
+Used to determine the span of a REF block without full parsing.
+"""
+function peek_end_key(line::String, chrom_rank::Dict{String,Int})::Tuple{Int,Int}
+    fields = split(line, '\t'; limit=9)
+    length(fields) < 8 && return peek_sort_key(line, chrom_rank)
+
+    chrom   = String(fields[1])
+    pos     = parse(Int, fields[2])
+    alt_str = String(fields[5])
+    info    = String(fields[8])
+    rank    = get(chrom_rank, chrom, typemax(Int))
+
+    if startswith(alt_str, "<")
+        m = match(r"END=(\d+)", info)
+        !isnothing(m) && return (rank, parse(Int, m.captures[1]))
+    end
+
+    (rank, pos)
+end
+
+# ---------------------------------------------------------------------------
+# Resource management
+# ---------------------------------------------------------------------------
+
+"""
+    initialize_processing_context(args, all_strains, min_coverage) -> ProcessingContext
+"""
+function initialize_processing_context(args, all_strains::Vector{String}, min_coverage::Int)
     undone_strains = Set{String}()
-    undone_strains_file = args["undone_strains_file"]
-    if isfile(undone_strains_file)
+    undone_strains_file = get(args, "undone_strains_file", "")
+    if !isempty(undone_strains_file) && isfile(undone_strains_file)
         open(undone_strains_file, "r") do fh
             for line in eachline(fh)
                 s = strip(line)
@@ -742,19 +811,12 @@ function initialize_processing_context(args)
         end
     end
 
-    # Parse GTF
     (cds_intervals, transcript_info) = parse_gtf(args["gtf_file"])
 
-    # Open SQLite databases (read-only)
     transcript_db = SQLite.DB(args["transcript_db"]; readonly=true)
-    indel_db = SQLite.DB(args["indel_db"]; readonly=true)
+    indel_db      = SQLite.DB(args["indel_db"];      readonly=true)
 
-    # Precompute frameshift info
     fs_info = precompute_frameshifts(indel_db, transcript_info)
-
-    # Open coverage files
-    coverage_readers = open_coverage_files(args["coverage_directory"])
-    all_strains = collect(keys(coverage_readers))
 
     ProcessingContext(
         args["reference_strain"],
@@ -764,182 +826,57 @@ function initialize_processing_context(args)
         transcript_db,
         indel_db,
         fs_info,
-        coverage_readers,
-        all_strains
+        all_strains,
+        min_coverage
     )
 end
 
 """
     open_output_writers(cache_file) -> (OutputWriters, temp_cache_file)
-
-Creates output file handles and returns temp cache path.
 """
 function open_output_writers(cache_file)
-    # Determine output directory (same as cache file's directory)
-    cache_dir = dirname(abspath(cache_file))
-    temp_cache_file = joinpath(cache_dir, "cache.tmp")
-    snp_output_file = joinpath(cache_dir, "snpFeature.dat")
+    cache_dir        = dirname(abspath(cache_file))
+    temp_cache_file  = joinpath(cache_dir, "cache.tmp.vcf")
+    snp_output_file  = joinpath(cache_dir, "snpFeature.dat")
     allele_output_file = joinpath(cache_dir, "allele.dat")
     product_output_file = joinpath(cache_dir, "product.dat")
 
-    # Open output files
-    cache_fh = open(temp_cache_file, "w")
-    snp_fh = open(snp_output_file, "w")
-    allele_fh = open(allele_output_file, "w")
-    product_fh = open(product_output_file, "w")
+    vcf_cache_fh = open(temp_cache_file, "w")
+    snp_fh       = open(snp_output_file, "w")
+    allele_fh    = open(allele_output_file, "w")
+    product_fh   = open(product_output_file, "w")
 
-    (OutputWriters(cache_fh, snp_fh, allele_fh, product_fh), temp_cache_file)
+    (OutputWriters(vcf_cache_fh, snp_fh, allele_fh, product_fh), temp_cache_file)
 end
 
-"""
-    close_processing_context(ctx::ProcessingContext)
-
-Closes coverage readers and databases.
-"""
 function close_processing_context(ctx::ProcessingContext)
-    for cr in values(ctx.coverage_readers)
-        close_coverage_reader(cr)
-    end
-
     close(ctx.transcript_db)
     close(ctx.indel_db)
 end
 
-"""
-    close_output_writers(writers::OutputWriters)
-
-Closes all output file handles.
-"""
 function close_output_writers(writers::OutputWriters)
-    close(writers.cache_fh)
+    close(writers.vcf_cache_fh)
     close(writers.snp_fh)
     close(writers.allele_fh)
     close(writers.product_fh)
 end
 
-"""
-    finalize_output_files(cache_file, temp_cache_file, snp_file, undone_strains_file)
-
-Renames temp cache, truncates consumed input files.
-"""
-function finalize_output_files(cache_file, temp_cache_file, snp_file, undone_strains_file)
-    # Rename temp cache to final cache
-    if isfile(cache_file)
-        rm(cache_file)
-    end
-    mv(temp_cache_file, cache_file)
-
-    # Truncate the SNP input file (consumed)
-    open(snp_file, "w") do fh end
-
-    # Truncate the undone strains file (consumed)
-    open(undone_strains_file, "w") do fh end
-end
-
 # ---------------------------------------------------------------------------
-# Position processing functions
+# Variation / position checking
 # ---------------------------------------------------------------------------
 
-"""
-    determine_next_position(cache_pf, snp_pf) -> (seq_id, location) or nothing
-
-Determines which position to process next from peeked files.
-Returns nothing if both files are exhausted.
-"""
-function determine_next_position(cache_pf::PeekedFile, snp_pf::PeekedFile)
-    if cache_pf.exhausted && snp_pf.exhausted
-        return nothing
-    end
-
-    # Determine the next (seq_id, location) to process
-    cache_key = cache_pf.exhausted ? ("~", typemax(Int)) : peek_sort_key(cache_pf.line)
-    snp_key = snp_pf.exhausted ? ("~", typemax(Int)) : peek_sort_key(snp_pf.line)
-
-    # Pick the smaller key (seq_id first, then location)
-    if cache_key[1] < snp_key[1] || (cache_key[1] == snp_key[1] && cache_key[2] <= snp_key[2])
-        cache_key
-    else
-        snp_key
-    end
-end
-
-"""
-    collect_variations_at_position(cache_pf, snp_pf, seq_id, location, undone_strains)
-        -> (variations, cache_strains)
-
-Drains cache and SNP files for current position.
-Filters undone strains.
-"""
-function collect_variations_at_position(
-    cache_pf::PeekedFile,
-    snp_pf::PeekedFile,
-    current_seq_id::String,
-    current_location::Int,
-    undone_strains::Set{String}
-)
-    variations = Variation[]
-    cache_strains = Set{String}()
-
-    # Drain cache lines at this position
-    while !cache_pf.exhausted
-        k = peek_sort_key(cache_pf.line)
-        k[1] != current_seq_id && break
-        k[2] != current_location && break
-
-        v = parse_cache_line(cache_pf.line)
-        advance!(cache_pf)
-        isnothing(v) && continue
-
-        # Skip undone strains
-        if v.strain in undone_strains
-            continue
-        end
-
-        push!(variations, v)
-        push!(cache_strains, v.strain)
-    end
-
-    # Drain SNP lines at this position (skip strains already from cache)
-    while !snp_pf.exhausted
-        k = peek_sort_key(snp_pf.line)
-        k[1] != current_seq_id && break
-        k[2] != current_location && break
-
-        v = parse_snp_line(snp_pf.line)
-        advance!(snp_pf)
-        isnothing(v) && continue
-
-        # Skip if strain already present from cache
-        if v.strain in cache_strains
-            continue
-        end
-
-        push!(variations, v)
-    end
-
-    (variations, cache_strains)
-end
-
-"""
-    has_variation(variations) -> bool
-
-Checks if there's actual variation (>1 distinct allele).
-"""
 function has_variation(variations::Vector{Variation})
-    alleles_set = Set(v.base for v in variations)
-    length(alleles_set) > 1
+    length(Set(v.base for v in variations)) > 1
 end
 
 # ---------------------------------------------------------------------------
-# Annotation logic functions
+# Annotation logic
 # ---------------------------------------------------------------------------
 
 """
     annotate_position(seq_id, location, ctx, transcript_cache) -> PositionAnnotation
 
-CDS lookup, position in CDS/codon computation.
-Loads transcript sequences, computes reference codon/product.
-Updates transcript_cache if transcript changes.
+CDS lookup and codon/position computation. Updates transcript_cache if transcript changes.
 """
 function annotate_position(
     seq_id::String,
@@ -947,58 +884,46 @@ function annotate_position(
     ctx::ProcessingContext,
     transcript_cache::TranscriptSequenceCache
 )
-    # CDS lookup
     cds_hit = find_cds(ctx.cds_intervals, seq_id, location)
 
-    is_coding = 0
+    is_coding     = 0
     transcript_id = ""
-    cds_number = 0
-    pos_in_cds = 0
+    cds_number    = 0
+    pos_in_cds    = 0
     pos_in_codon_val = 0
-    ref_codon = ""
-    ref_product = ""
+    ref_codon     = ""
+    ref_product   = ""
 
     if !isnothing(cds_hit)
-        is_coding = 1
+        is_coding     = 1
         transcript_id = cds_hit.transcript_id
-        cds_number = cds_hit.cds_number
+        cds_number    = cds_hit.cds_number
 
         tinfo = ctx.transcript_info[transcript_id]
-        pos_in_cds = compute_position_in_cds(tinfo, location, cds_number)
+        pos_in_cds       = compute_position_in_cds(tinfo, location, cds_number)
         pos_in_codon_val = position_in_codon(pos_in_cds)
 
-        # Load transcript sequences if transcript changed
         if transcript_id != transcript_cache.current_transcript_id
             debug_log("    Loading sequences for transcript: ", transcript_id)
-            transcript_cache.current_transcript_id = transcript_id
+            transcript_cache.current_transcript_id   = transcript_id
             transcript_cache.current_transcript_seqs = load_transcript_sequences(ctx.transcript_db, transcript_id)
-            debug_log("    Loaded ", length(transcript_cache.current_transcript_seqs), " strain sequences")
         end
 
-        # Compute reference codon/product
         ref_seq = get(transcript_cache.current_transcript_seqs, ctx.reference_strain, "")
         if !isempty(ref_seq)
-            ref_codon = extract_codon(ref_seq, pos_in_cds)
+            ref_codon   = extract_codon(ref_seq, pos_in_cds)
             ref_product = translate_codon(ref_codon)
         end
     end
 
-    PositionAnnotation(
-        is_coding,
-        transcript_id,
-        cds_number,
-        pos_in_cds,
-        pos_in_codon_val,
-        ref_codon,
-        ref_product
-    )
+    PositionAnnotation(is_coding, transcript_id, cds_number, pos_in_cds,
+                       pos_in_codon_val, ref_codon, ref_product)
 end
 
 """
     annotate_variations!(variations, annotation, ctx, transcript_cache)
 
-Annotates each variation with coding info.
-Mutates variation records in place.
+Fills per-strain codon/product data into each Variation record.
 """
 function annotate_variations!(
     variations::Vector{Variation},
@@ -1007,48 +932,33 @@ function annotate_variations!(
     transcript_cache::TranscriptSequenceCache
 )
     for v in variations
-        # Skip variations that already have position_in_codon set (from cache)
-        if v.position_in_codon != 0
-            # Already annotated (came from cache) — keep existing values
-            continue
-        end
-
-        v.is_coding = annotation.is_coding
+        v.is_coding  = annotation.is_coding
         v.transcript = annotation.transcript_id
         v.cds_number = annotation.cds_number
 
-        if annotation.is_coding == 1
-            v.position_in_cds = annotation.pos_in_cds
-            v.position_in_codon = annotation.pos_in_codon_val
-            v.reference_codon = annotation.ref_codon
+        annotation.is_coding == 1 || continue
 
-            # Get strain's sequence and compute adjusted position
-            strain_seq = get(transcript_cache.current_transcript_seqs, v.strain, "")
-            if !isempty(strain_seq)
-                # Compute position adjustment via indel DB
-                shift = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
-                adjusted_pos = annotation.pos_in_cds + shift
+        v.position_in_cds    = annotation.pos_in_cds
+        v.position_in_codon  = annotation.pos_in_codon_val
+        v.reference_codon    = annotation.ref_codon
 
-                strain_codon = extract_codon(strain_seq, adjusted_pos)
-                v.codon = strain_codon
-
-                # Expand IUPAC and translate
-                expanded = expand_codon(strain_codon)
-                v.product = [translate_codon(c) for c in expanded]
-            else
-                v.codon = "NNN"
-                v.product = ["X"]
-            end
+        strain_seq = get(transcript_cache.current_transcript_seqs, v.strain, "")
+        if !isempty(strain_seq)
+            shift        = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
+            adjusted_pos = annotation.pos_in_cds + shift
+            strain_codon = extract_codon(strain_seq, adjusted_pos)
+            v.codon   = strain_codon
+            expanded  = expand_codon(strain_codon)
+            v.product = [translate_codon(c) for c in expanded]
+        else
+            v.codon   = "NNN"
+            v.product = ["X"]
         end
     end
 end
 
 """
-    build_reference_variation(variations, annotation, seq_id, location, reference_strain)
-        -> Variation
-
-Creates reference strain variation record.
-Computes adjacent_snp_causes_product_difference.
+    build_reference_variation(variations, annotation, seq_id, location, reference_strain) -> Variation
 """
 function build_reference_variation(
     variations::Vector{Variation},
@@ -1058,10 +968,7 @@ function build_reference_variation(
     reference_strain::String
 )
     ref_allele = variations[1].reference
-    # If reference field is empty (SNP-only lines), use the base from the first entry
-    if isempty(ref_allele)
-        ref_allele = variations[1].base
-    end
+    isempty(ref_allele) && (ref_allele = variations[1].base)
 
     adjacent_snp_causes_product_difference = 0
     if annotation.is_coding == 1
@@ -1074,206 +981,71 @@ function build_reference_variation(
         end
     end
 
-    # Mark has_nonsynonomous on each variation
     for v in variations
         if annotation.is_coding == 1
-            product_str = join(v.product, ":")
-            v.has_nonsynonomous = (product_str != annotation.ref_product) ? 1 : 0
+            v.has_nonsynonomous = (join(v.product, ":") != annotation.ref_product) ? 1 : 0
         end
     end
 
     Variation(
-        seq_id,
-        location,
-        reference_strain,
-        ref_allele,
-        ref_allele,       # base = reference allele
-        "", "",           # coverage, percent (empty for reference)
-        "", "",           # quality, pvalue
-        "",               # snp_source_id
+        seq_id, location, reference_strain,
+        ref_allele, ref_allele,
+        "", "",
+        "", "",
+        "",
         annotation.is_coding,
         annotation.pos_in_cds,
         annotation.pos_in_codon_val,
-        0,                # downstream_of_frameshift (computed later)
+        0,
         annotation.transcript_id,
         annotation.is_coding == 1 ? [annotation.ref_product] : String[],
         annotation.ref_codon,
-        annotation.ref_codon,        # codon = ref_codon for reference
+        annotation.ref_codon,
         adjacent_snp_causes_product_difference,
         annotation.cds_number,
-        1                 # matches_reference
+        1
     )
 end
 
-"""
-    fill_coverage_gaps!(variations, annotation, seq_id, location, ctx)
-
-Adds coverage-only variations for missing strains.
-Appends to variations vector.
-"""
-function fill_coverage_gaps!(
-    variations::Vector{Variation},
-    annotation::PositionAnnotation,
-    seq_id::String,
-    location::Int,
-    ctx::ProcessingContext
-)
-    # Get reference allele
-    ref_allele = variations[1].reference
-    if isempty(ref_allele)
-        ref_allele = variations[1].base
-    end
-
-    # Find adjacent_snp_causes_product_difference from reference variation (last one added)
-    adjacent_snp_causes_product_difference = 0
-    for v in variations
-        if v.strain == ctx.reference_strain
-            adjacent_snp_causes_product_difference = v.has_nonsynonomous
-            break
-        end
-    end
-
-    variation_strains = Set(v.strain for v in variations)
-
-    for strain in ctx.all_strains
-        strain in variation_strains && continue
-
-        cr = ctx.coverage_readers[strain]
-        cov_result = get_coverage(cr, seq_id, location)
-        if !isnothing(cov_result)
-            cv = Variation()
-            cv.sequence_source_id = seq_id
-            cv.location = location
-            cv.strain = strain
-            cv.reference = ref_allele
-            cv.base = ref_allele
-            cv.coverage = cov_result[1]
-            cv.percent = cov_result[2]
-            cv.matches_reference = 1
-            cv.is_coding = annotation.is_coding
-            cv.transcript = annotation.transcript_id
-            cv.position_in_cds = annotation.pos_in_cds
-            cv.position_in_codon = annotation.pos_in_codon_val
-            cv.reference_codon = annotation.ref_codon
-            cv.codon = annotation.ref_codon
-            cv.product = annotation.is_coding == 1 ? [annotation.ref_product] : String[]
-            cv.has_nonsynonomous = adjacent_snp_causes_product_difference
-            cv.cds_number = annotation.cds_number
-            push!(variations, cv)
-        end
-    end
-end
-
 # ---------------------------------------------------------------------------
-# Output writing functions
+# Output writing
 # ---------------------------------------------------------------------------
 
-"""
-    write_cache_entries(cache_fh, variations, ctx)
-
-Computes downstream_of_frameshift and writes cache lines for all non-reference variations.
-"""
-function write_cache_entries(
-    cache_fh::IOStream,
-    variations::Vector{Variation},
-    ctx::ProcessingContext
-)
-    # Get reference allele for matches_reference computation
-    ref_allele = variations[1].reference
-    if isempty(ref_allele)
-        ref_allele = variations[1].base
-    end
-
-    for v in variations
-        if !isempty(v.transcript)
-            v.downstream_of_frameshift = check_downstream_of_frameshift(
-                ctx.fs_info, v.strain, v.transcript, v.location)
-        else
-            v.downstream_of_frameshift = 0
-        end
-
-        # Skip reference strain in cache output
-        v.strain == ctx.reference_strain && continue
-
-        # matches_reference
-        v.matches_reference = (v.base == ref_allele) ? 1 : 0
-
-        # Write cache line (20 columns)
-        product_str = join(v.product, ":")
-        write(cache_fh, join([
-            v.sequence_source_id,
-            string(v.location),
-            v.strain,
-            v.reference,
-            v.base,
-            v.coverage,
-            v.percent,
-            v.quality,
-            v.pvalue,
-            v.snp_source_id,
-            string(v.is_coding),
-            string(v.position_in_cds),
-            string(v.position_in_codon),
-            string(v.downstream_of_frameshift),
-            v.transcript,
-            product_str,
-            v.reference_codon,
-            v.codon,
-            string(v.has_nonsynonomous),
-            string(v.cds_number)
-        ], "\t"), "\n")
-    end
-end
-
-"""
-    write_snp_feature(snp_fh, variations, annotation, seq_id, location, reference_strain)
-
-Aggregates statistics and writes SNP feature summary line.
-"""
 function write_snp_feature(
-    snp_fh::IOStream,
+    snp_fh::IO,
     variations::Vector{Variation},
     annotation::PositionAnnotation,
     seq_id::String,
     location::Int,
     reference_strain::String
 )
-    # Get reference allele
     ref_allele = variations[1].reference
-    if isempty(ref_allele)
-        ref_allele = variations[1].base
-    end
+    isempty(ref_allele) && (ref_allele = variations[1].base)
 
-    allele_counts = Dict{String,Int}()
-    product_counts = Dict{String,Int}()
-    strain_set = Set{String}()
-    has_stop_codon = 0
+    allele_counts   = Dict{String,Int}()
+    product_counts  = Dict{String,Int}()
+    strain_set      = Set{String}()
+    has_stop_codon  = 0
     total_allele_count = length(variations)
 
     for v in variations
         allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
-        strain_set |= Set([v.strain])
-
-        # Products are stored as colon-joined string in cache output;
-        # for SNP feature we split and count individual products
+        push!(strain_set, v.strain)
         for p in v.product
             product_counts[p] = get(product_counts, p, 0) + 1
             p == "*" && (has_stop_codon = 1)
         end
     end
 
-    distinct_strain_count = length(strain_set)
-    distinct_allele_count = length(allele_counts)
+    distinct_strain_count  = length(strain_set)
+    distinct_allele_count  = length(allele_counts)
     has_nonsynonymous_allele = length(product_counts) > 1 ? 1 : 0
 
-    # Sort alleles: descending by count, then ascending alphabetically
-    sorted_alleles = sort(collect(keys(allele_counts));
-        by = a -> (-allele_counts[a], a))
-    sorted_products = sort(collect(keys(product_counts));
-        by = p -> (-product_counts[p], p))
+    sorted_alleles  = sort(collect(keys(allele_counts));  by = a -> (-allele_counts[a], a))
+    sorted_products = sort(collect(keys(product_counts)); by = p -> (-product_counts[p], p))
 
-    major_allele = sorted_alleles[1]
-    minor_allele = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
+    major_allele       = sorted_alleles[1]
+    minor_allele       = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
     major_allele_count = allele_counts[major_allele]
     minor_allele_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
 
@@ -1302,59 +1074,47 @@ function write_snp_feature(
     ], "\t"), "\n")
 end
 
-"""
-    write_allele_and_product_files(allele_fh, product_fh, variations, annotation)
-
-Writes allele statistics and product details for coding variants.
-"""
 function write_allele_and_product_files(
-    allele_fh::IOStream,
-    product_fh::IOStream,
+    allele_fh::IO,
+    product_fh::IO,
     variations::Vector{Variation},
     annotation::PositionAnnotation
 )
     annotation.is_coding != 1 && return
 
-    # Allele file: allele, distinct_strain_count, allele_count, average_coverage, average_read_percent
     allele_counts = Dict{String,Int}()
     for v in variations
         allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
     end
 
     for allele in keys(allele_counts)
-        distinct_strains_for_allele = Set{String}()
+        distinct_strains = Set{String}()
         allele_count = 0
         sum_coverage = 0.0
-        sum_percent = 0.0
+        sum_percent  = 0.0
 
         for v in variations
             v.base != allele && continue
             allele_count += 1
-            push!(distinct_strains_for_allele, v.strain)
-            # coverage and percent may be empty strings
+            push!(distinct_strains, v.strain)
             cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-            pct = isempty(v.percent) ? 0.0 : parse(Float64, v.percent)
+            pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
             sum_coverage += cov
-            sum_percent += pct
+            sum_percent  += pct
         end
 
         avg_cov = allele_count > 0 ? sum_coverage / allele_count : 0.0
-        avg_pct = allele_count > 0 ? sum_percent / allele_count : 0.0
+        avg_pct = allele_count > 0 ? sum_percent  / allele_count : 0.0
 
         write(allele_fh, join([
             allele,
-            string(length(distinct_strains_for_allele)),
+            string(length(distinct_strains)),
             string(allele_count),
             @sprintf("%.2f", avg_cov),
             @sprintf("%.2f", avg_pct)
         ], "\t"), "\n")
     end
 
-    # Product file: codon, position_in_protein, transcript, count, product,
-    #   ref_location_cds, ref_location_protein, downstream_of_frameshift
-    #
-    # One row per expanded (non-ambiguous) codon per variant.
-    # Recount products across all variations for the count column.
     all_product_counts = Dict{String,Int}()
     for v in variations
         for p in v.product
@@ -1364,12 +1124,10 @@ function write_allele_and_product_files(
 
     for v in variations
         isempty(v.codon) && continue
-
         expanded_codons = expand_codon(v.codon)
         for ec in expanded_codons
             product = translate_codon(ec)
-            count = get(all_product_counts, product, 0)
-
+            count   = get(all_product_counts, product, 0)
             write(product_fh, join([
                 ec,
                 string(annotation.pos_in_codon_val),
@@ -1385,169 +1143,273 @@ function write_allele_and_product_files(
 end
 
 # ---------------------------------------------------------------------------
-# Main loop orchestration
+# CANN annotation
 # ---------------------------------------------------------------------------
 
 """
-    process_single_position!(cache_pf, snp_pf, seq_id, location, ctx, writers, transcript_cache) -> Bool
+    build_cann_string(ref_allele, alt_allele, v, annotation) -> String
 
-Process a single genomic position through the full pipeline.
-Returns true if position was processed, false if skipped.
+Builds the CANN entry for one (ref, alt) pair.
+Returns "." for non-coding positions.
 """
-function process_single_position!(
-    cache_pf::PeekedFile,
-    snp_pf::PeekedFile,
-    seq_id::String,
-    location::Int,
+function build_cann_string(
+    ref_allele::String,
+    alt_allele::String,
+    v::Variation,
+    annotation::PositionAnnotation
+)::String
+    annotation.is_coding != 1 && return "."
+
+    tid        = annotation.transcript_id
+    pos_in_cds = annotation.pos_in_cds
+    pic        = annotation.pos_in_codon_val
+
+    ref_len = length(ref_allele)
+    alt_len = length(alt_allele)
+    is_indel   = (ref_len != alt_len)
+    is_complex = is_indel && !isempty(ref_allele) && !isempty(alt_allele) && ref_allele[1] != alt_allele[1]
+    is_pure_indel = is_indel && !is_complex
+
+    if is_pure_indel
+        len_diff = alt_len - ref_len
+        structural = if len_diff % 3 != 0
+            "frameshift"
+        elseif len_diff > 0
+            "inframe_insertion"
+        else
+            "inframe_deletion"
+        end
+        return "k0:.:.:$(structural):$(tid):$(pos_in_cds):$(pic)"
+    end
+
+    # SNP or complex variant: compute amino acid effect
+    codon       = isempty(v.codon) ? "." : v.codon
+    unique_prods = unique(v.product)
+    product_str  = isempty(unique_prods) ? "." : join(unique_prods, "/")
+
+    has_stop = any(p == "*" for p in unique_prods)
+    aa_effect = if has_stop
+        "nonsense"
+    elseif product_str != annotation.ref_product
+        "missense"
+    else
+        "synonymous"
+    end
+
+    if !is_indel
+        return "k0:$(codon):$(product_str):$(aa_effect):$(tid):$(pos_in_cds):$(pic)"
+    else
+        # Complex: indel with SNP at anchor position
+        len_diff = alt_len - ref_len
+        structural = if len_diff % 3 != 0
+            "frameshift"
+        elseif len_diff > 0
+            "inframe_insertion"
+        else
+            "inframe_deletion"
+        end
+        return "k0:$(codon):$(product_str):$(aa_effect);$(structural):$(tid):$(pos_in_cds):$(pic)"
+    end
+end
+
+"""
+    decode_cann_to_annotation(ce, ctx, transcript_cache) -> PositionAnnotation
+
+Reconstructs a PositionAnnotation from a cached CacheEntry.
+Also loads transcript sequences into transcript_cache so annotate_variations!
+can access them.
+"""
+function decode_cann_to_annotation(
+    ce::CacheEntry,
+    ctx::ProcessingContext,
+    transcript_cache::TranscriptSequenceCache
+)::PositionAnnotation
+    ce.cann_str == "." && return PositionAnnotation(0, "", 0, 0, 0, "", "")
+
+    entry = split(ce.cann_str, ',')[1]
+    parts = split(entry, ':')
+    # parts: key, codon, alt_aa, effect, transcript_id, pos_in_cds, pos_in_codon
+    length(parts) < 7 && return PositionAnnotation(0, "", 0, 0, 0, "", "")
+
+    transcript_id    = String(parts[5])
+    pos_in_cds       = parts[6] == "." ? 0 : parse(Int, parts[6])
+    pos_in_codon_val = parts[7] == "." ? 0 : parse(Int, parts[7])
+    ref_codon        = ce.ref_codon
+    ref_product      = isempty(ref_codon) ? "" : translate_codon(ref_codon)
+
+    if !isempty(transcript_id) && transcript_id != transcript_cache.current_transcript_id
+        debug_log("    Loading sequences for transcript (cache hit): ", transcript_id)
+        transcript_cache.current_transcript_id   = transcript_id
+        transcript_cache.current_transcript_seqs = load_transcript_sequences(ctx.transcript_db, transcript_id)
+    end
+
+    PositionAnnotation(1, transcript_id, ce.cds_number, pos_in_cds,
+                       pos_in_codon_val, ref_codon, ref_product)
+end
+
+# ---------------------------------------------------------------------------
+# Core record handler
+# ---------------------------------------------------------------------------
+
+"""
+    handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains) -> Bool
+
+Processes one variant GVCF record end-to-end. Returns true if output was written.
+cache_entries: Dict keyed by (ref, alt) for positions with a cache hit at this coordinate.
+"""
+function handle_variant_record!(
+    record::GVCFRecord,
+    cache_entries::Dict{Tuple{String,String},CacheEntry},
     ctx::ProcessingContext,
     writers::OutputWriters,
-    transcript_cache::TranscriptSequenceCache
-)
+    transcript_cache::TranscriptSequenceCache,
+    all_strains::Vector{String}
+)::Bool
+    seq_id   = record.chrom
+    location = record.pos
     debug_log("Processing position: ", seq_id, ":", location)
 
-    # Collect all variations at this position
-    (variations, _) = collect_variations_at_position(
-        cache_pf, snp_pf, seq_id, location, ctx.undone_strains
-    )
+    variations = build_variations_from_record(record, all_strains, ctx.undone_strains, ctx.min_coverage)
+    isempty(variations) && return false
 
-    # Skip if empty batch
-    if isempty(variations)
-        debug_log("  Skipping - no variations at this position")
-        return false
+    # Determine position annotation: cache hit or fresh CDS lookup
+    annotation = if !isempty(cache_entries)
+        ce = first(values(cache_entries))
+        decode_cann_to_annotation(ce, ctx, transcript_cache)
+    else
+        annotate_position(seq_id, location, ctx, transcript_cache)
     end
-    debug_log("  Found ", length(variations), " variations")
 
-    # Annotate position
-    annotation = annotate_position(seq_id, location, ctx, transcript_cache)
-    debug_log("  Annotation: is_coding=", annotation.is_coding,
-              ", transcript=", annotation.transcript_id)
-
-    # Annotate each variation with coding info
     annotate_variations!(variations, annotation, ctx, transcript_cache)
 
-    # Build reference variation record
-    ref_variation = build_reference_variation(
-        variations, annotation, seq_id, location, ctx.reference_strain
-    )
-
-    # Add reference variation to the batch
-    push!(variations, ref_variation)
-    debug_log("  Total variations including reference: ", length(variations))
-
-    # Check if there is actual variation (more than one distinct allele)
-    if !has_variation(variations)
-        debug_log("  Skipping - no actual variation (all same allele)")
-        return false  # no variation, skip
+    # Set downstream_of_frameshift on each variation
+    for v in variations
+        if !isempty(v.transcript)
+            v.downstream_of_frameshift = check_downstream_of_frameshift(
+                ctx.fs_info, v.strain, v.transcript, v.location)
+        end
     end
 
-    # Fill coverage for strains not in the variation batch
-    fill_coverage_gaps!(variations, annotation, seq_id, location, ctx)
-    debug_log("  After gap filling: ", length(variations), " variations")
+    ref_variation = build_reference_variation(variations, annotation, seq_id, location, ctx.reference_strain)
+    push!(variations, ref_variation)
 
-    # Write outputs
-    debug_log("  Writing outputs...")
-    write_cache_entries(writers.cache_fh, variations, ctx)
+    !has_variation(variations) && return false
+
+    # Write VCF cache entries: one per unique alt allele seen in this record
+    seen_alts = Set{String}()
+    for v in variations
+        v.strain == ctx.reference_strain && continue
+        v.base == record.ref && continue  # ref call
+        alt = v.base
+        alt in seen_alts && continue
+        push!(seen_alts, alt)
+
+        cann_str = build_cann_string(record.ref, alt, v, annotation)
+        write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
+                              cann_str, annotation.ref_codon, annotation.cds_number)
+    end
+
     write_snp_feature(writers.snp_fh, variations, annotation, seq_id, location, ctx.reference_strain)
     write_allele_and_product_files(writers.allele_fh, writers.product_fh, variations, annotation)
 
     true
 end
 
-"""
-    process_all_positions!(cache_pf, snp_pf, ctx, writers, transcript_cache) -> Int
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
-Main processing loop: sorted merge of cache and SNP files.
-Returns count of processed positions.
-"""
-function process_all_positions!(
-    cache_pf::PeekedFile,
-    snp_pf::PeekedFile,
-    ctx::ProcessingContext,
-    writers::OutputWriters,
-    transcript_cache::TranscriptSequenceCache
-)
-    count = 0
+function main()
+    args = parse_args(ARGS)
+    global DEBUG = haskey(args, "debug")
+    debug_log("Debug mode enabled")
 
-    while !cache_pf.exhausted || !snp_pf.exhausted
-        # Determine the next (seq_id, location) to process
-        next_pos = determine_next_position(cache_pf, snp_pf)
-        isnothing(next_pos) && break
+    min_coverage = haskey(args, "min_coverage") ? parse(Int, args["min_coverage"]) : 1
 
-        current_seq_id, current_location = next_pos
+    # Open GVCF and parse header
+    debug_log("Opening GVCF: ", args["vcf_file"])
+    (gvcf_pf, all_strains, chrom_rank) = open_gvcf_peeked(args["vcf_file"])
+    debug_log("GVCF: ", length(all_strains), " strains")
 
-        # Process this position
-        if process_single_position!(
-            cache_pf, snp_pf, current_seq_id, current_location,
-            ctx, writers, transcript_cache
-        )
-            count += 1
-            if count % 1000 == 0
-                @info "Processed $count SNPs"
+    # Open VCF cache (may be absent/empty on first run)
+    debug_log("Opening cache: ", args["cache_file"])
+    cache_pf = open_cache_peeked(args["cache_file"])
+
+    # Initialize processing context
+    ctx = initialize_processing_context(args, all_strains, min_coverage)
+    debug_log("Context: ", length(ctx.all_strains), " strains, ",
+              length(ctx.cds_intervals), " CDS intervals")
+
+    # Open output writers and write VCF cache header
+    (writers, temp_cache_file) = open_output_writers(args["cache_file"])
+    write_vcf_cache_header(writers.vcf_cache_fh)
+
+    transcript_cache = TranscriptSequenceCache("", Dict{String,String}())
+
+    # Span-aware sorted-merge loop
+    n_processed = 0
+
+    while !gvcf_pf.exhausted
+        gvcf_start = peek_sort_key(gvcf_pf.line, chrom_rank)
+        gvcf_end   = peek_end_key(gvcf_pf.line, chrom_rank)
+        cache_key  = cache_pf.exhausted ? (typemax(Int), typemax(Int)) :
+                                           peek_sort_key(cache_pf.line, chrom_rank)
+
+        # Drain cache entries that precede the current GVCF record start
+        # (positions that were variant in a prior run but are now absent)
+        if !cache_pf.exhausted && cache_key < gvcf_start
+            advance!(cache_pf)
+            continue
+        end
+
+        # Parse and advance GVCF
+        record = parse_gvcf_record(gvcf_pf.line, length(all_strains))
+        advance!(gvcf_pf)
+
+        if record.is_ref_block
+            # Drain all cache entries within this REF block span [pos, end_pos]
+            # These positions were variant before but are now reference-covered
+            while !cache_pf.exhausted
+                ck = peek_sort_key(cache_pf.line, chrom_rank)
+                ck > gvcf_end && break
+                advance!(cache_pf)
+            end
+            continue
+        end
+
+        # Variant record: collect all cache entries at this (chrom, pos)
+        cache_entries = Dict{Tuple{String,String},CacheEntry}()
+        while !cache_pf.exhausted
+            ck = peek_sort_key(cache_pf.line, chrom_rank)
+            ck != gvcf_start && break
+            parsed = parse_cache_vcf_record(cache_pf.line)
+            if !isnothing(parsed)
+                (_, _, ref, alt, cann_str, ref_codon, cds_number) = parsed
+                cache_entries[(ref, alt)] = CacheEntry(cann_str, ref_codon, cds_number)
+            end
+            advance!(cache_pf)
+        end
+
+        if handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains)
+            n_processed += 1
+            if n_processed % 1000 == 0
+                @info "Processed $n_processed variant positions"
             end
         end
     end
 
-    count
-end
+    debug_log("Processing complete. Total positions processed: ", n_processed)
 
-# ---------------------------------------------------------------------------
-# Main processing
-# ---------------------------------------------------------------------------
-
-function main()
-    # 1. Parse arguments
-    args = parse_args(ARGS)
-
-    # Set global DEBUG flag if --debug is present
-    global DEBUG = haskey(args, "debug")
-    debug_log("Debug mode enabled")
-
-    # 2. Initialize processing context
-    debug_log("Initializing processing context...")
-    ctx = initialize_processing_context(args)
-    debug_log("Context initialized: ", length(ctx.all_strains), " strains, ",
-              length(ctx.cds_intervals), " CDS intervals")
-
-    # 3. Open output writers
-    debug_log("Opening output files...")
-    (writers, temp_cache_file) = open_output_writers(args["cache_file"])
-
-    # 4. Open input files with peek
-    debug_log("Opening input files...")
-    debug_log("  Cache file: ", args["cache_file"])
-    debug_log("  SNP file: ", args["snp_file"])
-    cache_pf = open_peeked(args["cache_file"])
-    snp_pf = open_peeked(args["snp_file"])
-
-    # 5. Initialize transcript sequence cache
-    transcript_cache = TranscriptSequenceCache("", Dict{String,String}())
-
-    # 6. Main processing loop
-    debug_log("Starting main processing loop...")
-    processed_count = process_all_positions!(
-        cache_pf, snp_pf, ctx, writers, transcript_cache
-    )
-    debug_log("Processing complete. Total positions processed: ", processed_count)
-
-    # 7. Close input files
-    debug_log("Closing input files...")
+    close_peeked(gvcf_pf)
     close_peeked(cache_pf)
-    close_peeked(snp_pf)
-
-    # 8. Close output writers
-    debug_log("Closing output files...")
     close_output_writers(writers)
-
-    # 9. Close processing context
-    debug_log("Closing processing context...")
     close_processing_context(ctx)
 
-    # 10. Finalize files
-    debug_log("Finalizing output files...")
-    finalize_output_files(
-        args["cache_file"], temp_cache_file,
-        args["snp_file"], args["undone_strains_file"]
-    )
+    # Atomically replace cache file
+    cache_file = args["cache_file"]
+    isfile(cache_file) && rm(cache_file)
+    mv(temp_cache_file, cache_file)
+
     debug_log("Done!")
 end
 
