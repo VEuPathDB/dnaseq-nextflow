@@ -587,7 +587,7 @@ function open_cache_peeked(path::String)::PeekedFile
         return PeekedFile(IOBuffer(""), "", true)
     end
 
-    fh = open(path, "r")
+    fh = endswith(path, ".gz") ? open(`bgzip -d -c $path`) : open(path, "r")
     # Skip header lines
     while !eof(fh)
         line = readline(fh)

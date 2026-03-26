@@ -202,7 +202,8 @@ process snpEff {
     path sequencesFa
 
   output:
-    path 'merged.ann.vcf'
+    path 'merged.ann.vcf.gz'
+    path 'merged.ann.vcf.gz.tbi'
 
   script:
     """
@@ -214,10 +215,12 @@ process snpEff {
     cp /usr/bin/snpEff/snpEff.config .
     java -jar /usr/bin/snpEff/snpEff.jar build -gtf22 -noCheckCds -noCheckProtein -v genome
     java -Xmx4g -jar /usr/bin/snpEff/snpEff.jar genome $mergedVcf > merged.ann.vcf
+    bgzip merged.ann.vcf
+    tabix -p vcf merged.ann.vcf.gz
     """
 
   stub:
     """
-    touch merged.ann.vcf
+    touch merged.ann.vcf.gz merged.ann.vcf.gz.tbi
     """
 }

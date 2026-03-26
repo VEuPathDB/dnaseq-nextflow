@@ -30,6 +30,6 @@ workflow me {
 
     processSeqVarsResults = processSeqVars(mergedGvcf, params.vcfCacheFile, params.undoneStrains, params.reference_strain, codingData.codingSequencesDb, codingData.codingIndelsDb, params.gtfFile)
 
-    // snpEff(mergedVcf, params.gtfFile, params.genomeFastaFile)
+    snpEff(processSeqVarsResults.outputVcf, params.gtfFile, params.genomeFastaFile)
 
 }
