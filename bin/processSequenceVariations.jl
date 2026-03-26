@@ -191,10 +191,16 @@ function parse_gtf(gtf_file::String)
     (all_intervals, transcript_info)
 end
 
-function find_cds(intervals::Vector{CDSInterval}, seq_id::String, location::Int)
+"""
+    find_all_cds(intervals, seq_id, location) -> Vector{CDSInterval}
+
+Returns all CDS intervals on seq_id that overlap location.
+intervals must be sorted by (seq_id, start_pos) ascending.
+"""
+function find_all_cds(intervals::Vector{CDSInterval}, seq_id::String, location::Int)
+    # Binary search: rightmost interval with start_pos <= location on this seq_id
     lo, hi = 1, length(intervals)
     candidate = 0
-
     while lo <= hi
         mid = (lo + hi) ÷ 2
         iv = intervals[mid]
@@ -206,22 +212,41 @@ function find_cds(intervals::Vector{CDSInterval}, seq_id::String, location::Int)
         end
     end
 
-    candidate == 0 && return nothing
+    candidate == 0 && return CDSInterval[]
 
-    iv = intervals[candidate]
-    if iv.seq_id == seq_id && location >= iv.start_pos && location <= iv.end_pos
-        return iv
+    # Scan backward from candidate collecting all intervals where end_pos >= location.
+    # All have start_pos <= location by construction; we just need end_pos >= location.
+    hits = CDSInterval[]
+    i = candidate
+    while i >= 1
+        iv = intervals[i]
+        iv.seq_id != seq_id && break
+        iv.end_pos >= location && push!(hits, iv)
+        i -= 1
     end
-    nothing
+    hits
 end
 
 function compute_position_in_cds(tinfo::TranscriptInfo, location::Int, cds_number::Int)
     prior_len = 0
-    for (idx, exon) in enumerate(tinfo.exons)
-        if idx == cds_number
-            return prior_len + (location - exon.start_pos) + 1
+    if tinfo.strand == 1
+        for exon in tinfo.exons
+            if exon.cds_number == cds_number
+                return prior_len + (location - exon.start_pos) + 1
+            end
+            prior_len += exon.end_pos - exon.start_pos + 1
         end
-        prior_len += exon.end_pos - exon.start_pos
+    else
+        # Negative strand: CDS order is highest→lowest genomic coordinate.
+        # Iterate exons in reverse genomic order; within-exon offset measures
+        # distance from the 3' end of the exon on the genome (= 5' direction in CDS).
+        for i in length(tinfo.exons):-1:1
+            exon = tinfo.exons[i]
+            if exon.cds_number == cds_number
+                return prior_len + (exon.end_pos - location) + 1
+            end
+            prior_len += exon.end_pos - exon.start_pos + 1
+        end
     end
     error("cds_number $cds_number out of range for transcript")
 end
@@ -348,8 +373,6 @@ end
 
 struct CacheEntry
     cann_str::String
-    ref_codon::String
-    cds_number::Int
 end
 
 # ---------------------------------------------------------------------------
@@ -419,8 +442,17 @@ struct PositionAnnotation
 end
 
 mutable struct TranscriptSequenceCache
-    current_transcript_id::String
-    current_transcript_seqs::Dict{String,String}
+    seqs::Dict{String, Dict{String,String}}   # transcript_id -> strain -> sequence
+end
+
+function load_transcript_if_needed!(cache::TranscriptSequenceCache, db::SQLite.DB, transcript_id::String)
+    haskey(cache.seqs, transcript_id) && return
+    cache.seqs[transcript_id] = load_transcript_sequences(db, transcript_id)
+end
+
+function get_strain_seq(cache::TranscriptSequenceCache, transcript_id::String, strain::String)::String
+    t = get(cache.seqs, transcript_id, nothing)
+    isnothing(t) ? "" : get(t, strain, "")
 end
 
 # ---------------------------------------------------------------------------
@@ -573,7 +605,7 @@ function open_cache_peeked(path::String)::PeekedFile
 end
 
 """
-    parse_cache_vcf_record(line) -> (chrom, pos, ref, alt, cann_str, ref_codon, cds_number) or nothing
+    parse_cache_vcf_record(line) -> (chrom, pos, ref, alt, cann_str) or nothing
 """
 function parse_cache_vcf_record(line::String)
     startswith(line, '#') && return nothing
@@ -586,21 +618,15 @@ function parse_cache_vcf_record(line::String)
     alt   = String(fields[5])
     info  = String(fields[8])
 
-    cann_str   = "."
-    ref_codon  = ""
-    cds_number = 0
-
+    cann_str = "."
     for part in split(info, ';')
         if startswith(part, "CANN=")
             cann_str = String(part[6:end])
-        elseif startswith(part, "RC=")
-            ref_codon = String(part[4:end])
-        elseif startswith(part, "CDSNR=")
-            cds_number = parse(Int, part[7:end])
+            break
         end
     end
 
-    (chrom, pos, ref, alt, cann_str, ref_codon, cds_number)
+    (chrom, pos, ref, alt, cann_str)
 end
 
 function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_headers::Vector{String})
@@ -608,19 +634,21 @@ function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_header
     for h in info_headers
         write(fh, h, "\n")
     end
-    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation: key:codon:alt_aa:effect:transcript_id:pos_in_cds:pos_in_codon\">\n")
-    write(fh, "##INFO=<ID=RC,Number=1,Type=String,Description=\"Reference codon\">\n")
-    write(fh, "##INFO=<ID=CDSNR,Number=1,Type=Integer,Description=\"CDS exon number\">\n")
+    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key:codon:aa:effect:transcript_id:pos_in_cds:pos_in_codon\">\n")
+    write(fh, "##FORMAT=<ID=CA,Number=1,Type=String,Description=\"CANN key(s) per GT allele. Alleles separated by '/' (unphased) or '|' (phased). Multiple transcript keys for one allele separated by ';'. 'r'=ref allele no CDS annotation, '.'=missing/no-call\">\n")
     chrom_line = join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", all_strains...], '\t')
     write(fh, chrom_line, "\n")
 end
 
 function write_vcf_cache_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
-                                cann_str::String, ref_codon::String, cds_number::Int,
-                                gvcf_info::String, format_keys::Vector{String}, sample_data::Vector{String})
-    info   = "$(gvcf_info);CANN=$(cann_str);RC=$(ref_codon);CDSNR=$(cds_number)"
-    format = join(format_keys, ':')
-    write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info, format, sample_data...], '\t'), "\n")
+                                cann_str::String, gvcf_info::String,
+                                format_keys::Vector{String}, sample_data::Vector{String},
+                                ca_values::Vector{String})
+    info    = "$(gvcf_info);CANN=$(cann_str)"
+    format  = join([format_keys..., "CA"], ':')
+    samples = [i <= length(ca_values) ? "$(sample_data[i]):$(ca_values[i])" : "$(sample_data[i]):."
+               for i in 1:length(sample_data)]
+    write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info, format, samples...], '\t'), "\n")
 end
 
 # ---------------------------------------------------------------------------
@@ -875,50 +903,56 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    annotate_position(seq_id, location, ctx, transcript_cache) -> PositionAnnotation
+    annotate_position_all(seq_id, location, ctx, transcript_cache) -> Vector{PositionAnnotation}
 
-CDS lookup and codon/position computation. Updates transcript_cache if transcript changes.
+Returns one PositionAnnotation per CDS transcript overlapping location.
+Returns a single non-coding annotation if location is intergenic.
 """
-function annotate_position(
+function annotate_position_all(
     seq_id::String,
     location::Int,
     ctx::ProcessingContext,
     transcript_cache::TranscriptSequenceCache
-)
-    cds_hit = find_cds(ctx.cds_intervals, seq_id, location)
+)::Vector{PositionAnnotation}
+    cds_hits = find_all_cds(ctx.cds_intervals, seq_id, location)
 
-    is_coding     = 0
-    transcript_id = ""
-    cds_number    = 0
-    pos_in_cds    = 0
-    pos_in_codon_val = 0
-    ref_codon     = ""
-    ref_product   = ""
+    if isempty(cds_hits)
+        return [PositionAnnotation(0, "", 0, 0, 0, "", "")]
+    end
 
-    if !isnothing(cds_hit)
-        is_coding     = 1
+    annotations = PositionAnnotation[]
+    seen_transcripts = Set{String}()
+
+    for cds_hit in cds_hits
         transcript_id = cds_hit.transcript_id
-        cds_number    = cds_hit.cds_number
+        transcript_id in seen_transcripts && continue
+        push!(seen_transcripts, transcript_id)
 
-        tinfo = ctx.transcript_info[transcript_id]
+        tinfo            = ctx.transcript_info[transcript_id]
+        cds_number       = cds_hit.cds_number
         pos_in_cds       = compute_position_in_cds(tinfo, location, cds_number)
         pos_in_codon_val = position_in_codon(pos_in_cds)
 
-        if transcript_id != transcript_cache.current_transcript_id
-            debug_log("    Loading sequences for transcript: ", transcript_id)
-            transcript_cache.current_transcript_id   = transcript_id
-            transcript_cache.current_transcript_seqs = load_transcript_sequences(ctx.transcript_db, transcript_id)
+        debug_log("    Loading sequences for transcript: ", transcript_id)
+        load_transcript_if_needed!(transcript_cache, ctx.transcript_db, transcript_id)
+
+        ref_seq = get_strain_seq(transcript_cache, transcript_id, ctx.reference_strain)
+        if isempty(ref_seq)
+            ref_seq = get_strain_seq(transcript_cache, transcript_id, "reference")
         end
 
-        ref_seq = get(transcript_cache.current_transcript_seqs, ctx.reference_strain, "")
+        ref_codon   = ""
+        ref_product = ""
         if !isempty(ref_seq)
             ref_codon   = extract_codon(ref_seq, pos_in_cds)
             ref_product = translate_codon(ref_codon)
         end
+
+        push!(annotations, PositionAnnotation(1, transcript_id, cds_number, pos_in_cds,
+                                              pos_in_codon_val, ref_codon, ref_product))
     end
 
-    PositionAnnotation(is_coding, transcript_id, cds_number, pos_in_cds,
-                       pos_in_codon_val, ref_codon, ref_product)
+    annotations
 end
 
 """
@@ -943,7 +977,7 @@ function annotate_variations!(
         v.position_in_codon  = annotation.pos_in_codon_val
         v.reference_codon    = annotation.ref_codon
 
-        strain_seq = get(transcript_cache.current_transcript_seqs, v.strain, "")
+        strain_seq = get_strain_seq(transcript_cache, annotation.transcript_id, v.strain)
         if !isempty(strain_seq)
             shift        = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
             adjusted_pos = annotation.pos_in_cds + shift
@@ -1144,8 +1178,82 @@ function write_allele_and_product_files(
 end
 
 # ---------------------------------------------------------------------------
+# CA FORMAT field helpers
+# ---------------------------------------------------------------------------
+
+"""
+    gt_to_ca(gt, this_alt_idx, this_alt_keys, ref_keys) -> String
+
+Maps a sample's GT string to a CA allele-key string.
+- `this_alt_keys`: CANN k-keys for this cache line's alt (one per transcript); ';'-joined.
+- `ref_keys`: CANN r-keys for the reference allele (one per transcript); ';'-joined.
+  When ref_keys is empty (non-coding position) 'r' is emitted as a plain marker.
+Preserves the phasing separator ('/' or '|') from the original GT.
+'.' is emitted only for missing/no-call genotypes.
+"""
+function gt_to_ca(gt::String, this_alt_idx::Union{Int,Nothing},
+                  this_alt_keys::Vector{String}, ref_keys::Vector{String})::String
+    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return "."
+
+    alt_key_str = isempty(this_alt_keys) ? "." : join(this_alt_keys, ';')
+    ref_key_str = isempty(ref_keys)      ? "r" : join(ref_keys, ';')
+
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+
+    allele_to_ca(a_str) = begin
+        idx = tryparse(Int, a_str)
+        isnothing(idx) && return "."
+        idx == 0 && return ref_key_str
+        (this_alt_idx !== nothing && idx == this_alt_idx) ? alt_key_str : "."
+    end
+
+    if isnothing(sep_idx)
+        return allele_to_ca(gt)
+    else
+        sep_char = gt[sep_idx]
+        ca1 = allele_to_ca(gt[1:sep_idx-1])
+        ca2 = allele_to_ca(gt[sep_idx+1:end])
+        return "$(ca1)$(sep_char)$(ca2)"
+    end
+end
+
+"""
+    build_ca_values(format_keys, sample_data, all_alts, this_alt, this_alt_keys, ref_keys) -> Vector{String}
+
+Returns one CA string per sample. `this_alt_keys` lists the k-keys for this alt's
+transcripts; `ref_keys` lists the r-keys for the reference allele's transcripts.
+Multiple keys for one allele are ';'-joined.
+"""
+function build_ca_values(
+    format_keys::Vector{String},
+    sample_data::Vector{String},
+    all_alts::Vector{String},
+    this_alt::String,
+    this_alt_keys::Vector{String},
+    ref_keys::Vector{String}
+)::Vector{String}
+    this_alt_idx = findfirst(==(this_alt), all_alts)
+    [gt_to_ca(get(parse_format_field(format_keys, sd), "GT", "."),
+              this_alt_idx, this_alt_keys, ref_keys)
+     for sd in sample_data]
+end
+
+# ---------------------------------------------------------------------------
 # CANN annotation
 # ---------------------------------------------------------------------------
+
+"""
+    build_ref_cann_entry(key, annotation) -> String
+
+Builds the r-keyed CANN entry for the reference allele at a coding position.
+Format mirrors alt entries: key:codon:aa:effect:transcript_id:pos_in_cds:pos_in_codon
+"""
+function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::String
+    annotation.is_coding != 1 && return "."
+    codon = isempty(annotation.ref_codon)   ? "." : annotation.ref_codon
+    aa    = isempty(annotation.ref_product) ? "." : annotation.ref_product
+    "$(key):$(codon):$(aa):reference:$(annotation.transcript_id):$(annotation.pos_in_cds):$(annotation.pos_in_codon_val)"
+end
 
 """
     build_cann_string(ref_allele, alt_allele, v, annotation) -> String
@@ -1214,38 +1322,50 @@ function build_cann_string(
 end
 
 """
-    decode_cann_to_annotation(ce, ctx, transcript_cache) -> PositionAnnotation
+    decode_all_cann_annotations(ce, ctx, transcript_cache) -> Vector{PositionAnnotation}
 
-Reconstructs a PositionAnnotation from a cached CacheEntry.
-Also loads transcript sequences into transcript_cache so annotate_variations!
-can access them.
+Reconstructs one PositionAnnotation per unique transcript encoded in ce.cann_str.
+The comma-separated CANN entries may cover multiple overlapping transcripts.
+Returns a single non-coding annotation when cann_str is ".".
 """
-function decode_cann_to_annotation(
+function decode_all_cann_annotations(
     ce::CacheEntry,
     ctx::ProcessingContext,
     transcript_cache::TranscriptSequenceCache
-)::PositionAnnotation
-    ce.cann_str == "." && return PositionAnnotation(0, "", 0, 0, 0, "", "")
+)::Vector{PositionAnnotation}
+    ce.cann_str == "." && return [PositionAnnotation(0, "", 0, 0, 0, "", "")]
 
-    entry = split(ce.cann_str, ',')[1]
-    parts = split(entry, ':')
-    # parts: key, codon, alt_aa, effect, transcript_id, pos_in_cds, pos_in_codon
-    length(parts) < 7 && return PositionAnnotation(0, "", 0, 0, 0, "", "")
+    # Reconstruct PositionAnnotations from r-keyed entries only.
+    # r-keyed entries encode the reference allele annotation per transcript and carry
+    # all the data needed (ref_codon, ref_product, pos_in_cds, pos_in_codon).
+    # k-keyed entries (alt annotations) are ignored here — they will be recomputed
+    # from SQLite sequences by annotate_variations!.
+    seen_transcripts = Set{String}()
+    annotations      = PositionAnnotation[]
 
-    transcript_id    = String(parts[5])
-    pos_in_cds       = parts[6] == "." ? 0 : parse(Int, parts[6])
-    pos_in_codon_val = parts[7] == "." ? 0 : parse(Int, parts[7])
-    ref_codon        = ce.ref_codon
-    ref_product      = isempty(ref_codon) ? "" : translate_codon(ref_codon)
+    for entry in split(ce.cann_str, ',')
+        parts = split(entry, ':')
+        length(parts) < 7 && continue
+        startswith(String(parts[1]), 'r') || continue   # only r-keyed entries
 
-    if !isempty(transcript_id) && transcript_id != transcript_cache.current_transcript_id
+        transcript_id = String(parts[5])
+        isempty(transcript_id) && continue
+        transcript_id in seen_transcripts && continue
+        push!(seen_transcripts, transcript_id)
+
+        ref_codon        = parts[2] == "." ? "" : String(parts[2])
+        ref_product      = parts[3] == "." ? "" : String(parts[3])
+        pos_in_cds       = parts[6] == "." ? 0  : parse(Int, parts[6])
+        pos_in_codon_val = parts[7] == "." ? 0  : parse(Int, parts[7])
+
         debug_log("    Loading sequences for transcript (cache hit): ", transcript_id)
-        transcript_cache.current_transcript_id   = transcript_id
-        transcript_cache.current_transcript_seqs = load_transcript_sequences(ctx.transcript_db, transcript_id)
+        load_transcript_if_needed!(transcript_cache, ctx.transcript_db, transcript_id)
+
+        push!(annotations, PositionAnnotation(1, transcript_id, 0, pos_in_cds,
+                                              pos_in_codon_val, ref_codon, ref_product))
     end
 
-    PositionAnnotation(1, transcript_id, ce.cds_number, pos_in_cds,
-                       pos_in_codon_val, ref_codon, ref_product)
+    isempty(annotations) ? [PositionAnnotation(0, "", 0, 0, 0, "", "")] : annotations
 end
 
 # ---------------------------------------------------------------------------
@@ -1273,46 +1393,94 @@ function handle_variant_record!(
     variations = build_variations_from_record(record, all_strains, ctx.undone_strains, ctx.min_coverage)
     isempty(variations) && return false
 
-    # Determine position annotation: cache hit or fresh CDS lookup
-    annotation = if !isempty(cache_entries)
+    # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
+    annotations = if !isempty(cache_entries)
         ce = first(values(cache_entries))
-        decode_cann_to_annotation(ce, ctx, transcript_cache)
+        decode_all_cann_annotations(ce, ctx, transcript_cache)
     else
-        annotate_position(seq_id, location, ctx, transcript_cache)
+        annotate_position_all(seq_id, location, ctx, transcript_cache)
     end
 
-    annotate_variations!(variations, annotation, ctx, transcript_cache)
+    # Accumulate per-alt CANN entries across all annotations (transcripts).
+    # We also write .dat output once per annotation so each transcript gets a row.
+    alt_cann_entries   = Dict{String, Vector{String}}()   # alt -> [entry per transcript]
+    first_annotation   = annotations[1]
+    any_output         = false
 
-    # Set downstream_of_frameshift on each variation
-    for v in variations
-        if !isempty(v.transcript)
-            v.downstream_of_frameshift = check_downstream_of_frameshift(
-                ctx.fs_info, v.strain, v.transcript, v.location)
+    for annotation in annotations
+        annotate_variations!(variations, annotation, ctx, transcript_cache)
+
+        for v in variations
+            if !isempty(v.transcript)
+                v.downstream_of_frameshift = check_downstream_of_frameshift(
+                    ctx.fs_info, v.strain, v.transcript, v.position_in_cds)
+            end
+        end
+
+        ref_variation = build_reference_variation(variations, annotation, seq_id, location, ctx.reference_strain)
+        all_vars = vcat(variations, [ref_variation])
+
+        has_variation(all_vars) || continue
+        any_output = true
+
+        write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
+        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation)
+
+        # Collect CANN entry for each unique alt under this annotation
+        seen_alts_ann = Set{String}()
+        for v in variations
+            v.strain == ctx.reference_strain && continue
+            v.base == record.ref && continue
+            alt = v.base
+            alt in seen_alts_ann && continue
+            push!(seen_alts_ann, alt)
+            entry = build_cann_string(record.ref, alt, v, annotation)
+            push!(get!(alt_cann_entries, alt, String[]), entry)
         end
     end
 
-    ref_variation = build_reference_variation(variations, annotation, seq_id, location, ctx.reference_strain)
-    push!(variations, ref_variation)
+    any_output || return false
 
-    !has_variation(variations) && return false
-
-    # Write VCF cache entries: one per unique alt allele seen in this record
-    seen_alts = Set{String}()
-    for v in variations
-        v.strain == ctx.reference_strain && continue
-        v.base == record.ref && continue  # ref call
-        alt = v.base
-        alt in seen_alts && continue
-        push!(seen_alts, alt)
-
-        cann_str = build_cann_string(record.ref, alt, v, annotation)
-        write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
-                              cann_str, annotation.ref_codon, annotation.cds_number,
-                              record.info, record.format_keys, record.sample_data)
+    # Build r-keyed CANN entries for the reference allele (one per coding transcript).
+    # These are identical across all alt cache lines at this position.
+    ref_keys         = String[]
+    ref_cann_entries = String[]
+    for (i, annotation) in enumerate(annotations)
+        annotation.is_coding == 0 && continue
+        key   = "r$(length(ref_keys))"
+        entry = build_ref_cann_entry(key, annotation)
+        entry == "." && continue
+        push!(ref_keys, key)
+        push!(ref_cann_entries, entry)
     end
 
-    write_snp_feature(writers.snp_fh, variations, annotation, seq_id, location, ctx.reference_strain)
-    write_allele_and_product_files(writers.allele_fh, writers.product_fh, variations, annotation)
+    # Write one VCF cache entry per unique alt.
+    # k-keys are numbered k0, k1, ... per transcript for each alt independently
+    # (keys are local to the cache line, not global across alts).
+    for alt in record.alts
+        haskey(alt_cann_entries, alt) || continue
+        entries = alt_cann_entries[alt]
+
+        # Assign k-keys and replace the placeholder k0: from build_cann_string
+        alt_keys_for_alt = String[]
+        keyed_entries    = String[]
+        for (i, entry) in enumerate(entries)
+            key = "k$(i - 1)"
+            push!(alt_keys_for_alt, key)
+            push!(keyed_entries, entry == "." ? entry :
+                  replace(entry, r"^k0:" => "$(key):", count=1))
+        end
+
+        coding_alt_entries = filter(!=((".")), keyed_entries)
+        all_entries = [ref_cann_entries..., coding_alt_entries...]
+        full_cann   = isempty(all_entries) ? "." : join(all_entries, ',')
+
+        ca_values = build_ca_values(record.format_keys, record.sample_data, record.alts, alt,
+                                    alt_keys_for_alt, ref_keys)
+        write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
+                              full_cann, record.info, record.format_keys,
+                              record.sample_data, ca_values)
+    end
 
     true
 end
@@ -1346,7 +1514,7 @@ function main()
     writers = open_output_writers(args["output_vcf"])
     write_vcf_cache_header(writers.vcf_cache_fh, ctx.all_strains, info_headers)
 
-    transcript_cache = TranscriptSequenceCache("", Dict{String,String}())
+    transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
 
     # Span-aware sorted-merge loop
     n_processed = 0
@@ -1386,8 +1554,8 @@ function main()
             ck != gvcf_start && break
             parsed = parse_cache_vcf_record(cache_pf.line)
             if !isnothing(parsed)
-                (_, _, ref, alt, cann_str, ref_codon, cds_number) = parsed
-                cache_entries[(ref, alt)] = CacheEntry(cann_str, ref_codon, cds_number)
+                (_, _, ref, alt, cann_str) = parsed
+                cache_entries[(ref, alt)] = CacheEntry(cann_str)
             end
             advance!(cache_pf)
         end
