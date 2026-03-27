@@ -24,7 +24,7 @@ workflow me {
 
     allgvcfs = gvcfs_qch.collect().branch { single: it.size() == 1; multiple: true }
 
-    mergedGvcf = allgvcfs.single.map { it[0] }.mix(mergeGvcfs(allgvcfs.multiple, file(params.genomeFastaFile)))
+    mergedGvcf = allgvcfs.single.map { it[0] }.mix(mergeGvcfs(allgvcfs.multiple))
 
     codingData = makeCodingData(allFastas, genomicIndelDb, params.gtfFile, params.genomeFastaFile)
 

@@ -48,11 +48,11 @@ process mergeVcfs {
 
 
 process mergeGvcfs {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
+
 
   input:
     path "*.vcf.gz"
-    path genomeFastaFile
 
   output:
     path 'merged.vcf.gz'
@@ -62,7 +62,11 @@ process mergeGvcfs {
     set -euo pipefail
 
     for vcf in *.vcf.gz; do bcftools index --tbi \$vcf; done
-    bcftools merge --gvcf $genomeFastaFile -O z -o merged.vcf.gz *.vcf.gz
+    bcftools merge \
+        --merge all \
+        --output-type z \
+        --output merged.vcf.gz \
+        *.vcf.gz
     """
 
   stub:

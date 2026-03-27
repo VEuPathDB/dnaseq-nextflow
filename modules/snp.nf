@@ -194,7 +194,11 @@ process mergeGvcfs {
     """
     set -euo pipefail
     if [ $gvcfCount -gt 1 ]; then
-        bcftools merge -O z -o coverage.g.vcf.gz *.g.vcf.gz
+    bcftools merge \
+        --merge all \
+        --output-type z \
+        --output coverage.g.vcf.gz \
+        *.g.vcf.gz
     else
         cp *.g.vcf.gz coverage.g.vcf.gz
     fi
