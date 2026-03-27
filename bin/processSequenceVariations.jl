@@ -1275,8 +1275,24 @@ function build_cann_string(
 
     ref_len = length(ref_allele)
     alt_len = length(alt_allele)
-    is_indel   = (ref_len != alt_len)
-    is_complex = is_indel && !isempty(ref_allele) && !isempty(alt_allele) && ref_allele[1] != alt_allele[1]
+    is_indel = (ref_len != alt_len)
+
+    # A complex variant has both a substitution and an indel component.
+    # FreeBayes emits: [shared prefix][variant bases][inserted/deleted bases] — no shared suffix.
+    # After stripping the common prefix, if both tails are non-empty the variant is complex.
+    # This generalises the old anchor-only check (ref[1] != alt[1]) to handle cases like
+    # ATA→ACCTG where the anchor matches but downstream bases differ before the net insert.
+    is_complex = if is_indel && !isempty(ref_allele) && !isempty(alt_allele)
+        pfx = 0
+        for i in 1:min(ref_len, alt_len)
+            ref_allele[i] == alt_allele[i] || break
+            pfx += 1
+        end
+        !isempty(ref_allele[pfx+1:end]) && !isempty(alt_allele[pfx+1:end])
+    else
+        false
+    end
+
     is_pure_indel = is_indel && !is_complex
 
     if is_pure_indel

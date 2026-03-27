@@ -214,7 +214,7 @@ process snpEff {
     gzip -f genome/sequences.fa
     cp /usr/bin/snpEff/snpEff.config .
     java -jar /usr/bin/snpEff/snpEff.jar build -gtf22 -noCheckCds -noCheckProtein -v genome
-    java -Xmx4g -jar /usr/bin/snpEff/snpEff.jar genome $mergedVcf > merged.ann.vcf
+    java -Xmx4g -jar /usr/bin/snpEff/snpEff.jar -no-downstream -no-upstream genome $mergedVcf > merged.ann.vcf
     bgzip merged.ann.vcf
     tabix -p vcf merged.ann.vcf.gz
     """
