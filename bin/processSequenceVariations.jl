@@ -421,7 +421,6 @@ struct ProcessingContext
     indel_db::SQLite.DB
     fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}
     all_strains::Vector{String}
-    min_coverage::Int
 end
 
 struct OutputWriters
@@ -636,6 +635,7 @@ function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_header
     end
     write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key:codon:aa:effect:transcript_id:pos_in_cds:pos_in_codon. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
     write(fh, "##FORMAT=<ID=CA,Number=1,Type=String,Description=\"CANN key(s) per GT allele. Alleles separated by '/' (unphased) or '|' (phased). Multiple transcript keys for one allele separated by ';'. 'r'=ref allele no CDS annotation, '.'=missing/no-call\">\n")
+    write(fh, "##FORMAT=<ID=DFS,Number=1,Type=Integer,Description=\"Downstream of frameshift: 1 if this sample carries an upstream indel that disrupts the reading frame at this position, 0 otherwise.\">\n")
     chrom_line = join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", all_strains...], '\t')
     write(fh, chrom_line, "\n")
 end
@@ -643,10 +643,10 @@ end
 function write_vcf_cache_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
                                 cann_str::String, gvcf_info::String,
                                 format_keys::Vector{String}, sample_data::Vector{String},
-                                ca_values::Vector{String})
+                                ca_values::Vector{String}, dfs_values::Vector{String})
     info    = "$(gvcf_info);CANN=$(cann_str)"
-    format  = join([format_keys..., "CA"], ':')
-    samples = [i <= length(ca_values) ? "$(sample_data[i]):$(ca_values[i])" : "$(sample_data[i]):."
+    format  = join([format_keys..., "CA", "DFS"], ':')
+    samples = [i <= length(ca_values) ? "$(sample_data[i]):$(ca_values[i]):$(get(dfs_values, i, "."))" : "$(sample_data[i]):.:."
                for i in 1:length(sample_data)]
     write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info, format, samples...], '\t'), "\n")
 end
@@ -730,17 +730,16 @@ function compute_percent(fmt::Dict{String,String}, allele_idx::Int)::String
 end
 
 """
-    build_variations_from_record(record, all_strains, undone_strains, min_coverage)
+    build_variations_from_record(record, all_strains, undone_strains, prev_coverage_span)
         -> Vector{Variation}
 
 Builds per-strain Variation records from a GVCF variant record.
-Skips undone strains, missing GTs, and samples below min_coverage.
+Skips undone strains and missing GTs.
 """
 function build_variations_from_record(
     record::GVCFRecord,
     all_strains::Vector{String},
     undone_strains::Set{String},
-    min_coverage::Int,
     prev_coverage_span::Dict{String, Tuple{String, Int, Int}}
 )::Vector{Variation}
     variations = Variation[]
@@ -777,8 +776,7 @@ function build_variations_from_record(
         end
 
         dp_str = get(fmt, "DP", "0")
-        dp = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
-        dp < min_coverage && continue
+        dp     = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
 
         base = gt_to_base(gt, record.ref, record.alts)
         isempty(base) && continue
@@ -855,9 +853,9 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    initialize_processing_context(args, all_strains, min_coverage) -> ProcessingContext
+    initialize_processing_context(args, all_strains) -> ProcessingContext
 """
-function initialize_processing_context(args, all_strains::Vector{String}, min_coverage::Int)
+function initialize_processing_context(args, all_strains::Vector{String})
     undone_strains = Set{String}()
     undone_strains_file = get(args, "undone_strains_file", "")
     if !isempty(undone_strains_file) && isfile(undone_strains_file)
@@ -884,8 +882,7 @@ function initialize_processing_context(args, all_strains::Vector{String}, min_co
         transcript_db,
         indel_db,
         fs_info,
-        all_strains,
-        min_coverage
+        all_strains
     )
 end
 
@@ -1002,12 +999,18 @@ function annotate_variations!(
 
         strain_seq = get_strain_seq(transcript_cache, annotation.transcript_id, v.strain)
         if !isempty(strain_seq)
-            shift        = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
-            adjusted_pos = annotation.pos_in_cds + shift
-            strain_codon = extract_codon(strain_seq, adjusted_pos)
-            v.codon   = strain_codon
-            expanded  = expand_codon(strain_codon)
-            v.product = [translate_codon(c) for c in expanded]
+            is_fs = check_downstream_of_frameshift(ctx.fs_info, v.strain, annotation.transcript_id, annotation.pos_in_cds) == 1
+            if is_fs
+                v.codon   = "."
+                v.product = String[]
+            else
+                shift        = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
+                adjusted_pos = annotation.pos_in_cds + shift
+                strain_codon = extract_codon(strain_seq, adjusted_pos)
+                v.codon   = strain_codon
+                expanded  = expand_codon(strain_codon)
+                v.product = [translate_codon(c) for c in expanded]
+            end
         else
             v.codon   = "NNN"
             v.product = ["X"]
@@ -1252,13 +1255,19 @@ function build_ca_values(
     sample_data::Vector{String},
     all_alts::Vector{String},
     this_alt::String,
-    this_alt_keys::Vector{String},
-    ref_keys::Vector{String}
+    ref_keys::Vector{String},
+    all_strains::Vector{String},
+    strain_to_alt_keys::Dict{String, Vector{String}}
 )::Vector{String}
     this_alt_idx = findfirst(==(this_alt), all_alts)
-    [gt_to_ca(get(parse_format_field(format_keys, sd), "GT", "."),
-              this_alt_idx, this_alt_keys, ref_keys)
-     for sd in sample_data]
+    result = String[]
+    for (i, sd) in enumerate(sample_data)
+        strain = i <= length(all_strains) ? all_strains[i] : ""
+        gt     = get(parse_format_field(format_keys, sd), "GT", ".")
+        per_sample_keys = get(strain_to_alt_keys, strain, String[])
+        push!(result, gt_to_ca(gt, this_alt_idx, per_sample_keys, ref_keys))
+    end
+    result
 end
 
 # ---------------------------------------------------------------------------
@@ -1334,6 +1343,16 @@ function build_cann_string(
     codon       = isempty(v.codon) ? "." : v.codon
     unique_prods = unique(v.product)
     product_str  = isempty(unique_prods) ? "." : join(unique_prods, "/")
+
+    # Codon/product suppressed because strain is downstream of a frameshift
+    if codon == "." && isempty(unique_prods)
+        return "k0:.:.:downstream_frameshift:$(tid):$(pos_in_cds):$(pic)"
+    end
+
+    # Codon contains ambiguous base(s) — skip product and effect
+    if occursin(r"[Nn]", codon)
+        return "k0:$(codon):.:.:$(tid):$(pos_in_cds):$(pic)"
+    end
 
     has_stop = any(p == "*" for p in unique_prods)
     aa_effect = if has_stop
@@ -1430,7 +1449,7 @@ function handle_variant_record!(
     location = record.pos
     debug_log("Processing position: ", seq_id, ":", location)
 
-    variations = build_variations_from_record(record, all_strains, ctx.undone_strains, ctx.min_coverage, prev_coverage_span)
+    variations = build_variations_from_record(record, all_strains, ctx.undone_strains, prev_coverage_span)
     isempty(variations) && return false
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
@@ -1441,9 +1460,9 @@ function handle_variant_record!(
         annotate_position_all(seq_id, location, ctx, transcript_cache)
     end
 
-    # Accumulate per-alt CANN entries across all annotations (transcripts).
-    # We also write .dat output once per annotation so each transcript gets a row.
-    alt_cann_entries   = Dict{String, Vector{String}}()   # alt -> [entry per transcript]
+    # Accumulate per-sample CANN entries across all annotations (transcripts).
+    # alt_strain_entries: alt -> strain -> [entry per transcript, in annotation order]
+    alt_strain_entries = Dict{String, Dict{String, Vector{String}}}()
     first_annotation   = annotations[1]
     any_output         = false
 
@@ -1466,16 +1485,13 @@ function handle_variant_record!(
         write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
         write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation)
 
-        # Collect CANN entry for each unique alt under this annotation
-        seen_alts_ann = Set{String}()
+        # Collect per-sample CANN entry for each alt under this annotation
         for v in variations
             v.strain == ctx.reference_strain && continue
             v.base == record.ref && continue
-            alt = v.base
-            alt in seen_alts_ann && continue
-            push!(seen_alts_ann, alt)
-            entry = build_cann_string(record.ref, alt, v, annotation)
-            push!(get!(alt_cann_entries, alt, String[]), entry)
+            entry = build_cann_string(record.ref, v.base, v, annotation)
+            strain_map = get!(alt_strain_entries, v.base, Dict{String, Vector{String}}())
+            push!(get!(strain_map, v.strain, String[]), entry)
         end
     end
 
@@ -1514,32 +1530,55 @@ function handle_variant_record!(
         modified_sample_data[i] = join(fields, ":")
     end
 
-    # Write one VCF cache entry per unique alt.
-    # k-keys are numbered k0, k1, ... per transcript for each alt independently
-    # (keys are local to the cache line, not global across alts).
-    for alt in record.alts
-        haskey(alt_cann_entries, alt) || continue
-        entries = alt_cann_entries[alt]
+    # Build per-alt CANN key assignments and per-strain CA mappings.
+    # Unique annotation entries across all strains are deduplicated; each unique
+    # entry gets a k-key. Strains with the same annotation share a key.
+    # k-keys are local to each alt (reset per alt).
+    alt_cann_entries   = Dict{String, Vector{String}}()          # alt -> ordered unique keyed entries
+    alt_strain_to_ca   = Dict{String, Dict{String, Vector{String}}}()  # alt -> strain -> [keys per transcript]
 
-        # Assign k-keys and replace the placeholder k0: from build_cann_string
-        alt_keys_for_alt = String[]
-        keyed_entries    = String[]
-        for (i, entry) in enumerate(entries)
-            key = "k$(i - 1)"
-            push!(alt_keys_for_alt, key)
-            push!(keyed_entries, entry == "." ? entry :
-                  replace(entry, r"^k0:" => "$(key):", count=1))
+    for (alt, strain_map) in alt_strain_entries
+        entry_to_key   = Dict{String, String}()
+        ordered_keyed  = String[]
+
+        for strain in all_strains  # canonical strain order for deterministic key assignment
+            strain_entries = get(strain_map, strain, nothing)
+            isnothing(strain_entries) && continue
+            for entry in strain_entries
+                entry == "." && continue
+                if !haskey(entry_to_key, entry)
+                    key = "k$(length(entry_to_key))"
+                    entry_to_key[entry] = key
+                    push!(ordered_keyed, replace(entry, r"^k0:" => "$(key):", count=1))
+                end
+            end
         end
 
-        coding_alt_entries = filter(!=((".")), keyed_entries)
+        alt_cann_entries[alt] = ordered_keyed
+
+        strain_keys = Dict{String, Vector{String}}()
+        for (strain, strain_entries) in strain_map
+            strain_keys[strain] = [get(entry_to_key, e, ".") for e in strain_entries]
+        end
+        alt_strain_to_ca[alt] = strain_keys
+    end
+
+    # Write one VCF cache entry per unique alt.
+    for alt in record.alts
+        haskey(alt_cann_entries, alt) || continue
+
+        coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])
         all_entries = [ref_cann_entries..., coding_alt_entries...]
         full_cann   = isempty(all_entries) ? "." : join(all_entries, ',')
 
+        strain_to_alt_keys = get(alt_strain_to_ca, alt, Dict{String, Vector{String}}())
         ca_values = build_ca_values(record.format_keys, modified_sample_data, record.alts, alt,
-                                    alt_keys_for_alt, ref_keys)
+                                    ref_keys, all_strains, strain_to_alt_keys)
+        strain_to_dfs = Dict{String,String}(v.strain => string(v.downstream_of_frameshift) for v in variations)
+        dfs_values = [get(strain_to_dfs, s, ".") for s in all_strains]
         write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
                               full_cann, record.info, record.format_keys,
-                              modified_sample_data, ca_values)
+                              modified_sample_data, ca_values, dfs_values)
     end
 
     true
@@ -1554,8 +1593,6 @@ function main()
     global DEBUG = haskey(args, "debug")
     debug_log("Debug mode enabled")
 
-    min_coverage = haskey(args, "min_coverage") ? parse(Int, args["min_coverage"]) : 1
-
     # Open GVCF and parse header
     debug_log("Opening GVCF: ", args["vcf_file"])
     (gvcf_pf, all_strains, chrom_rank, info_headers) = open_gvcf_peeked(args["vcf_file"])
@@ -1566,7 +1603,7 @@ function main()
     cache_pf = open_cache_peeked(args["cache_file"])
 
     # Initialize processing context
-    ctx = initialize_processing_context(args, all_strains, min_coverage)
+    ctx = initialize_processing_context(args, all_strains)
     debug_log("Context: ", length(ctx.all_strains), " strains, ",
               length(ctx.cds_intervals), " CDS intervals")
 
@@ -1609,7 +1646,7 @@ function main()
                 fmt = parse_format_field(record.format_keys, record.sample_data[i])
                 dp_str = get(fmt, "DP", "0")
                 dp = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
-                if dp >= ctx.min_coverage
+                if dp > 0
                     prev_coverage_span[strain] = (record.chrom, record.end_pos, dp)
                 end
             end

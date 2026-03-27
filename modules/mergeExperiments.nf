@@ -177,7 +177,6 @@ process processSeqVars {
       --transcript_db $transcriptDb \\
       --indel_db $indelDb \\
       --gtf_file $gtfFile \\
-      --min_coverage $params.minCoverage \\
       --output_vcf output.vcf
 
     mv snpFeature.dat variationFeature.dat
