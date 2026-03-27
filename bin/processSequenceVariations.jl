@@ -740,7 +740,8 @@ function build_variations_from_record(
     record::GVCFRecord,
     all_strains::Vector{String},
     undone_strains::Set{String},
-    min_coverage::Int
+    min_coverage::Int,
+    prev_coverage_span::Dict{String, Tuple{String, Int, Int}}
 )::Vector{Variation}
     variations = Variation[]
 
@@ -751,7 +752,29 @@ function build_variations_from_record(
         fmt = parse_format_field(record.format_keys, record.sample_data[i])
 
         gt = get(fmt, "GT", "")
-        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+        if isempty(gt) || gt == "." || gt == "./." || gt == ".|."
+            # Sample has no call at this position; check if a prior REF block covers it
+            span = get(prev_coverage_span, strain, nothing)
+            if !isnothing(span)
+                span_chrom, span_end, span_dp = span
+                if span_chrom == record.chrom && record.pos <= span_end
+                    v = Variation()
+                    v.sequence_source_id = record.chrom
+                    v.location           = record.pos
+                    v.strain             = strain
+                    v.reference          = record.ref
+                    v.base               = record.ref
+                    v.coverage           = string(span_dp)
+                    v.percent            = "100"
+                    v.quality            = "."
+                    v.pvalue             = "."
+                    v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
+                    v.matches_reference  = 1
+                    push!(variations, v)
+                end
+            end
+            continue
+        end
 
         dp_str = get(fmt, "DP", "0")
         dp = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
@@ -1400,13 +1423,14 @@ function handle_variant_record!(
     ctx::ProcessingContext,
     writers::OutputWriters,
     transcript_cache::TranscriptSequenceCache,
-    all_strains::Vector{String}
+    all_strains::Vector{String},
+    prev_coverage_span::Dict{String, Tuple{String, Int, Int}}
 )::Bool
     seq_id   = record.chrom
     location = record.pos
     debug_log("Processing position: ", seq_id, ":", location)
 
-    variations = build_variations_from_record(record, all_strains, ctx.undone_strains, ctx.min_coverage)
+    variations = build_variations_from_record(record, all_strains, ctx.undone_strains, ctx.min_coverage, prev_coverage_span)
     isempty(variations) && return false
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
@@ -1470,6 +1494,26 @@ function handle_variant_record!(
         push!(ref_cann_entries, entry)
     end
 
+    # Build modified sample data: fill in GT=0 and DP for samples covered by a prior
+    # REF block span but absent from this variant record (missing GT).
+    gt_idx = findfirst(==("GT"), record.format_keys)
+    dp_idx = findfirst(==("DP"), record.format_keys)
+    modified_sample_data = copy(record.sample_data)
+    for (i, strain) in enumerate(all_strains)
+        i > length(modified_sample_data) && continue
+        fmt = parse_format_field(record.format_keys, modified_sample_data[i])
+        gt = get(fmt, "GT", "")
+        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
+        span = get(prev_coverage_span, strain, nothing)
+        isnothing(span) && continue
+        span_chrom, span_end, span_dp = span
+        (span_chrom == record.chrom && record.pos <= span_end) || continue
+        fields = fill(".", length(record.format_keys))
+        !isnothing(gt_idx) && (fields[gt_idx] = "0")
+        !isnothing(dp_idx) && (fields[dp_idx] = string(span_dp))
+        modified_sample_data[i] = join(fields, ":")
+    end
+
     # Write one VCF cache entry per unique alt.
     # k-keys are numbered k0, k1, ... per transcript for each alt independently
     # (keys are local to the cache line, not global across alts).
@@ -1491,11 +1535,11 @@ function handle_variant_record!(
         all_entries = [ref_cann_entries..., coding_alt_entries...]
         full_cann   = isempty(all_entries) ? "." : join(all_entries, ',')
 
-        ca_values = build_ca_values(record.format_keys, record.sample_data, record.alts, alt,
+        ca_values = build_ca_values(record.format_keys, modified_sample_data, record.alts, alt,
                                     alt_keys_for_alt, ref_keys)
         write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
                               full_cann, record.info, record.format_keys,
-                              record.sample_data, ca_values)
+                              modified_sample_data, ca_values)
     end
 
     true
@@ -1532,6 +1576,11 @@ function main()
 
     transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
 
+    # Per-sample last-seen REF block span: strain -> (chrom, end_pos, dp)
+    # Used to synthesize reference calls at variant positions for covered samples
+    # that bcftools merge left as missing GT.
+    prev_coverage_span = Dict{String, Tuple{String, Int, Int}}()
+
     # Span-aware sorted-merge loop
     n_processed = 0
 
@@ -1553,6 +1602,18 @@ function main()
         advance!(gvcf_pf)
 
         if record.is_ref_block
+            # Update per-sample coverage spans from this REF block
+            for (i, strain) in enumerate(all_strains)
+                strain in ctx.undone_strains && continue
+                i > length(record.sample_data) && continue
+                fmt = parse_format_field(record.format_keys, record.sample_data[i])
+                dp_str = get(fmt, "DP", "0")
+                dp = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
+                if dp >= ctx.min_coverage
+                    prev_coverage_span[strain] = (record.chrom, record.end_pos, dp)
+                end
+            end
+
             # Drain all cache entries within this REF block span [pos, end_pos]
             # These positions were variant before but are now reference-covered
             while !cache_pf.exhausted
@@ -1576,7 +1637,7 @@ function main()
             advance!(cache_pf)
         end
 
-        if handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains)
+        if handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains, prev_coverage_span)
             n_processed += 1
             if n_processed % 1000 == 0
                 @info "Processed $n_processed variant positions"
