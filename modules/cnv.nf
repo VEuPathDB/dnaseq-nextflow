@@ -301,7 +301,7 @@ process getHeterozygousSNPs {
   container 'veupathdb/vcf_parser_cnv:1.0.0'
 
   input:
-    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(gvcfGz), path(gvcfGzTbi)
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi)
 
   output:
     tuple val(sampleName), path('heterozygousSNPs.vcf')
@@ -367,6 +367,28 @@ process makeHeterozygousDensityBigwig {
   stub:
     """
     touch heterozygousDensity.bw
+    """
+}
+
+process convertFreebayesToVarscanFormat {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  input:
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi)
+
+  output:
+    tuple val(sampleName), path('snps.varscan.vcf.gz'), path('snps.varscan.vcf.gz.tbi')
+
+  script:
+    """
+    set -euo pipefail
+    convertFreebayesToVarscanFormat.py --vcfFile $snpsVcfGz | bgzip > snps.varscan.vcf.gz
+    tabix -p vcf snps.varscan.vcf.gz
+    """
+
+  stub:
+    """
+    touch snps.varscan.vcf.gz snps.varscan.vcf.gz.tbi
     """
 }
 

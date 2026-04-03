@@ -38,6 +38,7 @@ include { bedtoolsWindowed } from '../modules/cnv.nf'
 include { normaliseCoverage } from '../modules/cnv.nf'
 include { makeSnpDensity } from '../modules/cnv.nf'
 include { makeDensityBigwigs } from '../modules/cnv.nf'
+include { convertFreebayesToVarscanFormat } from '../modules/cnv.nf'
 include { getHeterozygousSNPs } from '../modules/cnv.nf'
 include { makeHeterozygousDensityBed } from '../modules/cnv.nf'
 include { makeHeterozygousDensityBigwig } from '../modules/cnv.nf'
@@ -148,7 +149,13 @@ workflow ps {
 
     if (params.ploidy != 1) {
 
-      getHeterozygousSNPsResults = getHeterozygousSNPs(freebayesResults.vcf_files)
+      snpsVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
+        tuple(sampleName, snpsVcfGz, snpsVcfGzTbi)
+      }
+
+      convertedSnpsVcf = convertFreebayesToVarscanFormat(snpsVcf)
+
+      getHeterozygousSNPsResults = getHeterozygousSNPs(convertedSnpsVcf)
 
       makeHeterozygousDensityBedResults = makeHeterozygousDensityBed(makeWindowFileResults, getHeterozygousSNPsResults)
 
