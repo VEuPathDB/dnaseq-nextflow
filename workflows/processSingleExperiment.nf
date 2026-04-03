@@ -21,6 +21,7 @@ include { freebayes } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
+include { splitGvcfAtZeroCoverage } from '../modules/snp.nf'
 include { makeConsensusFromGvcf } from '../modules/snp.nf'
 include { mergeGvcfs } from '../modules/snp.nf'
 
@@ -105,11 +106,16 @@ workflow ps {
         tuple(sampleName, gvcfGz, gvcfGzTbi)
     }
 
-    makeConsensusFromGvcf(freebayesGvcf, reorderFastaResults)
+    // Join gVCF with BAM so we can compute the full-genome BedGraph once and
+    // use it to both split reference blocks at zero-coverage boundaries and
+    // recompute per-sub-block DP values.
+    splitGvcfResults = splitGvcfAtZeroCoverage(freebayesGvcf.join(gatkResults.bamTuple), reorderFastaResults)
+
+    makeConsensusFromGvcf(splitGvcfResults, reorderFastaResults)
 
     mergeGvcfs(
-        freebayesGvcf.count(),
-        freebayesGvcf.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
+        splitGvcfResults.count(),
+        splitGvcfResults.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
             .groupTuple(by: 2, sort: { a, b -> a <=> b })
     )
 

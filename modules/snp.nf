@@ -212,6 +212,44 @@ process mergeGvcfs {
     """
 }
 
+process splitGvcfAtZeroCoverage {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  input:
+    tuple val(sampleName), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(bamFile), path(bamIndex)
+    tuple path(genomeFasta), path(genomeFastaIndex)
+
+  output:
+    tuple val(sampleName), path("${sampleName}.g.vcf.gz"), path("${sampleName}.g.vcf.gz.tbi")
+
+  script:
+    """
+    set -euo pipefail
+
+    # Full-genome BedGraph: one entry per contiguous depth region
+    bedtools genomecov -ibam $bamFile -bga > coverage.bedgraph
+
+    # Pipe through bcftools view rather than bgzip to guarantee htslib-compatible
+    # BGZF output; plain bgzip produces standard gzip that cyvcf2 cannot open.
+    # --ref is required so that REF alleles are corrected for sub-blocks that
+    # start at a new position after splitting around zero-coverage gaps.
+    splitGvcfAtZeroCoverage.py \\
+      --gvcf input.g.vcf.gz \\
+      --bedgraph coverage.bedgraph \\
+      --ref $genomeFasta \\
+      --output /dev/stdout \\
+    | bcftools view -O z -o ${sampleName}.g.vcf.gz
+
+    bcftools index -t ${sampleName}.g.vcf.gz
+    """
+
+  stub:
+    """
+    touch ${sampleName}.g.vcf.gz
+    touch ${sampleName}.g.vcf.gz.tbi
+    """
+}
+
 process makeConsensusFromGvcf {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
