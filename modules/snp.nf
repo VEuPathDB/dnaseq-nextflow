@@ -237,6 +237,7 @@ process splitGvcfAtZeroCoverage {
       --gvcf input.g.vcf.gz \\
       --bedgraph coverage.bedgraph \\
       --ref $genomeFasta \\
+      --min-coverage $params.minCoverage \\
       --output /dev/stdout \\
     | bcftools view -O z -o ${sampleName}.g.vcf.gz
 

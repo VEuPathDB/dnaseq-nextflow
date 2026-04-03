@@ -45,13 +45,13 @@ def load_fasta(fasta_file):
 # BedGraph loading
 # ---------------------------------------------------------------------------
 
-def load_bedgraph(bedgraph_file):
+def load_bedgraph(bedgraph_file, min_coverage=1):
     """
     Load a full-genome BedGraph into memory.
     Returns:
       bgraph: dict[chrom] -> list of (start, end, depth)  (0-based half-open, sorted)
       bgraph_starts: dict[chrom] -> list of start positions (for bisect)
-      zero_regions: dict[chrom] -> list of (start, end) where depth == 0
+      low_cov_regions: dict[chrom] -> list of (start, end) where depth < min_coverage
     """
     bgraph = defaultdict(list)
     zero_regions = defaultdict(list)
@@ -63,7 +63,7 @@ def load_bedgraph(bedgraph_file):
                 continue
             chrom, start, end, depth = parts[0], int(parts[1]), int(parts[2]), int(parts[3])
             bgraph[chrom].append((start, end, depth))
-            if depth == 0:
+            if depth < min_coverage:
                 zero_regions[chrom].append((start, end))
 
     bgraph_starts = {chrom: [e[0] for e in entries] for chrom, entries in bgraph.items()}
@@ -157,8 +157,8 @@ def update_end_in_info(info, new_end):
 # Main processing
 # ---------------------------------------------------------------------------
 
-def process_gvcf(gvcf_file, bedgraph_file, output_file, ref_fasta=None):
-    bgraph, bgraph_starts, zero_regions = load_bedgraph(bedgraph_file)
+def process_gvcf(gvcf_file, bedgraph_file, output_file, ref_fasta=None, min_coverage=1):
+    bgraph, bgraph_starts, zero_regions = load_bedgraph(bedgraph_file, min_coverage)
     ref_seqs = load_fasta(ref_fasta) if ref_fasta else {}
 
     in_opener = gzip.open if gvcf_file.endswith('.gz') else open
@@ -231,8 +231,10 @@ def main():
     parser.add_argument('--bedgraph', required=True, help='Full-genome BedGraph (bedtools genomecov -bga)')
     parser.add_argument('--output', required=True, help='Output gVCF (.gz = bgzipped)')
     parser.add_argument('--ref', required=False, help='Reference FASTA; required to fix REF alleles on split sub-blocks')
+    parser.add_argument('--min-coverage', required=False, type=int, default=1, dest='min_coverage',
+                        help='Minimum depth to consider a region covered (default: 1)')
     args = parser.parse_args()
-    process_gvcf(args.gvcf, args.bedgraph, args.output, ref_fasta=args.ref)
+    process_gvcf(args.gvcf, args.bedgraph, args.output, ref_fasta=args.ref, min_coverage=args.min_coverage)
 
 
 if __name__ == '__main__':
