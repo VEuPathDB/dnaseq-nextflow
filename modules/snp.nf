@@ -22,7 +22,7 @@ process freebayes {
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction $params.freebayesMinAltFraction \\
       --gvcf \\
-      $resultSortedGatkBam > freebayes.g.vcf
+      $resultSortedGatkBam | bcftools sort > freebayes.g.vcf
 
     # Extract variant sites only (exclude reference blocks where ALT=<*>)
     bcftools view -e 'ALT[0]="<*>"' freebayes.g.vcf > freebayes.vcf
