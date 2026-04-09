@@ -229,8 +229,8 @@ process splitGvcfAtZeroCoverage {
     # Full-genome BedGraph: one entry per contiguous depth region
     bedtools genomecov -ibam $bamFile -bga > coverage.bedgraph
 
-    # Pipe through bcftools view rather than bgzip to guarantee htslib-compatible
-    # BGZF output; plain bgzip produces standard gzip that cyvcf2 cannot open.
+    # FreeBayes can produce overlapping reference blocks in gVCF output, which
+    # can cause out-of-order records after splitting. bcftools sort corrects this.
     # --ref is required so that REF alleles are corrected for sub-blocks that
     # start at a new position after splitting around zero-coverage gaps.
     splitGvcfAtZeroCoverage.py \\
@@ -239,7 +239,7 @@ process splitGvcfAtZeroCoverage {
       --ref $genomeFasta \\
       --min-coverage $params.minCoverage \\
       --output /dev/stdout \\
-    | bcftools view -O z -o ${sampleName}.g.vcf.gz
+    | bcftools sort -O z -o ${sampleName}.g.vcf.gz
 
     bcftools index -t ${sampleName}.g.vcf.gz
     """

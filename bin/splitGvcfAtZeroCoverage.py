@@ -189,6 +189,11 @@ def process_gvcf(gvcf_file, bedgraph_file, output_file, ref_fasta=None, min_cove
                     end = int(field[4:])
                     break
 
+            # Clamp END to chromosome length to handle gVCF records that extend
+            # beyond the reference (can occur with fragmented/scaffold genomes).
+            if chrom in ref_seqs:
+                end = min(end, len(ref_seqs[chrom]))
+
             chrom_zeros = zero_regions.get(chrom, [])
             if not chrom_zeros:
                 fout.write(line)

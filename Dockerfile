@@ -5,7 +5,13 @@ ENV TABIX_VERSION=0.2.6
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools python3 python3-pip tabix samtools perl default-jre unzip cpanminus bioperl emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl bwa trimmomatic openjdk-21-jre-headless sqlite3 bedtools && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools python3 python3-pip tabix samtools perl default-jre unzip cpanminus bioperl emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl trimmomatic openjdk-21-jre-headless sqlite3 bedtools && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+
+ENV BWA_MEM2_VERSION=2.2.1
+RUN wget -q https://github.com/bwa-mem2/bwa-mem2/releases/download/v${BWA_MEM2_VERSION}/bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
+    && tar xjf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
+    && mv bwa-mem2-${BWA_MEM2_VERSION}_x64-linux/bwa-mem2* /usr/local/bin/ \
+    && rm -rf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 bwa-mem2-${BWA_MEM2_VERSION}_x64-linux
 
 RUN pip3 install --break-system-packages cyvcf2
 

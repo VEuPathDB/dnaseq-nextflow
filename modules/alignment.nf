@@ -15,13 +15,13 @@ process bwaIndex {
     """
     set -euo pipefail
     cp $genomeFasta genomeIndex
-    bwa index genomeIndex
+    bwa-mem2 index genomeIndex
     samtools faidx $genomeFasta
     """
 
   stub:
     """
-    touch genomeIndex.amb genomeIndex.ann genomeIndex.bwt genomeIndex.pac genomeIndex.sa
+    touch genomeIndex.amb genomeIndex.ann genomeIndex.bwt.2bit.64 genomeIndex.pac genomeIndex.0123
     """
 }
 
@@ -41,7 +41,7 @@ process bwaMem {
       set -euo pipefail
 
       if [ "$isPaired" = true ]; then
-          bwa mem \\
+          bwa-mem2 mem \\
               -t $params.bwaThreads \\
               -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
               genomeIndex \\
@@ -52,7 +52,7 @@ process bwaMem {
               samtools sort -o sort.bam fix.bam
               samtools markdup -r sort.bam result_sorted.bam
       else
-          bwa mem \\
+          bwa-mem2 mem \\
               -t $params.bwaThreads \\
               -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
               genomeIndex \\
