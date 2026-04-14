@@ -401,7 +401,6 @@ process calculatePloidyAndGeneCNV {
     tuple val(sampleName), path(sampleFile)
     path footprints
     val ploidy
-    val taxonId
     path geneSourceIdOrtholog
     path chrsForCalc
 
@@ -418,7 +417,6 @@ process calculatePloidyAndGeneCNV {
         --outputDir . \\
         --fpkmFile $sampleFile \\
         --sampleName $sampleName \\
-        --taxonId  $taxonId \\
         --geneFootprints $footprints \\
         --ploidy $ploidy \\
         --chrsForCalcsFile $chrsForCalc
@@ -428,7 +426,6 @@ process calculatePloidyAndGeneCNV {
         --ploidy $ploidy \\
         --outputDir . \\
         --sampleName $sampleName \\
-        --taxonId $taxonId \\
         --geneFootPrints $footprints \\
         --geneSourceIdOrthologFile $geneSourceIdOrtholog \\
         --chrsForCalcsFile $chrsForCalc

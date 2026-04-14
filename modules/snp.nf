@@ -16,11 +16,12 @@ process freebayes {
     set -euo pipefail
 
     # Run freebayes with --gvcf to include reference blocks
+    minAltFraction=\$([ "$params.ploidy" -eq 1 ] && echo "0.8" || echo "0.3")
     freebayes \\
       -f $genomeReorderedFasta \\
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
-      --min-alternate-fraction $params.freebayesMinAltFraction \\
+      --min-alternate-fraction \$minAltFraction \\
       --gvcf \\
       $resultSortedGatkBam | bcftools sort > freebayes.g.vcf
 

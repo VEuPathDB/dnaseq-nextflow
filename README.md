@@ -148,7 +148,6 @@ flowchart TD
     p50 --> p56
     p51 -->|footprints| p56
     p52 -->|ploidy| p56
-    p53 -->|taxonId| p56
     p54 -->|geneSourceIdOrtholog| p56
     p55 -->|chrsForCalc| p56
     p56 --> p59
@@ -253,11 +252,9 @@ Workflows: processSingleExperiment=ps; loadSingleExperiment=ls; loadCNV=lc; merg
 | X | X | ploidy | int | Ploidy Level |
 | X |   | hisat2Index | string path | (Assuming createIndex is false) Location of the hisat2Index file  |
 | X |   | createIndex | boolean | If true, will create the hisat2Index file | 
-| X |   | trimmomaticAdaptorsFile | string path | Location of the trimmomatic adaptors file |
 | X |   | varscanPValue | int | Sets the --p-value argument used in varscan mpileup2snp, mpileup2indel, and mpileup2cns |
 | X |   | varscanMinVarFreqSnp | int | Sets the --min-var-freq argument used in varscan mpileup2snp |
 | X |   | varscanMinVarFreqCons | int | Sets the --min-var-freq argument used in varscan mpileup2indel and mpileup2cns |
-| X |   | maxNumberOfReads | int | Used in subSample process to limit total number of reads | 
 | X |   | footprintFile | path | Path to gene footprints file |
 |   | X | fastaDir | string path | Path to directory that contains the consensus fasta files output from processSingleExperiment |
 |   | X | vcfDir | string path | Path to directory that contains the strain specific vcf files output from processSingleExperiment |
@@ -268,7 +265,6 @@ Workflows: processSingleExperiment=ps; loadSingleExperiment=ls; loadCNV=lc; merg
 |   | X | organism_abbrev | string | Organism Abbreviation Ex: 'lmajFriedlin' |
 |   | X | reference_strain | string | Reference Strain Ex: 'Friedlin' |
 |   | X | varscan_directory | path | Path to varscan coverage directory |
-|   |   | taxonId | string | Taxon ID Ex: "1577702" |
 |   | X | extDbRlsSpec | string | External database release spec. Ex: "lmajFriedlin_NGS_SNPsAndVariations|do_not_care" |
 |   | X | genomeExtDbRlsSpec | string | Genome external database spec. Ex: "lmajFriedlin_primary_genome_RSRC|2016-05-28" |
 |   |   | webServicesDir | path | Path to web services directory |

@@ -130,7 +130,7 @@ workflow ps {
 
     calculateTPMResults = calculateTPM(htseqCountResults, params.footprintFile)
 
-    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.taxonId, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
+    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 

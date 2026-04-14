@@ -5,22 +5,21 @@ use warnings;
 use Getopt::Long;
 use ApiCommonData::Load::CalculationsForCNVs;
 
-my ($chrPloidyFile, $fpkmFile, $outputDir, $sampleName, $taxonId, $geneFootprintFile, $geneSourceIdOrthologFile, $chrsForCalcsFile);
+my ($chrPloidyFile, $fpkmFile, $outputDir, $sampleName, $geneFootprintFile, $geneSourceIdOrthologFile, $chrsForCalcsFile);
 my $ploidy = 2;
 &GetOptions("fpkmFile=s" => \$fpkmFile,
             "ploidy=i" => \$ploidy,
             "outputDir=s" => \$outputDir,
             "sampleName=s" => \$sampleName,
-            "taxonId=i"=> \$taxonId,
             "geneFootPrints=s" => \$geneFootprintFile,
             "geneSourceIdOrthologFile=s" => \$geneSourceIdOrthologFile,
             "chrsForCalcsFile=s" => \$chrsForCalcsFile,
             );
- 
-&usage() unless ($fpkmFile && $outputDir && $sampleName && $taxonId && $geneFootprintFile);
+
+&usage() unless ($fpkmFile && $outputDir && $sampleName && $geneFootprintFile);
 
 #get hashrefs of chromosome data
-my $chrs = getChrsForCalcs($chrsForCalcsFile, $taxonId);
+my $chrs = getChrsForCalcs($chrsForCalcsFile);
 my $geneData = ApiCommonData::Load::CalculationsForCNVs::getGeneInfo($geneFootprintFile, $chrs);
 my $chrValues = ApiCommonData::Load::CalculationsForCNVs::getChrFPKMVals($fpkmFile, $chrs, $geneData);
 my $chrMedians = ApiCommonData::Load::CalculationsForCNVs::getChrMedians($chrValues, $chrs);
@@ -35,7 +34,7 @@ while (my $line = <$data>) {
     $geneOrthoMclIds->{$geneSourceId} = $ortholog;
 }
 close($data);
-die "ERROR:\tNo orthologs can be found for genes in the organism with taxon id $taxonId. Ortholog data is required to run this script.\n\n
+die "ERROR:\tNo orthologs can be found in $geneSourceIdOrthologFile. Ortholog data is required to run this script.\n\n
          DATA LOADERS: Please undo this step and re-run after orthologs have been loaded in this database.\n"
          unless scalar keys %$geneOrthoMclIds > 0;
 
@@ -45,7 +44,7 @@ my $allGenesData = &geneCopyNumberCalc($fpkmFile, $chrPloidies, $chrMedians, $ge
 #==================================== Subroutines =======================================================================
  
 sub getChrsForCalcs {
-    my ($file, $taxonid) = @_;
+    my ($file) = @_;
     my $chrs = {};
     open(my $data, '<', $file) || die "Could not open file $file: $!";
     while (my $line = <$data>) {
@@ -53,7 +52,7 @@ sub getChrsForCalcs {
       my ($sourceId) = split(/\t/, $line);
       $chrs->{$sourceId} = 0;
     }
-    die "ERROR:\tThe organism with taxon id $taxonid does not have any sequences annotated with the SO term \"chromosome\".
+    die "ERROR:\tNo sequences annotated with the SO term \"chromosome\" found in $file.
          We cannot calculate copy number variations for this organism.\n\nDATA LOADERS: Please undo this dataset and remove the dataset class.\n"
          unless scalar keys %$chrs > 0;
     close $data;

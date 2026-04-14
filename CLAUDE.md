@@ -78,7 +78,6 @@ Key parameters in `nextflow.config` (profile-scoped):
 | `footprintFile` | Gene footprints for CNV |
 | `minCoverage` | Min coverage for variant calling/masking |
 | `ploidy` | Expected ploidy |
-| `freebayesMinAltFraction` | Min allele frequency for FreeBayes calls |
 
 ## Containers
 
