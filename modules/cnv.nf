@@ -217,6 +217,8 @@ process normaliseCoverage {
 
   input:
     tuple val(sampleName), path(windowedCoverage), path(summaryMetrics)
+    path chrsForCalcsFile
+    val ploidy
 
   output:
     tuple val(sampleName), path('normalisedCoverage.bed')
@@ -224,10 +226,11 @@ process normaliseCoverage {
   script:
     """
     set -euo pipefail
-    # NOTE final processing requires querying the DB so can stay in ReFlow
-    normaliseCoverageCNV.pl \\
-      --bedFile $windowedCoverage \\
-      --summaryMetrics $summaryMetrics
+    
+    makeNormalisedCoverageTrack.pl \\
+      --coverageFile $windowedCoverage \\
+      --chromosomes $chrsForCalcsFile \\
+      --ploidy $ploidy
     """
 
   stub:

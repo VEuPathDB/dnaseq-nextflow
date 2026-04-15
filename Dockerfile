@@ -5,7 +5,17 @@ ENV TABIX_VERSION=0.2.6
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools python3 python3-pip tabix samtools perl default-jre unzip cpanminus bioperl emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl trimmomatic openjdk-21-jre-headless sqlite3 bedtools && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcftools python3 python3-pip tabix perl default-jre unzip cpanminus bioperl emacs libjson-perl libmodule-install-rdf-perl libxml-parser-perl libdate-manip-perl libtext-csv-perl libstatistics-descriptive-perl libtree-dagnode-perl libxml-simple-perl trimmomatic openjdk-21-jre-headless sqlite3 bedtools libncurses5-dev libbz2-dev liblzma-dev zlib1g-dev && apt-get clean && apt-get purge && rm -rf /var/lib/apt/lists/* /tmp/*
+
+ENV SAMTOOLS_VERSION=1.22.1
+RUN wget -q https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 \
+    && tar xjf samtools-${SAMTOOLS_VERSION}.tar.bz2 \
+    && cd samtools-${SAMTOOLS_VERSION} \
+    && ./configure --prefix=/usr/local \
+    && make \
+    && make install \
+    && cd .. \
+    && rm -rf samtools-${SAMTOOLS_VERSION}.tar.bz2 samtools-${SAMTOOLS_VERSION}
 
 ENV BWA_MEM2_VERSION=2.2.1
 RUN wget -q https://github.com/bwa-mem2/bwa-mem2/releases/download/v${BWA_MEM2_VERSION}/bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
