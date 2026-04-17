@@ -344,13 +344,6 @@ function load_transcript_sequences(db::SQLite.DB, transcript_id::String)
     result
 end
 
-function get_indel_shift(db::SQLite.DB, transcript_id::String, strain::String, position::Int)
-    row = first(execute(db,
-        "SELECT COALESCE(SUM(shift_amount), 0) FROM indels WHERE transcript_id = ? AND strain = ? AND position < ?",
-        [transcript_id, strain, position]))
-    row[1]::Int
-end
-
 # ---------------------------------------------------------------------------
 # GVCF record structure
 # ---------------------------------------------------------------------------
@@ -1004,9 +997,7 @@ function annotate_variations!(
                 v.codon   = "."
                 v.product = String[]
             else
-                shift        = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
-                adjusted_pos = annotation.pos_in_cds + shift
-                strain_codon = extract_codon(strain_seq, adjusted_pos)
+                strain_codon = extract_codon(strain_seq, annotation.pos_in_cds)
                 v.codon   = strain_codon
                 expanded  = expand_codon(strain_codon)
                 v.product = [translate_codon(c) for c in expanded]
