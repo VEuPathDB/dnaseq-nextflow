@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import subprocess
-from cyvcf2 import VCF
 
 # IUPAC ambiguity codes keyed by frozenset of bases
 IUPAC = {
@@ -38,10 +37,8 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, min_coverage):
 
     REF blocks   → reference bases from ref_seq (or N if dp < min_coverage)
     SNPs         → IUPAC code derived from GT alleles
-    Indels       → homozygous: the called allele sequence (length may differ
-                   from REF, so the output FASTA diverges from the reference);
-                   heterozygous: N × len(REF) since two different-length
-                   alleles cannot be collapsed into one sequence
+    Indels       → reference bases (homozygous and heterozygous); preserves reference length
+                   since all indel information is tracked in the database
     Gaps in VCF  → N (no coverage)
     """
     segments = []
@@ -90,20 +87,26 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, min_coverage):
 
         alleles = list(dict.fromkeys(gt_str.replace('|', '/').split('/')))   # unique, ordered
 
-        if all(len(a) == 1 for a in alleles):
-            # ── SNP (or hom-ref call) ──
-            base = IUPAC.get(frozenset(alleles), 'N')
-            segments.append(base)
-            ref_pos = pos + 1
+        if all(len(a) == len(v.REF) for a in alleles):
+            # ── SNP or substitution (all alleles match REF length) ──
+            if all(len(a) == 1 for a in alleles):
+                # SNP: all alleles are single bases
+                base = IUPAC.get(frozenset(alleles), 'N')
+                segments.append(base)
+                ref_pos = pos + 1
+            else:
+                # Multi-base substitution: treat as homozygous indel (emit ref)
+                segments.append(ref_seq[pos:pos + len(v.REF)])
+                ref_pos = pos + len(v.REF)
 
         elif len(alleles) == 1:
-            # ── Homozygous indel: emit the actual allele sequence ──
-            segments.append(alleles[0])
+            # ── Homozygous indel: emit reference bases (preserve reference length) ──
+            segments.append(ref_seq[pos:pos + len(v.REF)])
             ref_pos = pos + len(v.REF)   # advance past REF span in reference coords
 
         else:
-            # ── Heterozygous indel: two different-length alleles, mask ──
-            segments.append('N' * len(v.REF))
+            # ── Heterozygous indel: emit reference bases (preserve reference length) ──
+            segments.append(ref_seq[pos:pos + len(v.REF)])
             ref_pos = pos + len(v.REF)
 
     # Fill any remaining reference positions that had no coverage
@@ -120,6 +123,8 @@ def write_fasta(out_fh, name, seq, line_len=60):
 
 
 def main():
+    from cyvcf2 import VCF
+
     parser = argparse.ArgumentParser(
         description='Build a consensus FASTA from a g.vcf, applying IUPAC '
                     'codes for SNPs and actual allele sequences for indels.')
