@@ -78,54 +78,26 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    fasta_offset(indel_db, strain, seq_id, before_pos) -> Int
-
-Return the cumulative indel shift for `strain` on `seq_id` at all positions
-strictly less than `before_pos`. Used to convert a reference genomic coordinate
-to the corresponding position in a consensus FASTA that embeds genomic indels.
-"""
-function fasta_offset(indel_db::SQLite.DB, strain::String, seq_id::String, before_pos::Int)
-    row = first(execute(indel_db,
-        "SELECT COALESCE(SUM(shift), 0) FROM genomic_indels
-         WHERE strain = ? AND sequence_id = ? AND position < ?",
-        [strain, seq_id, before_pos]))
-    row[1]
-end
-
-"""
-    extract_cds_sequence(genome_seqs, exon_list, strain, indel_db) -> String
+    extract_cds_sequence(genome_seqs, exon_list) -> String
 
 Splice and return the CDS sequence for a transcript from genome sequences.
 `exon_list` must be in 5'→3' order (as returned by parse_gtf).
 Reverse-complements minus-strand transcripts using IUPAC-aware complement.
 Returns "" if any exon's seq_id is missing from genome_seqs.
-
-For non-reference strains, pass `strain` and `indel_db` so that exon slice
-coordinates are adjusted for upstream genomic indels embedded in the consensus
-FASTA.
 """
-function extract_cds_sequence(genome_seqs::Dict{String,String}, exon_list::Vector{CdsExon},
-                               strain::String="reference",
-                               indel_db::Union{SQLite.DB,Nothing}=nothing)
+function extract_cds_sequence(genome_seqs::Dict{String,String}, exon_list::Vector{CdsExon})
     isempty(exon_list) && return ""
     parts = String[]
     for e in exon_list
         seq = get(genome_seqs, e.seq_id, nothing)
         seq === nothing && return ""
-        if indel_db !== nothing
-            fstart = e.start + fasta_offset(indel_db, strain, e.seq_id, e.start)
-            fstop  = e.stop  + fasta_offset(indel_db, strain, e.seq_id, e.stop + 1)
-        else
-            fstart, fstop = e.start, e.stop
-        end
-        push!(parts, seq[fstart:fstop])
+        push!(parts, seq[e.start:e.stop])
     end
     if exon_list[1].strand != '-'
-        cds = join(parts)
+        join(parts)
     else
-        cds = join(reverse_complement(p) for p in parts)
+        join(reverse_complement(p) for p in parts)
     end
-    cds
 end
 
 # ---------------------------------------------------------------------------
@@ -133,14 +105,14 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    project_indels_to_cds(db, strain, exon_list) -> Vector{Tuple{Int,Int}}
+    project_indels_to_cds(db, strain, exon_list) -> Vector{Tuple{Int,Int,String,String,String}}
 
 Query genomic indels for `strain` that fall within the exons of a transcript,
 convert each to a 0-based CDS-space position, and return
-[(cds_position, shift_amount), ...] sorted in 5'→3' order.
+[(cds_position, shift_amount, zygosity, ref_allele, alt_allele), ...] sorted in 5'→3' order.
 """
 function project_indels_to_cds(db::SQLite.DB, strain::String, exon_list::Vector{CdsExon})
-    result = Tuple{Int,Int}[]
+    result = Tuple{Int, Int, String, String, String}[]
     isempty(exon_list) && return result
 
     seq_id     = exon_list[1].seq_id
@@ -148,19 +120,22 @@ function project_indels_to_cds(db::SQLite.DB, strain::String, exon_list::Vector{
 
     for e in exon_list
         rows = execute(db,
-            "SELECT position, shift FROM genomic_indels
+            "SELECT position, shift, zygosity, ref_allele, alt_allele FROM genomic_indels
              WHERE strain = ? AND sequence_id = ? AND position >= ? AND position <= ?
              ORDER BY position",
             [strain, seq_id, e.start, e.stop])
         for row in rows
-            gpos  = row[1]
-            shift = row[2]
+            gpos       = row[1]::Int
+            shift      = row[2]::Int
+            zygosity   = row[3]::String
+            ref_allele = row[4]::String
+            alt_allele = row[5]::String
             cds_pos = if e.strand == '-'
                 cds_offset + (e.stop - gpos)
             else
                 cds_offset + (gpos - e.start)
             end
-            push!(result, (cds_pos, shift))
+            push!(result, (cds_pos, shift, zygosity, ref_allele, alt_allele))
         end
         cds_offset += e.stop - e.start + 1
     end
@@ -197,7 +172,10 @@ function create_indels_db(path::String)
           strain        TEXT    NOT NULL,
           transcript_id TEXT    NOT NULL,
           position      INTEGER NOT NULL,
-          shift_amount  INTEGER NOT NULL
+          shift_amount  INTEGER NOT NULL,
+          zygosity      TEXT    NOT NULL,
+          ref_allele    TEXT    NOT NULL,
+          alt_allele    TEXT    NOT NULL
         )
     """)
     db
@@ -213,15 +191,14 @@ end
 
 function process_strain(strain, genome_seqs, by_transcript, indel_src_db,
                         cds_insert_stmt, indels_insert_stmt)
-    db_for_coords = strain == "reference" ? nothing : indel_src_db
     for (transcript_id, exon_list) in by_transcript
-        seq = extract_cds_sequence(genome_seqs, exon_list, strain, db_for_coords)
+        seq = extract_cds_sequence(genome_seqs, exon_list)
         isempty(seq) && continue
         execute(cds_insert_stmt, [strain, transcript_id, seq])
 
         cds_indels = project_indels_to_cds(indel_src_db, strain, exon_list)
-        for (pos, shift) in cds_indels
-            execute(indels_insert_stmt, [strain, transcript_id, pos, shift])
+        for (pos, shift, zygosity, ref_allele, alt_allele) in cds_indels
+            execute(indels_insert_stmt, [strain, transcript_id, pos, shift, zygosity, ref_allele, alt_allele])
         end
     end
 end
@@ -254,7 +231,7 @@ function main()
     cds_insert_stmt    = SQLite.Stmt(cds_db,
         "INSERT INTO coding_sequences(strain, transcript_id, sequence) VALUES (?, ?, ?)")
     indels_insert_stmt = SQLite.Stmt(indels_db,
-        "INSERT INTO indels(strain, transcript_id, position, shift_amount) VALUES (?, ?, ?, ?)")
+        "INSERT INTO indels(strain, transcript_id, position, shift_amount, zygosity, ref_allele, alt_allele) VALUES (?, ?, ?, ?, ?, ?, ?)")
 
     # Reference strain — sequences from genomeFastaFile, no indels
     println(stderr, "Extracting reference CDS sequences")

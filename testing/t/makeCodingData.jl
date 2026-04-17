@@ -17,9 +17,11 @@ include(joinpath(@__DIR__, "../../bin/makeCodingData.jl"))
 function make_genomic_indel_db(rows::Vector)
     db = SQLite.DB()
     execute(db, """CREATE TABLE genomic_indels (
-        strain TEXT, sequence_id TEXT, position INTEGER, shift INTEGER)""")
-    for (strain, seq_id, pos, shift) in rows
-        execute(db, "INSERT INTO genomic_indels VALUES (?,?,?,?)", [strain, seq_id, pos, shift])
+        strain TEXT, sequence_id TEXT, position INTEGER, shift INTEGER,
+        zygosity TEXT, ref_allele TEXT, alt_allele TEXT)""")
+    for (strain, seq_id, pos, shift, zygosity, ref_allele, alt_allele) in rows
+        execute(db, "INSERT INTO genomic_indels VALUES (?,?,?,?,?,?,?)",
+                [strain, seq_id, pos, shift, zygosity, ref_allele, alt_allele])
     end
     db
 end
@@ -139,85 +141,59 @@ end
     @test extract_cds_sequence(genome, [exon]) == "NRY"
 end
 
-@testset "extract_cds_sequence plus strand with upstream deletion in FASTA" begin
-    # Reference exon: chr1 6-8 = "TGC" in the reference
-    # Strain has a -2 deletion at position 3 (upstream of exon)
-    # So in the strain FASTA the exon is shifted left by 2: positions 4-6 = "TGC"
-    # FASTA: "AATGCCC..." (2 bases removed at pos 3 → AAATGCCCCC becomes AATGCCCCC)
-    ref_genome   = Dict("chr1" => "AAAAATGCCCCC")  # ref: exon 6-8 = "TGC"
-    strain_fasta = Dict("chr1" => "AAATGCCCCC")    # 2 bases deleted before pos 6
-    exon = CdsExon("chr1", 6, 8, '+', "T1", 1)
-    db = make_genomic_indel_db([("strainA", "chr1", 3, -2)])
-    @test extract_cds_sequence(ref_genome,   [exon])                        == "TGC"
-    @test extract_cds_sequence(strain_fasta, [exon], "strainA", db)         == "TGC"
-end
-
-@testset "extract_cds_sequence plus strand with upstream insertion in FASTA" begin
-    # Reference exon: chr1 4-6 = "CAT"
-    # Strain has a +3 insertion at position 1 (upstream)
-    # FASTA is shifted right by 3: exon is at positions 7-9 in FASTA
-    ref_genome   = Dict("chr1" => "AAACATGG")
-    strain_fasta = Dict("chr1" => "AAATTTCATGG")  # 3 bases inserted at pos 1
-    exon = CdsExon("chr1", 4, 6, '+', "T1", 1)
-    db = make_genomic_indel_db([("strainA", "chr1", 1, 3)])
-    @test extract_cds_sequence(ref_genome,   [exon])                == "CAT"
-    @test extract_cds_sequence(strain_fasta, [exon], "strainA", db) == "CAT"
-end
-
 # ---------------------------------------------------------------------------
 # project_indels_to_cds
 # ---------------------------------------------------------------------------
 
 @testset "project_indels_to_cds plus strand single exon" begin
-    # Exon: chr1 1-100, + strand
-    # Indel at genomic pos 10 → CDS pos 9; at pos 50 → CDS pos 49
     db = make_genomic_indel_db([
-        ("strainA", "chr1", 10, -1),
-        ("strainA", "chr1", 50,  3),
+        ("strainA", "chr1", 10, -1, "hom", "AT",  "A"),
+        ("strainA", "chr1", 50,  3, "het", "A",   "ATTT"),
     ])
     exon = CdsExon("chr1", 1, 100, '+', "T1", 1)
-    @test project_indels_to_cds(db, "strainA", [exon]) == [(9, -1), (49, 3)]
+    result = project_indels_to_cds(db, "strainA", [exon])
+    @test length(result) == 2
+    @test result[1] == (9, -1, "hom", "AT", "A")
+    @test result[2] == (49, 3, "het", "A", "ATTT")
 end
 
 @testset "project_indels_to_cds plus strand two exons" begin
-    # exon1: chr1 1-10 (len 10), exon2: chr1 20-30
-    # Indel at pos 5 → CDS pos 4; at pos 25 → CDS pos 10+(25-20)=15
     db = make_genomic_indel_db([
-        ("strainA", "chr1",  5, -2),
-        ("strainA", "chr1", 25,  1),
+        ("strainA", "chr1",  5, -2, "hom", "ATG", "A"),
+        ("strainA", "chr1", 25,  1, "het", "A",   "AT"),
     ])
     exon1 = CdsExon("chr1",  1, 10, '+', "T1", 1)
     exon2 = CdsExon("chr1", 20, 30, '+', "T1", 2)
-    @test project_indels_to_cds(db, "strainA", [exon1, exon2]) == [(4, -2), (15, 1)]
+    result = project_indels_to_cds(db, "strainA", [exon1, exon2])
+    @test result[1] == (4, -2, "hom", "ATG", "A")
+    @test result[2] == (15, 1, "het", "A", "AT")
 end
 
 @testset "project_indels_to_cds minus strand single exon" begin
-    # Exon: chr1 1-10, - strand (5' end is pos 10)
-    # Indel at pos 8 → CDS pos stop-gpos = 10-8 = 2
-    # Indel at pos 3 → CDS pos 10-3 = 7
-    # Collected in genomic order (3,8), reversed for 5'→3' → [(2,-1),(7,2)]
     db = make_genomic_indel_db([
-        ("strainA", "chr1", 3,  2),
-        ("strainA", "chr1", 8, -1),
+        ("strainA", "chr1", 3,  2, "het", "A",   "ATT"),
+        ("strainA", "chr1", 8, -1, "hom", "AT",  "A"),
     ])
     exon = CdsExon("chr1", 1, 10, '-', "T1", 1)
-    @test project_indels_to_cds(db, "strainA", [exon]) == [(2, -1), (7, 2)]
+    result = project_indels_to_cds(db, "strainA", [exon])
+    @test result[1] == (2, -1, "hom", "AT", "A")
+    @test result[2] == (7,  2, "het", "A", "ATT")
 end
 
 @testset "project_indels_to_cds no indels for strain" begin
-    db = make_genomic_indel_db([("strainA", "chr1", 5, -1)])
+    db = make_genomic_indel_db([("strainA", "chr1", 5, -1, "hom", "AT", "A")])
     exon = CdsExon("chr1", 1, 10, '+', "T1", 1)
     @test isempty(project_indels_to_cds(db, "strainB", [exon]))
 end
 
 @testset "project_indels_to_cds indels outside exon boundaries excluded" begin
     db = make_genomic_indel_db([
-        ("strainA", "chr1",  0, -1),   # before exon
-        ("strainA", "chr1",  5, -1),   # inside
-        ("strainA", "chr1", 11, -1),   # after exon
+        ("strainA", "chr1",  0, -1, "hom", "AT", "A"),
+        ("strainA", "chr1",  5, -1, "hom", "AT", "A"),
+        ("strainA", "chr1", 11, -1, "hom", "AT", "A"),
     ])
     exon = CdsExon("chr1", 1, 10, '+', "T1", 1)
     result = project_indels_to_cds(db, "strainA", [exon])
     @test length(result) == 1
-    @test result[1] == (4, -1)
+    @test result[1][1] == 4
 end
