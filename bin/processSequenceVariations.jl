@@ -344,6 +344,21 @@ function load_transcript_sequences(db::SQLite.DB, transcript_id::String)
     result
 end
 
+function lookup_cds_indel(db::SQLite.DB, transcript_id::String, strain::String, cds_pos::Int)::Union{Tuple{String,String,String}, Nothing}
+    rows = collect(execute(db,
+        "SELECT zygosity, ref_allele, alt_allele FROM indels
+         WHERE transcript_id = ? AND strain = ? AND position = ? LIMIT 1",
+        [transcript_id, strain, cds_pos]))
+    isempty(rows) ? nothing : (rows[1][1]::String, rows[1][2]::String, rows[1][3]::String)
+end
+
+function apply_indel_to_cds(cds_seq::String, cds_pos::Int,
+                              ref_allele::String, alt_allele::String)::String
+    before = cds_seq[1 : cds_pos - 1]
+    after  = cds_seq[cds_pos + length(ref_allele) : end]
+    before * alt_allele * after
+end
+
 # ---------------------------------------------------------------------------
 # GVCF record structure
 # ---------------------------------------------------------------------------
@@ -394,11 +409,12 @@ mutable struct Variation
     has_nonsynonomous::Int
     cds_number::Int
     matches_reference::Int
+    is_processed_indel::Int
 end
 
 function Variation()
     Variation("", 0, "", "", "", "", "", "", "", "",
-              0, 0, 0, 0, "", String[], "", "", 0, 0, 0)
+              0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 0)
 end
 
 # ---------------------------------------------------------------------------
@@ -996,7 +1012,32 @@ function annotate_variations!(
             if is_fs
                 v.codon   = "."
                 v.product = String[]
+            elseif length(v.base) != length(v.reference)
+                # Indel path
+                cds_indel = lookup_cds_indel(ctx.indel_db, annotation.transcript_id,
+                                              v.strain, annotation.pos_in_cds)
+                if !isnothing(cds_indel)
+                    (zygosity, ref_allele, alt_allele) = cds_indel
+                    alt_seq     = apply_indel_to_cds(strain_seq, annotation.pos_in_cds,
+                                                      ref_allele, alt_allele)
+                    pic         = position_in_codon(annotation.pos_in_cds)
+                    codon_start = annotation.pos_in_cds - pic
+                    alt_product = codon_start + 3 <= length(alt_seq) ?
+                                  translate_codon(alt_seq[codon_start+1 : codon_start+3]) : "X"
+                    v.codon = "."
+                    if zygosity == "hom"
+                        v.product = [alt_product]
+                    else  # het
+                        ref_product = translate_codon(extract_codon(strain_seq, annotation.pos_in_cds))
+                        v.product   = unique([ref_product, alt_product])
+                    end
+                    v.is_processed_indel = 1
+                else
+                    v.codon   = "."
+                    v.product = String[]
+                end
             else
+                # SNP path
                 strain_codon = extract_codon(strain_seq, annotation.pos_in_cds)
                 v.codon   = strain_codon
                 expanded  = expand_codon(strain_codon)
@@ -1055,7 +1096,8 @@ function build_reference_variation(
         annotation.ref_codon,
         adjacent_snp_causes_product_difference,
         annotation.cds_number,
-        1
+        1,
+        0   # is_processed_indel
     )
 end
 
@@ -1175,21 +1217,36 @@ function write_allele_and_product_files(
     end
 
     for v in variations
-        isempty(v.codon) && continue
-        expanded_codons = expand_codon(v.codon)
-        for ec in expanded_codons
-            product = translate_codon(ec)
-            count   = get(all_product_counts, product, 0)
-            write(product_fh, join([
-                ec,
-                string(annotation.pos_in_codon_val),
-                annotation.transcript_id,
-                string(count),
-                product,
-                string(annotation.pos_in_cds),
-                string(annotation.pos_in_codon_val),
-                string(v.downstream_of_frameshift)
-            ], "\t"), "\n")
+        if v.is_processed_indel == 1 && !isempty(v.product)
+            for product in unique(v.product)
+                count = get(all_product_counts, product, 0)
+                write(product_fh, join([
+                    ".",
+                    string(annotation.pos_in_codon_val),
+                    annotation.transcript_id,
+                    string(count),
+                    product,
+                    string(annotation.pos_in_cds),
+                    string(annotation.pos_in_codon_val),
+                    string(v.downstream_of_frameshift)
+                ], "\t"), "\n")
+            end
+        elseif !isempty(v.codon)
+            expanded_codons = expand_codon(v.codon)
+            for ec in expanded_codons
+                product = translate_codon(ec)
+                count   = get(all_product_counts, product, 0)
+                write(product_fh, join([
+                    ec,
+                    string(annotation.pos_in_codon_val),
+                    annotation.transcript_id,
+                    string(count),
+                    product,
+                    string(annotation.pos_in_cds),
+                    string(annotation.pos_in_codon_val),
+                    string(v.downstream_of_frameshift)
+                ], "\t"), "\n")
+            end
         end
     end
 end
