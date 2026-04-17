@@ -125,7 +125,10 @@ CREATE TABLE genomic_indels (
   strain      TEXT    NOT NULL,
   sequence_id TEXT    NOT NULL,
   position    INTEGER NOT NULL,
-  shift       INTEGER NOT NULL
+  shift       INTEGER NOT NULL,
+  zygosity    TEXT    NOT NULL,
+  ref_allele  TEXT    NOT NULL,
+  alt_allele  TEXT    NOT NULL
 );
 .separator "\\t"
 .import indels.tsv genomic_indels
