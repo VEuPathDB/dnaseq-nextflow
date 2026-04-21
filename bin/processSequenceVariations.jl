@@ -1350,7 +1350,7 @@ function build_cann_string(
     end
 
     # Codon contains ambiguous base(s) — skip product and effect
-    if occursin(r"[Nn]", codon)
+    if occursin(r"[NnXx]", codon)
         return "k0:$(codon):.:.:$(tid):$(pos_in_cds):$(pic)"
     end
 
