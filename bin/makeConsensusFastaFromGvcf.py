@@ -40,8 +40,9 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, min_coverage):
     SNPs         → IUPAC code derived from GT alleles
     Indels       → homozygous: the called allele sequence (length may differ
                    from REF, so the output FASTA diverges from the reference);
-                   heterozygous: N × len(REF) since two different-length
-                   alleles cannot be collapsed into one sequence
+                   heterozygous 0/1: REF bases (one allele is REF, no shift);
+                   heterozygous 1/2: X × len(REF) — both alleles are non-ref
+                   and cannot be collapsed into one sequence
     Gaps in VCF  → N (no coverage)
     """
     segments = []
@@ -102,8 +103,13 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, min_coverage):
             ref_pos = pos + len(v.REF)   # advance past REF span in reference coords
 
         else:
-            # ── Heterozygous indel: two different-length alleles, mask ──
-            segments.append('N' * len(v.REF))
+            # ── Heterozygous indel ──
+            if v.REF in alleles:
+                # 0/1: one allele is REF — emit REF, no coordinate shift
+                segments.append(v.REF)
+            else:
+                # 1/2: both alleles non-ref, ambiguous — mask with X
+                segments.append('X' * len(v.REF))
             ref_pos = pos + len(v.REF)
 
     # Fill any remaining reference positions that had no coverage
