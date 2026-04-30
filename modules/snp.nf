@@ -242,6 +242,36 @@ process splitGvcfAtZeroCoverage {
     """
 }
 
+process concatMultiSampleVcf {
+  container 'veupathdb/shortreadaligner:1.0.0'
+
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    path gvcfFiles
+    path gvcfIndexes
+
+  output:
+    tuple path('multisample.g.vcf.gz'), path('multisample.g.vcf.gz.tbi'), emit: gvcf
+    tuple path('multisample.vcf.gz'),   path('multisample.vcf.gz.tbi'),   emit: vcf
+
+  script:
+    """
+    set -euo pipefail
+    ls *.split.g.vcf.gz | sort -V > file_list.txt
+    bcftools concat --naive-force -f file_list.txt | bcftools sort -O z -o multisample.g.vcf.gz
+    bcftools index -t multisample.g.vcf.gz
+    bcftools view -e 'ALT[0]="<*>"' multisample.g.vcf.gz | bcftools sort -O z -o multisample.vcf.gz
+    bcftools index -t multisample.vcf.gz
+    """
+
+  stub:
+    """
+    touch multisample.g.vcf.gz multisample.g.vcf.gz.tbi
+    touch multisample.vcf.gz   multisample.vcf.gz.tbi
+    """
+}
+
 process freebayesMultiSample {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
