@@ -217,6 +217,7 @@ process splitGvcfAtZeroCoverage {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
+    // stageAs aliases required: gVCF and index must share a stable base name so bcftools can locate the index
     tuple val(regionKey), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(zeroCovBed)
     tuple path(genomeFasta), path(genomeFastaIndex)
 
