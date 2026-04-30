@@ -406,7 +406,8 @@ process makeConsensusFromGvcf {
       --fai $genomeReorderedFastaIndex \\
       --min-coverage $params.minCoverage \\
       --output-dir .
-    for f in *_consensus.fa; do bgzip \$f; done
+    shopt -s nullglob
+    for f in *_consensus.fa; do bgzip "\$f"; done
     """
 
   stub:
