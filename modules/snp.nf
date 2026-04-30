@@ -69,7 +69,7 @@ process makeIndelTSV {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
-    tuple val(sampleName), path(indelsVcfGz)
+    tuple path(gvcfGz), path(gvcfGzTbi)
 
   output:
     path('output.tsv')
@@ -77,17 +77,23 @@ process makeIndelTSV {
   script:
     """
     set -euo pipefail
-    findValues.pl \\
-       -i $indelsVcfGz \\
-       -s ${sampleName} \\
-       -o output.tsv
+    bcftools query -l $gvcfGz > samples.txt
+
+    while read sample; do
+      bcftools view -s \$sample --trim-alt-alleles $gvcfGz | \\
+        bcftools norm -m- | \\
+        bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<"' | \\
+        bgzip > \${sample}_indels.vcf.gz
+      findValues.pl -i \${sample}_indels.vcf.gz -s \$sample -o \${sample}.tsv
+    done < samples.txt
+
+    cat *.tsv > output.tsv
     """
 
   stub:
     """
     touch output.tsv
     """
-
 }
 
 
