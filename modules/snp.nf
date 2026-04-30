@@ -216,41 +216,28 @@ process mergeGvcfs {
 process splitGvcfAtZeroCoverage {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy"
-
   input:
-    tuple val(sampleName), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(bamFile), path(bamIndex)
+    tuple val(regionKey), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(zeroCovBed)
     tuple path(genomeFasta), path(genomeFastaIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.g.vcf.gz"), path("${sampleName}.g.vcf.gz.tbi")
+    tuple val(regionKey), path("${regionKey}.split.g.vcf.gz"), path("${regionKey}.split.g.vcf.gz.tbi")
 
   script:
     """
     set -euo pipefail
-
-    # Full-genome BedGraph: one entry per contiguous depth region
-    bedtools genomecov -ibam $bamFile -bga > coverage.bedgraph
-
-    # FreeBayes can produce overlapping reference blocks in gVCF output, which
-    # can cause out-of-order records after splitting. bcftools sort corrects this.
-    # --ref is required so that REF alleles are corrected for sub-blocks that
-    # start at a new position after splitting around zero-coverage gaps.
     splitGvcfAtZeroCoverage.py \\
       --gvcf input.g.vcf.gz \\
-      --bedgraph coverage.bedgraph \\
+      --zero-cov-bed $zeroCovBed \\
       --ref $genomeFasta \\
-      --min-coverage $params.minCoverage \\
       --output /dev/stdout \\
-    | bcftools sort -O z -o ${sampleName}.g.vcf.gz
-
-    bcftools index -t ${sampleName}.g.vcf.gz
+    | bcftools sort -O z -o ${regionKey}.split.g.vcf.gz
+    bcftools index -t ${regionKey}.split.g.vcf.gz
     """
 
   stub:
     """
-    touch ${sampleName}.g.vcf.gz
-    touch ${sampleName}.g.vcf.gz.tbi
+    touch ${regionKey}.split.g.vcf.gz ${regionKey}.split.g.vcf.gz.tbi
     """
 }
 
