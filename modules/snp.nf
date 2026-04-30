@@ -97,6 +97,38 @@ process makeIndelTSV {
 }
 
 
+process extractSampleVcf {
+  container 'veupathdb/shortreadaligner:1.0.0'
+
+  input:
+    tuple val(sampleName), path(vcfGz), path(vcfGzTbi)
+
+  output:
+    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"), path("${sampleName}.snps.vcf.gz"), path("${sampleName}.snps.vcf.gz.tbi"), path("${sampleName}.indels.vcf.gz"), path("${sampleName}.indels.vcf.gz.tbi"), emit: vcf_files
+
+  script:
+    """
+    set -euo pipefail
+    bcftools view -s $sampleName --trim-alt-alleles $vcfGz -O z -o ${sampleName}.vcf.gz
+    bcftools index -t ${sampleName}.vcf.gz
+
+    bcftools view -v snps ${sampleName}.vcf.gz -O z -o ${sampleName}.snps.vcf.gz
+    bcftools index -t ${sampleName}.snps.vcf.gz
+
+    bcftools norm -m- ${sampleName}.vcf.gz | \\
+      bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<"' -O z -o ${sampleName}.indels.vcf.gz
+    bcftools index -t ${sampleName}.indels.vcf.gz
+    """
+
+  stub:
+    """
+    touch ${sampleName}.vcf.gz    ${sampleName}.vcf.gz.tbi
+    touch ${sampleName}.snps.vcf.gz   ${sampleName}.snps.vcf.gz.tbi
+    touch ${sampleName}.indels.vcf.gz ${sampleName}.indels.vcf.gz.tbi
+    """
+}
+
+
 process mergeVcfs {
   container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
