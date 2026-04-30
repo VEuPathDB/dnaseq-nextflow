@@ -312,6 +312,50 @@ process makeRegionBed {
     """
 }
 
+process makeMultiSampleZeroCoverageBed {
+  container 'veupathdb/shortreadaligner:1.0.0'
+
+  input:
+    path bamFiles
+    path bamIndexes
+    val regionLine
+
+  output:
+    tuple val(regionKey), path('zero_cov.bed')
+
+  script:
+    def fields = regionLine.tokenize('\t')
+    def chrom  = fields[0]
+    def start  = fields[1].toLong()
+    def end    = fields[2].toLong()
+    def startPlus1 = start + 1
+    regionKey  = "${chrom}_${start}_${end}"
+    """
+    set -euo pipefail
+    for bam in *.bam; do
+      samtools view -b -h \$bam ${chrom}:${startPlus1}-${end} > region_\${bam%.bam}.bam
+      samtools index region_\${bam%.bam}.bam
+      bedtools genomecov -ibam region_\${bam%.bam}.bam -bga | \\
+        awk '\$4 == 0 {print \$1 "\\t" \$2 "\\t" \$3}' >> all_zero.bed
+    done
+    if [ -s all_zero.bed ]; then
+      bedtools sort -i all_zero.bed | bedtools merge > zero_cov.bed
+    else
+      touch zero_cov.bed
+    fi
+    """
+
+  stub:
+    def fields = regionLine.tokenize('\t')
+    def chrom  = fields[0]
+    def start  = fields[1].toLong()
+    def end    = fields[2].toLong()
+    regionKey  = "${chrom}_${start}_${end}"
+    """
+    touch zero_cov.bed
+    """
+}
+
 process makeConsensusFromGvcf {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
