@@ -17,13 +17,14 @@ include { bedtoolsGenomecovStats } from '../modules/alignment.nf'
 include { mergeAlignmentStats } from '../modules/alignment.nf'
 
 // SNP
-include { freebayes } from '../modules/snp.nf'
-include { makeIndelTSV } from '../modules/snp.nf'
-include { mergeVcfs } from '../modules/snp.nf'
-include { makeMergedVariantIndex } from '../modules/snp.nf'
-include { splitGvcfAtZeroCoverage } from '../modules/snp.nf'
-include { makeConsensusFromGvcf } from '../modules/snp.nf'
-include { mergeGvcfs } from '../modules/snp.nf'
+include { makeRegionBed }                  from '../modules/snp.nf'
+include { makeMultiSampleZeroCoverageBed } from '../modules/snp.nf'
+include { freebayesMultiSample }           from '../modules/snp.nf'
+include { splitGvcfAtZeroCoverage }        from '../modules/snp.nf'
+include { concatMultiSampleVcf }           from '../modules/snp.nf'
+include { makeConsensusFromGvcf }          from '../modules/snp.nf'
+include { makeIndelTSV }                   from '../modules/snp.nf'
+include { extractSampleVcf }              from '../modules/snp.nf'
 
 // CNV
 include { genomecov } from '../modules/cnv.nf'
@@ -86,38 +87,43 @@ workflow ps {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
+    // ── Multi-sample FreeBayes (chunked) ─────────────────────────────────────
 
-    // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
-    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
-        tuple(sampleName, vcfGz, vcfGzTbi)
-    }
+    regionsChannel = makeRegionBed(reorderFastaResults)
+        .splitText()
+        .map { it.trim() }
+        .filter { it }
 
-    // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
-    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
-        tuple(sampleName, indelsVcfGz)
-    }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
+    allBams = gatkResults.bamTuple.map { sn, bam, bai -> bam }.collect()
+    allBais = gatkResults.bamTuple.map { sn, bam, bai -> bai }.collect()
 
-    // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
-    mergeVcfsResults = mergeVcfs(combinedVcf.count(), combinedVcf.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
+    // Per-region: joint multi-sample FreeBayes
+    multiSampleChunks = freebayesMultiSample(allBams, allBais, reorderFastaResults, regionsChannel)
 
-    makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
+    // Per-region: union zero-coverage BED across all samples
+    zeroCovBeds = makeMultiSampleZeroCoverageBed(allBams, allBais, regionsChannel)
 
-    freebayesGvcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
-        tuple(sampleName, gvcfGz, gvcfGzTbi)
-    }
+    // Per-region: split gVCF at zero-coverage boundaries
+    splitInput = multiSampleChunks.gvcf.join(zeroCovBeds, by: 0)
+    splitChunks = splitGvcfAtZeroCoverage(splitInput, reorderFastaResults)
 
-    // Join gVCF with BAM so we can compute the full-genome BedGraph once and
-    // use it to both split reference blocks at zero-coverage boundaries and
-    // recompute per-sub-block DP values.
-    splitGvcfResults = splitGvcfAtZeroCoverage(freebayesGvcf.join(gatkResults.bamTuple), reorderFastaResults)
+    // Gather all chunks → joint multi-sample VCF
+    concatResult = concatMultiSampleVcf(
+        splitChunks.map { regionKey, gvcf, tbi -> gvcf }.collect(),
+        splitChunks.map { regionKey, gvcf, tbi -> tbi }.collect()
+    )
 
-    makeConsensusFromGvcf(splitGvcfResults, reorderFastaResults)
+    // Consensus FASTAs (one per sample)
+    makeConsensusFromGvcf(concatResult.gvcf, reorderFastaResults)
 
-    mergeGvcfs(
-        splitGvcfResults.count(),
-        splitGvcfResults.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
-            .groupTuple(by: 2, sort: { a, b -> a <=> b })
+    // Indels TSV (all samples from joint gVCF)
+    makeIndelTSV(concatResult.gvcf)
+        .collectFile(name: 'indels.tsv', storeDir: params.outputDir)
+
+    // Per-sample VCF extraction for CNV steps
+    sampleNames = gatkResults.bamTuple.map { sn, bam, bai -> sn }
+    perSampleVcfResults = extractSampleVcf(
+        sampleNames.combine(concatResult.vcf)
     )
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
@@ -143,13 +149,13 @@ workflow ps {
     // CONVERT bed to bw here
 
     
-    makeSnpDensityResults = makeSnpDensity(freebayesResults.vcf_files, makeWindowFileResults)
+    makeSnpDensityResults = makeSnpDensity(perSampleVcfResults.vcf_files, makeWindowFileResults)
 
     makeDensityBigwigsResults = makeDensityBigwigs(makeSnpDensityResults, reorderFastaResults)
 
     if (params.ploidy != 1) {
 
-      snpsVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
+      snpsVcf = perSampleVcfResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, snpsVcfGz, snpsVcfGzTbi)
       }
 
