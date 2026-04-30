@@ -50,7 +50,7 @@ def load_zero_cov_bed(bed_file):
                 continue
             chrom, start, end = parts[0], int(parts[1]), int(parts[2])
             zero_regions[chrom].append((start, end))
-    return zero_regions
+    return {chrom: sorted(intervals) for chrom, intervals in zero_regions.items()}
 
 
 def covered_intervals(pos1, end1, zero_regions_chrom):
