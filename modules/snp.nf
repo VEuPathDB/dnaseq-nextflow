@@ -257,17 +257,22 @@ process splitGvcfAtZeroCoverage {
 process freebayesMultiSample {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy"
-
   input:
     path bamFiles
     path bamIndexes
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+    val regionLine
 
   output:
-    tuple path("multisample.g.vcf.gz"), path("multisample.g.vcf.gz.tbi"), emit: gvcf
+    tuple val(regionKey), path("${regionKey}.g.vcf.gz"), path("${regionKey}.g.vcf.gz.tbi"), emit: gvcf
 
   script:
+    def fields    = regionLine.tokenize('\t')
+    def chrom     = fields[0]
+    def start     = fields[1].toLong()
+    def end       = fields[2].toLong()
+    regionKey     = "${chrom}_${start}_${end}"
+    def regionStr = "${chrom}:${start}-${end}"
     """
     set -euo pipefail
     ls *.bam > bam_list.txt
@@ -278,15 +283,20 @@ process freebayesMultiSample {
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
       --gvcf \\
+      --region ${regionStr} \\
       --bam-list bam_list.txt \\
-    | bcftools sort -O z -o multisample.g.vcf.gz
-    bcftools index -t multisample.g.vcf.gz
+    | bcftools sort -O z -o ${regionKey}.g.vcf.gz
+    bcftools index -t ${regionKey}.g.vcf.gz
     """
 
   stub:
+    def fields = regionLine.tokenize('\t')
+    def chrom  = fields[0]
+    def start  = fields[1].toLong()
+    def end    = fields[2].toLong()
+    regionKey  = "${chrom}_${start}_${end}"
     """
-    touch multisample.g.vcf.gz
-    touch multisample.g.vcf.gz.tbi
+    touch ${regionKey}.g.vcf.gz ${regionKey}.g.vcf.gz.tbi
     """
 }
 
