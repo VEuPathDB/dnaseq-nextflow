@@ -216,6 +216,8 @@ process mergeGvcfs {
 process splitGvcfAtZeroCoverage {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
+  publishDir "$params.outputDir", mode: "copy"
+
   input:
     tuple val(sampleName), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(bamFile), path(bamIndex)
     tuple path(genomeFasta), path(genomeFastaIndex)
@@ -249,6 +251,64 @@ process splitGvcfAtZeroCoverage {
     """
     touch ${sampleName}.g.vcf.gz
     touch ${sampleName}.g.vcf.gz.tbi
+    """
+}
+
+process freebayesMultiSample {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    path bamFiles
+    path bamIndexes
+    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+
+  output:
+    tuple path("multisample.g.vcf.gz"), path("multisample.g.vcf.gz.tbi"), emit: gvcf
+
+  script:
+    """
+    set -euo pipefail
+    ls *.bam > bam_list.txt
+    minAltFraction=\$([ "$params.ploidy" -eq 1 ] && echo "0.8" || echo "0.3")
+    freebayes \\
+      -f $genomeReorderedFasta \\
+      -p $params.ploidy \\
+      --min-coverage $params.minCoverage \\
+      --min-alternate-fraction \$minAltFraction \\
+      --gvcf \\
+      --bam-list bam_list.txt \\
+    | bcftools sort -O z -o multisample.g.vcf.gz
+    bcftools index -t multisample.g.vcf.gz
+    """
+
+  stub:
+    """
+    touch multisample.g.vcf.gz
+    touch multisample.g.vcf.gz.tbi
+    """
+}
+
+process makeRegionBed {
+  container 'veupathdb/shortreadaligner:1.0.0'
+
+  input:
+    tuple path(genomeFasta), path(genomeFastaIndex)
+
+  output:
+    path 'regions.bed'
+
+  script:
+    """
+    set -euo pipefail
+    bedtools makewindows -g $genomeFastaIndex -w $params.chunkSize > regions.bed
+    """
+
+  stub:
+    """
+    printf 'chr1\\t0\\t1000000\\n' > regions.bed
+    printf 'chr1\\t1000000\\t2000000\\n' >> regions.bed
     """
 }
 
