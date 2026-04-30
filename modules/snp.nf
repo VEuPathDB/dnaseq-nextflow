@@ -388,14 +388,14 @@ process makeMultiSampleZeroCoverageBed {
 process makeConsensusFromGvcf {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy", saveAs: { "${sampleName}_consensus.fa.gz" }
+  publishDir "$params.outputDir", mode: "copy"
 
   input:
-    tuple val(sampleName), path(gvcfGz), path(gvcfGzTbi)
+    tuple path(gvcfGz), path(gvcfGzTbi)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    path 'consensus.fa.gz'
+    path '*_consensus.fa.gz'
 
   script:
     """
@@ -405,13 +405,13 @@ process makeConsensusFromGvcf {
       --ref $genomeReorderedFasta \\
       --fai $genomeReorderedFastaIndex \\
       --min-coverage $params.minCoverage \\
-      --output consensus.fa
-    bgzip consensus.fa
+      --output-dir .
+    for f in *_consensus.fa; do bgzip \$f; done
     """
 
   stub:
     """
-    touch consensus.fa.gz
+    touch stub_consensus.fa.gz
     """
 
 }
