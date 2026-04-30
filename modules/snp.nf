@@ -259,9 +259,10 @@ process concatMultiSampleVcf {
     """
     set -euo pipefail
     ls *.split.g.vcf.gz | sort -V > file_list.txt
+    [ -s file_list.txt ] || { echo "ERROR: no *.split.g.vcf.gz files found in work directory"; exit 1; }
     bcftools concat --naive-force -f file_list.txt | bcftools sort -O z -o multisample.g.vcf.gz
     bcftools index -t multisample.g.vcf.gz
-    bcftools view -e 'ALT[0]="<*>"' multisample.g.vcf.gz | bcftools sort -O z -o multisample.vcf.gz
+    bcftools view -e 'ALT[0]="<*>"' -O z -o multisample.vcf.gz multisample.g.vcf.gz
     bcftools index -t multisample.vcf.gz
     """
 
