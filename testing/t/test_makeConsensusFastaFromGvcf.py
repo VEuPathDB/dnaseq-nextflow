@@ -1,7 +1,6 @@
 import os
 import sys
 import tempfile
-import textwrap
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../bin'))
 
@@ -32,9 +31,6 @@ class FakeVcfRecord:
         if key == 'DP':
             return [[d] for d in self._dp]
         return None
-
-    def INFO_get(self, key, default=None):
-        return self.INFO.get(key, default)
 
 
 class FakeVcf:
@@ -81,6 +77,23 @@ def test_build_consensus_ref_block_zero_coverage_masked():
 
     seq = build_consensus('chr1', 50, ref_seq, MinimalVcf(), min_coverage=1, sample_idx=0)
     assert seq == 'N' * 50
+
+
+def test_build_consensus_ref_block_dp_per_sample():
+    """DP check uses the correct sample's depth, not always sample 0."""
+    ref_seq = 'A' * 50
+    # sample 0 has dp=0 (masked), sample 1 has dp=10 (covered)
+    record = _make_record_ref_block('chr1', 1, 50, dp_s1=0, dp_s2=10)
+
+    class MinimalVcf:
+        def __call__(self, chrom):
+            return iter([record])
+
+    seq0 = build_consensus('chr1', 50, ref_seq, MinimalVcf(), min_coverage=1, sample_idx=0)
+    assert seq0 == 'N' * 50, "sample 0 should be masked (dp=0)"
+
+    seq1 = build_consensus('chr1', 50, ref_seq, MinimalVcf(), min_coverage=1, sample_idx=1)
+    assert seq1 == ref_seq, "sample 1 should use reference bases (dp=10)"
 
 
 def test_build_consensus_snp_uses_correct_sample():

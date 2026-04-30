@@ -138,8 +138,10 @@ def main():
             chroms.append((parts[0], int(parts[1])))
 
     # Read sample names from header, then iterate once per sample
-    header_vcf = VCF(args.gvcf)
-    sample_names = list(header_vcf.samples)
+    with VCF(args.gvcf) as hdr:
+        sample_names = list(hdr.samples)
+
+    os.makedirs(args.output_dir, exist_ok=True)
 
     for sample_idx, sample_name in enumerate(sample_names):
         vcf = VCF(args.gvcf)
