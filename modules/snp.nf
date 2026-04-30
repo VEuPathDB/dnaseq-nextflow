@@ -34,7 +34,7 @@ process makeIndelTSV {
 
 
 process extractSampleVcf {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
     tuple val(sampleName), path(vcfGz), path(vcfGzTbi)
@@ -95,7 +95,7 @@ process splitGvcfAtZeroCoverage {
 }
 
 process concatMultiSampleVcf {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
 
