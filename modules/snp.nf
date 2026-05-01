@@ -162,86 +162,39 @@ process bcftoolsMpileupGvcf {
     """
 }
 
-process mergeGvcfs {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
-
-  publishDir "$params.outputDir", mode: "copy"
-
-  input:
-    val gvcfCount
-    tuple path(gvcfFiles), path(gvcfIndexes), val(key)
-
-  output:
-    tuple path('coverage.g.vcf.gz'), path('coverage.g.vcf.gz.tbi')
-
-  script:
-    """
-    set -euo pipefail
-    if [ $gvcfCount -gt 1 ]; then
-    bcftools merge \
-        --merge all \
-        --output-type z \
-        --output coverage.g.vcf.gz \
-        *.g.vcf.gz
-    else
-        cp *.g.vcf.gz coverage.g.vcf.gz
-    fi
-    bcftools index -t coverage.g.vcf.gz
-    """
-
-  stub:
-    """
-    touch coverage.g.vcf.gz
-    touch coverage.g.vcf.gz.tbi
-    """
-}
-
-process splitGvcfAtZeroCoverage {
+process makeCoverageBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
-    tuple val(sampleName), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(bamFile), path(bamIndex)
-    tuple path(genomeFasta), path(genomeFastaIndex)
+    tuple val(sampleName), path(bamFile), path(bamIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.g.vcf.gz"), path("${sampleName}.g.vcf.gz.tbi")
+    tuple val(sampleName), path("${sampleName}.coverage.bed")
 
   script:
     """
     set -euo pipefail
-
-    # Full-genome BedGraph: one entry per contiguous depth region
-    bedtools genomecov -ibam $bamFile -bga > coverage.bedgraph
-
-    # FreeBayes can produce overlapping reference blocks in gVCF output, which
-    # can cause out-of-order records after splitting. bcftools sort corrects this.
-    # --ref is required so that REF alleles are corrected for sub-blocks that
-    # start at a new position after splitting around zero-coverage gaps.
-    splitGvcfAtZeroCoverage.py \\
-      --gvcf input.g.vcf.gz \\
-      --bedgraph coverage.bedgraph \\
-      --ref $genomeFasta \\
-      --min-coverage $params.minCoverage \\
-      --output /dev/stdout \\
-    | bcftools sort -O z -o ${sampleName}.g.vcf.gz
-
-    bcftools index -t ${sampleName}.g.vcf.gz
+    bedtools genomecov -ibam $bamFile -bga \\
+      | awk -v mc=$params.minCoverage '\$4 >= mc' \\
+      | cut -f1-3 \\
+      | bedtools merge \\
+      > ${sampleName}.coverage.bed
     """
 
   stub:
     """
-    touch ${sampleName}.g.vcf.gz
-    touch ${sampleName}.g.vcf.gz.tbi
+    touch ${sampleName}.coverage.bed
     """
 }
 
-process makeConsensusFromGvcf {
+
+process makeConsensusFromVcfAndBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy", saveAs: { "${sampleName}_consensus.fa.gz" }
 
   input:
-    tuple val(sampleName), path(gvcfGz), path(gvcfGzTbi)
+    tuple val(sampleName), path(vcfGz), path(vcfGzTbi), path(coverageBed)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
@@ -250,11 +203,11 @@ process makeConsensusFromGvcf {
   script:
     """
     set -euo pipefail
-    makeConsensusFastaFromGvcf.py \\
-      --gvcf $gvcfGz \\
+    makeConsensusFastaFromVcfAndBed.py \\
+      --vcf $vcfGz \\
+      --bed $coverageBed \\
       --ref $genomeReorderedFasta \\
       --fai $genomeReorderedFastaIndex \\
-      --min-coverage $params.minCoverage \\
       --output consensus.fa
     bgzip consensus.fa
     """
@@ -263,6 +216,29 @@ process makeConsensusFromGvcf {
     """
     touch consensus.fa.gz
     """
-
 }
 
+
+process mergeCoverageBeds {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  publishDir "$params.outputDir", mode: "copy"
+
+  input:
+    path "*.coverage.bed"
+
+  output:
+    path 'coverage.tsv'
+
+  script:
+    """
+    set -euo pipefail
+    names=\$(ls *.coverage.bed | sed 's/\\.coverage\\.bed//' | tr '\\n' ' ')
+    bedtools multiinter -names \$names -i *.coverage.bed > coverage.tsv
+    """
+
+  stub:
+    """
+    touch coverage.tsv
+    """
+}
