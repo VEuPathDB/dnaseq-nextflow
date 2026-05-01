@@ -9,47 +9,32 @@ process freebayes {
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), path("${sampleName}.g.vcf.gz"), path("${sampleName}.g.vcf.gz.tbi"), emit: vcf_files
+    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
 
   script:
     """
     set -euo pipefail
 
-    # Run freebayes with --gvcf to include reference blocks
     minAltFraction=\$([ "$params.ploidy" -eq 1 ] && echo "0.8" || echo "0.3")
     freebayes \\
       -f $genomeReorderedFasta \\
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
-      --gvcf \\
-      $resultSortedGatkBam | bcftools sort > freebayes.g.vcf
+      $resultSortedGatkBam | bcftools sort > freebayes.vcf
 
-    # Extract variant sites only (exclude reference blocks where ALT=<*>)
-    bcftools view -e 'ALT[0]="<*>"' freebayes.g.vcf > freebayes.vcf
-
-    # Split into SNPs and indels for use in CNV
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
-    # Split multi-allelic records, then select indels by length difference (catches complex variants
-    # missed by -v indels) while excluding symbolic alleles like <*>
-    bcftools norm -m- freebayes.vcf | \
+    bcftools norm -m- freebayes.vcf | \\
       bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<"' > freebayes.indels.vcf
 
-    # Compress and index split VCFs
     bgzip freebayes.snps.vcf
     tabix -fp vcf freebayes.snps.vcf.gz
     bgzip freebayes.indels.vcf
     tabix -fp vcf freebayes.indels.vcf.gz
 
-    # Compress and index unfiltered VCF; name by sample so files are unique when merged across samples
     bgzip freebayes.vcf
     mv freebayes.vcf.gz ${sampleName}.vcf.gz
     tabix -fp vcf ${sampleName}.vcf.gz
-
-    # Compress and index GVCF
-    bgzip freebayes.g.vcf
-    mv freebayes.g.vcf.gz ${sampleName}.g.vcf.gz
-    tabix -fp vcf ${sampleName}.g.vcf.gz
     """
 
   stub:
@@ -60,8 +45,6 @@ process freebayes {
     touch freebayes.snps.vcf.gz.tbi
     touch freebayes.indels.vcf.gz
     touch freebayes.indels.vcf.gz.tbi
-    touch ${sampleName}.g.vcf.gz
-    touch ${sampleName}.g.vcf.gz.tbi
     """
 }
 
