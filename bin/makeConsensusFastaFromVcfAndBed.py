@@ -34,11 +34,13 @@ IUPAC = {
 
 def load_coverage_bed(bed_path):
     """
-    Parse a BED file and return a dict mapping chrom → list of (start, end)
-    intervals (0-based, half-open, as BED specifies).
+    Parse a BED file (plain or gzipped) and return a dict mapping
+    chrom -> list of (start, end) intervals (0-based, half-open).
     """
+    import gzip as _gzip
+    opener = _gzip.open if bed_path.endswith('.gz') else open
     result = defaultdict(list)
-    with open(bed_path) as fh:
+    with opener(bed_path, 'rt') as fh:
         for line in fh:
             line = line.rstrip('\n')
             if not line:
