@@ -52,7 +52,11 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, min_coverage, sample_id
             ref_pos = pos
 
         dp_arr = v.format('DP')
-        dp = int(dp_arr[sample_idx][0]) if dp_arr is not None else 0
+        if dp_arr is None:
+            dp = 0
+        else:
+            raw = int(dp_arr[sample_idx][0])
+            dp = 0 if raw < 0 else raw  # cyvcf2 uses negative sentinel for missing ('.')
 
         # REF block
         if not v.ALT or all(a == '.' or a.startswith('<') for a in v.ALT):

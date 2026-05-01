@@ -70,7 +70,7 @@ process splitGvcfAtZeroCoverage {
 
   input:
     // stageAs aliases required: gVCF and index must share a stable base name so bcftools can locate the index
-    tuple val(regionKey), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(zeroCovBed)
+    tuple val(regionKey), path(gvcfGz, stageAs: 'input.g.vcf.gz'), path(gvcfGzTbi, stageAs: 'input.g.vcf.gz.tbi'), path(unionZeroBed), path(allZeroBed), path(perSampleBeds)
     tuple path(genomeFasta), path(genomeFastaIndex)
 
   output:
@@ -81,7 +81,9 @@ process splitGvcfAtZeroCoverage {
     set -euo pipefail
     splitGvcfAtZeroCoverage.py \\
       --gvcf input.g.vcf.gz \\
-      --zero-cov-bed $zeroCovBed \\
+      --union-zero-bed $unionZeroBed \\
+      --all-zero-bed $allZeroBed \\
+      --per-sample-beds *.persample.bed \\
       --ref $genomeFasta \\
       --output /dev/stdout \\
     | bcftools sort -O z -o ${regionKey}.split.g.vcf.gz
@@ -202,7 +204,7 @@ process makeMultiSampleZeroCoverageBed {
     val regionLine
 
   output:
-    tuple val(regionKey), path('zero_cov.bed')
+    tuple val(regionKey), path('union_zero.bed'), path('all_zero.bed'), path('*.persample.bed')
 
   script:
     def fields = regionLine.tokenize('\t')
@@ -214,15 +216,38 @@ process makeMultiSampleZeroCoverageBed {
     """
     set -euo pipefail
     for bam in *.bam; do
-      samtools view -b -h \$bam ${chrom}:${startPlus1}-${end} > region_\${bam%.bam}.bam
-      samtools index region_\${bam%.bam}.bam
-      bedtools genomecov -ibam region_\${bam%.bam}.bam -bga | \\
-        awk '\$4 == 0 {print \$1 "\\t" \$2 "\\t" \$3}' >> all_zero.bed
+      sample="\${bam%.bam}"
+      samtools view -b -h \$bam ${chrom}:${startPlus1}-${end} > region_\${sample}.bam
+      samtools index region_\${sample}.bam
+      read_count=\$(samtools view -c region_\${sample}.bam)
+      if [ "\$read_count" -gt 0 ]; then
+        bedtools genomecov -ibam region_\${sample}.bam -bga | \\
+          awk '\$4 == 0 {print \$1 "\\t" \$2 "\\t" \$3}' | \\
+          bedtools sort > \${sample}.persample.bed
+      else
+        touch \${sample}.persample.bed
+      fi
     done
-    if [ -s all_zero.bed ]; then
-      bedtools sort -i all_zero.bed | bedtools merge > zero_cov.bed
+    zero_beds=()
+    for f in *.persample.bed; do
+      [ -s "\$f" ] && zero_beds+=("\$f")
+    done
+    if [ \${#zero_beds[@]} -eq 0 ]; then
+      touch union_zero.bed all_zero.bed
     else
-      touch zero_cov.bed
+      # Union: split boundary wherever any present sample has zero coverage
+      cat "\${zero_beds[@]}" | bedtools sort | bedtools merge > union_zero.bed
+      # Intersection: drop only where ALL present samples have zero coverage
+      cp "\${zero_beds[0]}" intersect.bed
+      for f in "\${zero_beds[@]:1}"; do
+        bedtools intersect -a intersect.bed -b "\$f" > tmp_intersect.bed
+        mv tmp_intersect.bed intersect.bed
+      done
+      if [ -s intersect.bed ]; then
+        bedtools sort -i intersect.bed | bedtools merge > all_zero.bed
+      else
+        touch all_zero.bed
+      fi
     fi
     """
 
@@ -233,7 +258,7 @@ process makeMultiSampleZeroCoverageBed {
     def end    = fields[2].toLong()
     regionKey  = "${chrom}_${start}_${end}"
     """
-    touch zero_cov.bed
+    touch union_zero.bed all_zero.bed stub.persample.bed
     """
 }
 
