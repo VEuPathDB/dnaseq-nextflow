@@ -49,7 +49,7 @@ process bedGraphToBigWig {
 
     stub:
     """
-    touch coverage.bw
+    touch ${sampleName}.bw
     """
 }
 
@@ -151,7 +151,7 @@ process calculateTPM {
 
   stub:
     """
-    touch tpm.txt
+    touch out.tpm
     """
 
 }

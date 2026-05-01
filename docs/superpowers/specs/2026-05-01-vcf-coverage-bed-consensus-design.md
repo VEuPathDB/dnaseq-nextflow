@@ -146,6 +146,10 @@ makeConsensusFromVcfAndBed(perSampleVcf.join(coverageBedResults), reorderFastaRe
 mergeCoverageBeds(coverageBedResults.map { sampleName, bed -> bed }.collect())
 ```
 
+**Existing maps that must also be updated to 7-element destructuring** (gvcf pair removed):
+- `combinedVcf` extraction (~line 92)
+- `snpsVcf` extraction (~line 152, inside `if (params.ploidy != 1)` block)
+
 ---
 
 ## Files Changed

@@ -173,8 +173,8 @@ process gatk {
 
   stub:
     """
-    touch result_sorted_gatk.bam
-    touch result_sorted_gatk.bai
+    touch ${sampleName}.bam
+    touch ${sampleName}.bam.bai
     """
 }
 
