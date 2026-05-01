@@ -243,7 +243,7 @@ process makeSnpDensity {
   container  'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(gvcfGz), path(gvcfGzTbi)
+    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
     tuple path(windows), path(genome)
 
   output:
