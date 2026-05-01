@@ -77,6 +77,8 @@ process makeIndelTSV {
 process mergeVcfs {
   container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
+  publishDir "$params.outputDir", mode: "copy"
+
   input:
     val vcfCount
     tuple path(samplevcfzip), path(samplevcfzipindex), val(key)
@@ -165,25 +167,26 @@ process bcftoolsMpileupGvcf {
 process makeCoverageBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
+  publishDir "$params.outputDir", mode: "copy"
+
   input:
     tuple val(sampleName), path(bamFile), path(bamIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.coverage.bed")
+    tuple val(sampleName), path("${sampleName}.coverage.bed.gz")
 
   script:
     """
     set -euo pipefail
     bedtools genomecov -ibam $bamFile -bga \\
       | awk -v mc=$params.minCoverage '\$4 >= mc' \\
-      | cut -f1-3 \\
-      | bedtools merge \\
-      > ${sampleName}.coverage.bed
+      | bedtools merge -c 4 -o mean \\
+      | bgzip > ${sampleName}.coverage.bed.gz
     """
 
   stub:
     """
-    touch ${sampleName}.coverage.bed
+    touch ${sampleName}.coverage.bed.gz
     """
 }
 
@@ -215,30 +218,5 @@ process makeConsensusFromVcfAndBed {
   stub:
     """
     touch consensus.fa.gz
-    """
-}
-
-
-process mergeCoverageBeds {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
-
-  publishDir "$params.outputDir", mode: "copy"
-
-  input:
-    path "*.coverage.bed"
-
-  output:
-    path 'coverage.tsv'
-
-  script:
-    """
-    set -euo pipefail
-    names=\$(ls *.coverage.bed | sed 's/\\.coverage\\.bed//' | tr '\\n' ' ')
-    bedtools multiinter -names \$names -i *.coverage.bed > coverage.tsv
-    """
-
-  stub:
-    """
-    touch coverage.tsv
     """
 }

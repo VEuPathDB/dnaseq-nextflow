@@ -23,7 +23,6 @@ include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
 include { makeCoverageBed } from '../modules/snp.nf'
 include { makeConsensusFromVcfAndBed } from '../modules/snp.nf'
-include { mergeCoverageBeds } from '../modules/snp.nf'
 
 // CNV
 include { genomecov } from '../modules/cnv.nf'
@@ -110,7 +109,6 @@ workflow ps {
     }
     makeConsensusFromVcfAndBed(perSampleVcf.join(coverageBedResults), reorderFastaResults)
 
-    mergeCoverageBeds(coverageBedResults.map { sampleName, bed -> bed }.collect())
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 
