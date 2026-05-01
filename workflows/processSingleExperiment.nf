@@ -21,9 +21,9 @@ include { freebayes } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
-include { splitGvcfAtZeroCoverage } from '../modules/snp.nf'
-include { makeConsensusFromGvcf } from '../modules/snp.nf'
-include { mergeGvcfs } from '../modules/snp.nf'
+include { makeCoverageBed } from '../modules/snp.nf'
+include { makeConsensusFromVcfAndBed } from '../modules/snp.nf'
+include { mergeCoverageBeds } from '../modules/snp.nf'
 
 // CNV
 include { genomecov } from '../modules/cnv.nf'
@@ -89,12 +89,12 @@ workflow ps {
     freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
 
     // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
-    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
+    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, vcfGz, vcfGzTbi)
     }
 
     // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
-    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
+    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
     }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
@@ -103,22 +103,14 @@ workflow ps {
 
     makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
 
-    freebayesGvcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
-        tuple(sampleName, gvcfGz, gvcfGzTbi)
+    coverageBedResults = makeCoverageBed(gatkResults.bamTuple)
+
+    perSampleVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+        tuple(sampleName, vcfGz, vcfGzTbi)
     }
+    makeConsensusFromVcfAndBed(perSampleVcf.join(coverageBedResults), reorderFastaResults)
 
-    // Join gVCF with BAM so we can compute the full-genome BedGraph once and
-    // use it to both split reference blocks at zero-coverage boundaries and
-    // recompute per-sub-block DP values.
-    splitGvcfResults = splitGvcfAtZeroCoverage(freebayesGvcf.join(gatkResults.bamTuple), reorderFastaResults)
-
-    makeConsensusFromGvcf(splitGvcfResults, reorderFastaResults)
-
-    mergeGvcfs(
-        splitGvcfResults.count(),
-        splitGvcfResults.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
-            .groupTuple(by: 2, sort: { a, b -> a <=> b })
-    )
+    mergeCoverageBeds(coverageBedResults.map { sampleName, bed -> bed }.collect())
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 
@@ -149,7 +141,7 @@ workflow ps {
 
     if (params.ploidy != 1) {
 
-      snpsVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, gvcfGz, gvcfGzTbi ->
+      snpsVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, snpsVcfGz, snpsVcfGzTbi)
       }
 
