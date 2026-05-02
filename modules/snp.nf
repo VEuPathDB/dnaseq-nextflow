@@ -77,8 +77,6 @@ process makeIndelTSV {
 process mergeVcfs {
   container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
-  publishDir "$params.outputDir", mode: "copy"
-
   input:
     val vcfCount
     tuple path(samplevcfzip), path(samplevcfzipindex), val(key)
@@ -106,6 +104,8 @@ process mergeVcfs {
 
 process makeMergedVariantIndex {
   container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  publishDir "$params.outputDir", mode: "copy"
 
   input:
     path(resultVcfGz)
