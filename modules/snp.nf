@@ -21,9 +21,7 @@ process freebayes {
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
-      --no-mnps \\    # emit each SNP as a separate VCF record
-      --no-complex \\  # prevent merging of mixed SNP+indel haplotype alleles
-      $resultSortedGatkBam | bcftools sort > freebayes.vcf
+      $resultSortedGatkBam | vcfallelicprimitives -kg | bcftools sort > freebayes.vcf
 
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
     bcftools norm -m- freebayes.vcf | \\
