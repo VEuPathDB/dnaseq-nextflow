@@ -52,7 +52,7 @@ process mergeCoverageBeds {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
-    path "*.coverage.bed.gz"
+    path coverageBeds
 
   output:
     path 'coverage.tsv'
@@ -60,8 +60,11 @@ process mergeCoverageBeds {
   script:
     """
     set -euo pipefail
-    files=( *.coverage.bed.gz )
-    names=( "\${files[@]/.coverage.bed.gz/}" )
+    files=( $coverageBeds )
+    names=()
+    for f in "\${files[@]}"; do
+      names+=( "\$(basename "\$f" .coverage.bed.gz)" )
+    done
     header="chrom\tstart\tend\t\$(IFS='\t'; echo "\${names[*]}")"
     echo -e "\$header" > coverage.tsv
     bedtools unionbedg -names "\${names[@]}" -filler 0 -i "\${files[@]}" >> coverage.tsv

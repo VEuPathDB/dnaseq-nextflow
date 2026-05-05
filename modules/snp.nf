@@ -24,6 +24,7 @@ process freebayes {
       $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | bcftools sort > freebayes.vcf
 
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
+    # TODO: check why we have "-m-"
     bcftools norm -m- freebayes.vcf | \\
       bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<"' > freebayes.indels.vcf
 
