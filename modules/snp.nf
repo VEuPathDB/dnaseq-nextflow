@@ -21,7 +21,7 @@ process freebayes {
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
-      $resultSortedGatkBam | vcfallelicprimitives -kg | bcftools sort > freebayes.vcf
+      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | bcftools sort > freebayes.vcf
 
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
     bcftools norm -m- freebayes.vcf | \\
