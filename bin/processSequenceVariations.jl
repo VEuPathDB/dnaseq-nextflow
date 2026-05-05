@@ -546,6 +546,9 @@ function parse_vcf_record(line::String, n_samples::Int)::VCFRecord
     VCFRecord(chrom, pos, ref, alts, info, format_keys, sample_data)
 end
 
+# Returns true if all ALTs have the same length as REF (SNP or MNP, not indel)
+is_snp_record(record::VCFRecord) = all(length(a) == length(record.ref) for a in record.alts)
+
 """
     parse_format_field(format_keys, sample_str) -> Dict{String,String}
 """
@@ -1562,13 +1565,13 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains, chrom_coverage) -> Bool
+    handle_variant_record!(records, cache_entries, ctx, writers, transcript_cache, all_strains, chrom_coverage) -> Bool
 
 Processes one variant VCF record end-to-end. Returns true if output was written.
 cache_entries: Dict keyed by (ref, alt) for positions with a cache hit at this coordinate.
 """
 function handle_variant_record!(
-    record::VCFRecord,
+    records::Vector{VCFRecord},
     cache_entries::Dict{Tuple{String,String},CacheEntry},
     ctx::ProcessingContext,
     writers::OutputWriters,
@@ -1576,12 +1579,21 @@ function handle_variant_record!(
     all_strains::Vector{String},
     chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
 )::Bool
-    seq_id   = record.chrom
-    location = record.pos
+    seq_id   = records[1].chrom
+    location = records[1].pos
     debug_log("Processing position: ", seq_id, ":", location)
 
-    variations = build_variations_from_record(record, all_strains, ctx.undone_strains, chrom_coverage)
+    # Build variations from all records at this position (SNPs + indels combined)
+    variations = Variation[]
+    for r in records
+        append!(variations, build_variations_from_record(r, all_strains, ctx.undone_strains, chrom_coverage))
+    end
     isempty(variations) && return false
+
+    # For cache lookup, CANN annotation, and VCF cache writing: use only the first SNP record.
+    # Indel records at the same position are included in variation tables but not AA annotation.
+    snp_records = filter(is_snp_record, records)
+    record = isempty(snp_records) ? records[1] : snp_records[1]
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = if !isempty(cache_entries)
@@ -1778,13 +1790,16 @@ function main()
             continue
         end
 
-        # Parse and advance VCF
-        record = parse_vcf_record(vcf_pf.line, length(all_strains))
-        advance!(vcf_pf)
+        # Parse and advance VCF — collect all records sharing this chrom+pos
+        records = VCFRecord[]
+        while !vcf_pf.exhausted && peek_sort_key(vcf_pf.line, chrom_rank) == vcf_start
+            push!(records, parse_vcf_record(vcf_pf.line, length(all_strains)))
+            advance!(vcf_pf)
+        end
 
         # Load coverage intervals when the chromosome changes
-        if record.chrom != current_chrom
-            current_chrom = record.chrom
+        if records[1].chrom != current_chrom
+            current_chrom = records[1].chrom
             load_chrom_coverage!(coverage_fh, current_chrom, chrom_rank, chrom_coverage)
         end
 
@@ -1801,7 +1816,7 @@ function main()
             advance!(cache_pf)
         end
 
-        if handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains, chrom_coverage)
+        if handle_variant_record!(records, cache_entries, ctx, writers, transcript_cache, all_strains, chrom_coverage)
             n_processed += 1
             if n_processed % 1000 == 0
                 @info "Processed $n_processed variant positions"

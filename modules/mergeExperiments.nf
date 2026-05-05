@@ -37,7 +37,7 @@ process mergeVcfs {
     set -euo pipefail
 
     for vcf in *.vcf.gz; do bcftools index --tbi \$vcf; done
-    bcftools merge -O z -o merged.vcf.gz *.vcf.gz
+    bcftools merge --merge all -O z -o merged.vcf.gz *.vcf.gz
     """
 
   stub:

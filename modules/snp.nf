@@ -21,12 +21,11 @@ process freebayes {
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
-      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | bcftools sort > freebayes.vcf
+      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | fixStarAlleles.py | bcftools sort | bcftools view -e 'GT="0/0"' > freebayes.vcf
 
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
-    # TODO: check why we have "-m-"
     bcftools norm -m- freebayes.vcf | \\
-      bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<"' > freebayes.indels.vcf
+      bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<" && ALT!="*"' > freebayes.indels.vcf
 
     bgzip freebayes.snps.vcf
     tabix -fp vcf freebayes.snps.vcf.gz
