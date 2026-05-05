@@ -724,14 +724,57 @@ function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_header
     write(fh, chrom_line, "\n")
 end
 
+"""
+    remap_sample_for_split(sample_str, format_keys, n_orig_alts, target_alt_i) -> String
+
+When a multi-allelic record is split into one record per ALT, remap each sample's FORMAT
+string so that GT allele indices are valid for a 1-ALT record:
+  - target alt index (target_alt_i, 1-based in original) → 1
+  - ref (0) → 0
+  - any other alt index → 0 (treated as ref in this split record)
+Also replaces GL with "." because GL has n*(n+1)/2 values for n alleles and SnpEff will
+reject split records whose GL length no longer matches the single-ALT allele count.
+"""
+function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
+                                 n_orig_alts::Int, target_alt_i::Int)::String
+    n_orig_alts == 1 && return sample_str   # nothing to remap for single-alt records
+    values = split(sample_str, ':')
+    result = String[String(v) for v in values]
+    for (fi, key) in enumerate(format_keys)
+        fi > length(result) && break
+        if key == "GT"
+            gt = result[fi]
+            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+            sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+            sep = isnothing(sep_idx) ? nothing : gt[sep_idx]
+            remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
+            if isnothing(sep_idx)
+                idx = tryparse(Int, gt)
+                isnothing(idx) && continue
+                result[fi] = string(remap(idx))
+            else
+                a1 = tryparse(Int, gt[1:sep_idx-1])
+                a2 = tryparse(Int, gt[sep_idx+1:end])
+                (isnothing(a1) || isnothing(a2)) && continue
+                result[fi] = "$(remap(a1))$(sep)$(remap(a2))"
+            end
+        elseif key == "GL"
+            result[fi] = "."
+        end
+    end
+    join(result, ':')
+end
+
 function write_vcf_cache_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
                                 cann_str::String, gvcf_info::String,
                                 format_keys::Vector{String}, sample_data::Vector{String},
-                                ca_values::Vector{String}, dfs_values::Vector{String})
+                                ca_values::Vector{String}, dfs_values::Vector{String},
+                                n_orig_alts::Int=1, target_alt_i::Int=1)
     info    = "$(gvcf_info);CANN=$(cann_str)"
     format  = join([format_keys..., "CA", "DFS"], ':')
-    samples = [i <= length(ca_values) ? "$(sample_data[i]):$(ca_values[i]):$(get(dfs_values, i, "."))" : "$(sample_data[i]):.:."
-               for i in 1:length(sample_data)]
+    remapped = [remap_sample_for_split(s, format_keys, n_orig_alts, target_alt_i) for s in sample_data]
+    samples = [i <= length(ca_values) ? "$(remapped[i]):$(ca_values[i]):$(get(dfs_values, i, "."))" : "$(remapped[i]):.:."
+               for i in 1:length(remapped)]
     write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info, format, samples...], '\t'), "\n")
 end
 
@@ -788,6 +831,34 @@ function gt_allele_idx(gt::String)::Int
     sep_idx = findfirst(c -> c == '/' || c == '|', gt)
     isnothing(sep_idx) && return parse(Int, gt)
     parse(Int, gt[1:sep_idx-1])
+end
+
+"""
+    nonref_alt_alleles(gt, alts) -> Vector{String}
+
+Returns the unique non-ref allele strings carried by this sample, in index order.
+For GT="0/1" returns [alts[1]]; for GT="1/1" returns [alts[1]]; for GT="1/2"
+returns [alts[1], alts[2]].  Returns [] for missing or ref-only GTs.
+"""
+function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
+    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return String[]
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    idxs = if isnothing(sep_idx)
+        [parse(Int, gt)]
+    else
+        a1 = gt[1:sep_idx-1]; a2 = gt[sep_idx+1:end]
+        (a1 == "." || a2 == ".") && return String[]
+        [parse(Int, a1), parse(Int, a2)]
+    end
+    seen = Set{Int}()
+    result = String[]
+    for i in idxs
+        i == 0 && continue
+        i in seen && continue
+        push!(seen, i)
+        i <= length(alts) && push!(result, alts[i])
+    end
+    result
 end
 
 """
@@ -860,7 +931,7 @@ function build_variations_from_record(
         dp     = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
 
         base = gt_to_base(gt, record.ref, record.alts)
-        isempty(base) && continue
+        (isempty(base) || base == "*") && continue
 
         aidx = gt_allele_idx(gt)
         pct  = compute_percent(fmt, aidx)
@@ -1160,7 +1231,9 @@ function write_snp_feature(
     distinct_allele_count  = length(allele_counts)
     has_nonsynonymous_allele = length(product_counts) > 1 ? 1 : 0
 
-    sorted_alleles  = sort(collect(keys(allele_counts));  by = a -> (-allele_counts[a], a))
+    n_alt_alleles   = count(a -> a != ref_allele, keys(allele_counts))
+    sorted_alleles  = sort(collect(keys(allele_counts));
+                          by = a -> (n_alt_alleles >= 2 && a == ref_allele ? 1 : 0, -allele_counts[a], a))
     sorted_products = sort(collect(keys(product_counts)); by = p -> (-product_counts[p], p))
 
     major_allele       = sorted_alleles[1]
@@ -1524,6 +1597,9 @@ function handle_variant_record!(
     first_annotation   = annotations[1]
     any_output         = false
 
+    # Map strain name -> sample index for GT lookup when keying CANN entries by original alt allele
+    strain_idx_map = Dict{String, Int}(s => i for (i, s) in enumerate(all_strains))
+
     for annotation in annotations
         annotate_variations!(variations, annotation, ctx, transcript_cache)
 
@@ -1543,13 +1619,22 @@ function handle_variant_record!(
         write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
         write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation)
 
-        # Collect per-sample CANN entry for each alt under this annotation
+        # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
+        # v.base may be an IUPAC ambiguity code for het calls; the VCF cache write loop below
+        # iterates record.alts, so we must use the original allele strings as keys here.
         for v in variations
             v.strain == ctx.reference_strain && continue
-            v.base == record.ref && continue
-            entry = build_cann_string(record.ref, v.base, v, annotation)
-            strain_map = get!(alt_strain_entries, v.base, Dict{String, Vector{String}}())
-            push!(get!(strain_map, v.strain, String[]), entry)
+            v.matches_reference == 1 && continue
+            sidx = get(strain_idx_map, v.strain, 0)
+            (sidx == 0 || sidx > length(record.sample_data)) && continue
+            fmt = parse_format_field(record.format_keys, record.sample_data[sidx])
+            gt  = get(fmt, "GT", "")
+            for alt_allele in nonref_alt_alleles(gt, record.alts)
+                alt_allele == "*" && continue
+                entry = build_cann_string(record.ref, alt_allele, v, annotation)
+                strain_map = get!(alt_strain_entries, alt_allele, Dict{String, Vector{String}}())
+                push!(get!(strain_map, v.strain, String[]), entry)
+            end
         end
     end
 
@@ -1620,7 +1705,9 @@ function handle_variant_record!(
     end
 
     # Write one VCF cache entry per unique alt.
-    for alt in record.alts
+    n_orig_alts = length(record.alts)
+    for (alt_i, alt) in enumerate(record.alts)
+        alt == "*" && continue  # spanning deletion placeholder from bcftools norm -a
         haskey(alt_cann_entries, alt) || continue
 
         coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])
@@ -1634,7 +1721,8 @@ function handle_variant_record!(
         dfs_values = [get(strain_to_dfs, s, ".") for s in all_strains]
         write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
                               full_cann, record.info, record.format_keys,
-                              modified_sample_data, ca_values, dfs_values)
+                              modified_sample_data, ca_values, dfs_values,
+                              n_orig_alts, alt_i)
     end
 
     true
