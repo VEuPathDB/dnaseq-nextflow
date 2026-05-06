@@ -159,38 +159,6 @@ process makeMergedVariantIndex {
 
 }
 
-process bcftoolsMpileupGvcf {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
-
-  input:
-    tuple val(sampleName), path(bamFile), path(bamIndex)
-    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
-
-  output:
-    tuple val(sampleName), path("${sampleName}.g.vcf.gz"), path("${sampleName}.g.vcf.gz.tbi")
-
-  script:
-    """
-    set -euo pipefail
-    bcftools mpileup \\
-      --gvcf $params.minCoverage \\
-      -f $genomeReorderedFasta \\
-      $bamFile \\
-    | bcftools call \\
-      -m \\
-      --gvcf $params.minCoverage \\
-      -O z \\
-      -o ${sampleName}.g.vcf.gz
-    bcftools index -t ${sampleName}.g.vcf.gz
-    """
-
-  stub:
-    """
-    touch ${sampleName}.g.vcf.gz
-    touch ${sampleName}.g.vcf.gz.tbi
-    """
-}
-
 process makeCoverageBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
