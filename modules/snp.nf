@@ -115,7 +115,7 @@ process sanitizeVcf {
   script:
     """
     set -euo pipefail
-    gunzip -c $vcfGz | sed 's/%//g' | bgzip > ${sampleName}.vcf.gz
+    bgzip -d -c $vcfGz | sed 's/%//g' | bgzip > ${sampleName}.vcf.gz
     tabix -fp vcf ${sampleName}.vcf.gz
     """
 
