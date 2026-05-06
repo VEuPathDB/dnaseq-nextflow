@@ -20,8 +20,7 @@ include { mergeAlignmentStats } from '../modules/alignment.nf'
 include { runFreebayes } from '../modules/snp.nf'
 include { filterAndSplitVcf } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
-include { mergeVcfs } from '../modules/snp.nf'
-include { makeMergedVariantIndex } from '../modules/snp.nf'
+include { sanitizeVcf } from '../modules/snp.nf'
 include { makeCoverageBed } from '../modules/snp.nf'
 include { makeConsensusFromVcfAndBed } from '../modules/snp.nf'
 
@@ -89,27 +88,19 @@ workflow ps {
     rawVcf = runFreebayes(gatkResults.bamTuple, reorderFastaResults)
     freebayesResults = filterAndSplitVcf(rawVcf)
 
-    // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
-    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+    filteredVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, vcfGz, vcfGzTbi)
     }
 
-    // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
     makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
     }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
-    // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
-    mergeVcfsResults = mergeVcfs(combinedVcf.count(), combinedVcf.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
-
-    makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
+    sanitizeVcfResults = sanitizeVcf(filteredVcf)
 
     coverageBedResults = makeCoverageBed(gatkResults.bamTuple)
 
-    perSampleVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
-        tuple(sampleName, vcfGz, vcfGzTbi)
-    }
-    makeConsensusFromVcfAndBed(perSampleVcf.join(coverageBedResults), reorderFastaResults)
+    makeConsensusFromVcfAndBed(sanitizeVcfResults.join(coverageBedResults), reorderFastaResults)
 
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
