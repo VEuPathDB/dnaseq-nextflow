@@ -92,6 +92,7 @@ workflow ps {
         tuple(sampleName, vcfGz, vcfGzTbi)
     }
 
+    // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
     makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
     }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
