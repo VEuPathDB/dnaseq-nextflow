@@ -35,6 +35,7 @@ process runFreebayes {
     """
 }
 
+// NOTE: intermediate split VCFs (snps, indels) are NOT published; only sanitizeVcf publishes the final per-sample VCF
 process filterAndSplitVcf {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
@@ -179,6 +180,6 @@ process makeConsensusFromVcfAndBed {
 
   stub:
     """
-    touch consensus.fa.gz
+    touch ${sampleName}_consensus.fa.gz
     """
 }
