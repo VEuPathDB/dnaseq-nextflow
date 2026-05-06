@@ -100,63 +100,29 @@ process makeIndelTSV {
 
 }
 
-
-process mergeVcfs {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
-
-  input:
-    val vcfCount
-    tuple path(samplevcfzip), path(samplevcfzipindex), val(key)
-
-  output:
-    path('result.vcf.gz')
-
-  script:
-    """
-    set -euo pipefail
-
-    if [ $vcfCount -gt 1 ]; then
-        bcftools merge -o result.vcf.gz -O z *.vcf.gz
-    else
-        cp *.vcf.gz result.vcf.gz
-    fi
-    """
-
-  stub:
-    """
-    touch result.vcf.gz
-    """
-
-}
-
-process makeMergedVariantIndex {
+process sanitizeVcf {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
 
   input:
-    path(resultVcfGz)
+    tuple val(sampleName), path(vcfGz), path(vcfGzTbi)
 
   output:
-    tuple path('result.vcf.gz'), path('result.vcf.gz.tbi')
+    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi")
 
   script:
     """
     set -euo pipefail
-    cp $resultVcfGz hold.vcf.gz
-    gunzip hold.vcf.gz
-    sed -i 's/\\%//g' hold.vcf
-    bgzip hold.vcf
-    mv hold.vcf.gz result.vcf.gz
-    tabix -fp vcf result.vcf.gz
+    gunzip -c $vcfGz | sed 's/%//g' | bgzip > ${sampleName}.vcf.gz
+    tabix -fp vcf ${sampleName}.vcf.gz
     """
 
   stub:
     """
-    touch result.vcf.gz
-    touch result.vcf.gz.tbi
+    touch ${sampleName}.vcf.gz
+    touch ${sampleName}.vcf.gz.tbi
     """
-
 }
 
 process makeCoverageBed {
