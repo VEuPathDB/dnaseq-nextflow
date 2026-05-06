@@ -35,11 +35,13 @@ IUPAC = {
 def load_coverage_bed(bed_path):
     """
     Parse a BED file (plain or gzipped) and return a dict mapping
-    chrom -> list of (start, end) intervals (0-based, half-open).
+    chrom -> (intervals, starts) where intervals is a sorted list of
+    (start, end) tuples (0-based, half-open) and starts is the precomputed
+    list of interval start coordinates for binary search.
     """
     import gzip as _gzip
     opener = _gzip.open if bed_path.endswith('.gz') else open
-    result = defaultdict(list)
+    raw = defaultdict(list)
     with opener(bed_path, 'rt') as fh:
         for line in fh:
             line = line.rstrip('\n')
@@ -47,15 +49,18 @@ def load_coverage_bed(bed_path):
                 continue
             parts = line.split('\t')
             chrom, start, end = parts[0], int(parts[1]), int(parts[2])
-            result[chrom].append((start, end))
-    return dict(result)
+            raw[chrom].append((start, end))
+    result = {}
+    for chrom, ivs in raw.items():
+        ivs.sort()
+        result[chrom] = (ivs, [iv[0] for iv in ivs])
+    return result
 
 
-def is_covered(intervals, pos):
+def is_covered(intervals, starts, pos):
     """Return True if 0-based pos falls in any covered interval. O(log n)."""
     if not intervals:
         return False
-    starts = [iv[0] for iv in intervals]
     idx = bisect.bisect_right(starts, pos) - 1
     if idx < 0:
         return False
@@ -63,7 +68,7 @@ def is_covered(intervals, pos):
     return pos < iv_end
 
 
-def fill_gap(ref_seq, gap_start, gap_end, intervals):
+def fill_gap(ref_seq, gap_start, gap_end, intervals, starts):
     """Fill [gap_start, gap_end) with ref bases where covered, N elsewhere. No per-base loop."""
     if gap_start >= gap_end:
         return ''
@@ -72,7 +77,6 @@ def fill_gap(ref_seq, gap_start, gap_end, intervals):
 
     segments = []
     pos = gap_start
-    starts = [iv[0] for iv in intervals]
     idx = max(bisect.bisect_right(starts, gap_start) - 1, 0)
 
     for iv_start, iv_end in intervals[idx:]:
@@ -93,7 +97,7 @@ def fill_gap(ref_seq, gap_start, gap_end, intervals):
     return ''.join(segments)
 
 
-def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals):
+def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals, starts):
     """
     Walk VCF records for one chromosome and assemble the consensus sequence.
 
@@ -103,7 +107,8 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals):
     chrom_len  : int
     ref_seq    : str   – full reference sequence for the chromosome (0-based)
     vcf        : callable – vcf(chrom_name) returns an iterator of VCF records
-    intervals  : list of (start, end) tuples (0-based, half-open) from BED
+    intervals  : list of (start, end) tuples (0-based, half-open) from BED, sorted by start
+    starts     : list of interval start coordinates (precomputed for binary search)
 
     Logic
     -----
@@ -124,7 +129,7 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals):
 
         # Fill any gap between the last processed position and this record
         if pos > ref_pos:
-            segments.append(fill_gap(ref_seq, ref_pos, pos, intervals))
+            segments.append(fill_gap(ref_seq, ref_pos, pos, intervals, starts))
             ref_pos = pos
 
         # GT string for the single sample
@@ -136,7 +141,7 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals):
             continue
 
         # Check coverage at this position
-        if not is_covered(intervals, pos):
+        if not is_covered(intervals, starts, pos):
             segments.append('N' * len(v.REF))
             ref_pos = pos + len(v.REF)
             continue
@@ -168,7 +173,7 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals):
 
     # Fill remaining reference positions after the last VCF record
     if ref_pos < chrom_len:
-        segments.append(fill_gap(ref_seq, ref_pos, chrom_len, intervals))
+        segments.append(fill_gap(ref_seq, ref_pos, chrom_len, intervals, starts))
 
     return ''.join(segments)
 
@@ -216,8 +221,8 @@ def main():
     with open(args.output, 'w') as out:
         for chrom_name, chrom_len in chroms:
             ref_seq = get_chrom_seq(args.ref, chrom_name)
-            intervals = coverage.get(chrom_name, [])
-            seq = build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals)
+            intervals, starts = coverage.get(chrom_name, ([], []))
+            seq = build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals, starts)
             write_fasta(out, chrom_name, seq)
 
 

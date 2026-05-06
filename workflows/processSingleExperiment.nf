@@ -128,7 +128,7 @@ workflow ps {
 
     bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults.bamTuple)
 
-    normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics), params.chrsForCalcFile, params.ploidy)
+    normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults, params.chrsForCalcFile, params.ploidy)
 
     normaliseCoverageToBigWigResults = normaliseCoverageToBigWig(reorderFastaResults, normaliseCoverageResults)
 

@@ -216,7 +216,7 @@ process normaliseCoverage {
   //publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
   input:
-    tuple val(sampleName), path(windowedCoverage), path(summaryMetrics)
+    tuple val(sampleName), path(windowedCoverage)
     path chrsForCalcsFile
     val ploidy
 
