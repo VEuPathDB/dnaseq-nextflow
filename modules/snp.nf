@@ -189,14 +189,14 @@ process makeCoverageBed {
 process makeConsensusFromVcfAndBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy", saveAs: { "${sampleName}_consensus.fa.gz" }
+  publishDir "$params.outputDir", mode: "copy"
 
   input:
     tuple val(sampleName), path(vcfGz), path(vcfGzTbi), path(coverageBed)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    path 'consensus.fa.gz'
+    path "${sampleName}_consensus.fa.gz"
 
   script:
     """
@@ -208,6 +208,7 @@ process makeConsensusFromVcfAndBed {
       --fai $genomeReorderedFastaIndex \\
       --output consensus.fa
     bgzip consensus.fa
+    mv consensus.fa.gz ${sampleName}_consensus.fa.gz
     """
 
   stub:
