@@ -720,7 +720,7 @@ function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_header
     for h in info_headers
         write(fh, h, "\n")
     end
-    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key:codon:aa:effect:transcript_id:pos_in_cds:pos_in_codon. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
+    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
     write(fh, "##FORMAT=<ID=CA,Number=1,Type=String,Description=\"CANN key(s) per GT allele. Alleles separated by '/' (unphased) or '|' (phased). Multiple transcript keys for one allele separated by ';'. 'r'=ref allele no CDS annotation, '.'=missing/no-call\">\n")
     write(fh, "##FORMAT=<ID=DFS,Number=1,Type=Integer,Description=\"Downstream of frameshift: 1 if this sample carries an upstream indel that disrupts the reading frame at this position, 0 otherwise.\">\n")
     chrom_line = join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", all_strains...], '\t')
@@ -934,7 +934,10 @@ function build_variations_from_record(
         dp     = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
 
         base = gt_to_base(gt, record.ref, record.alts)
-        (isempty(base) || base == "*") && continue
+        if isempty(base) || base == "*"
+            base == "*" && @warn "Unexpected * allele in GT at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
+            continue
+        end
 
         aidx = gt_allele_idx(gt)
         pct  = compute_percent(fmt, aidx)
@@ -1412,13 +1415,13 @@ end
     build_ref_cann_entry(key, annotation) -> String
 
 Builds the r-keyed CANN entry for the reference allele at a coding position.
-Format mirrors alt entries: key:codon:aa:effect:transcript_id:pos_in_cds:pos_in_codon
+Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon
 """
 function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::String
     annotation.is_coding != 1 && return "."
     codon = isempty(annotation.ref_codon)   ? "." : annotation.ref_codon
     aa    = isempty(annotation.ref_product) ? "." : annotation.ref_product
-    "$(key):$(codon):$(aa):reference:$(annotation.transcript_id):$(annotation.pos_in_cds):$(annotation.pos_in_codon_val)"
+    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)"
 end
 
 """
@@ -1470,7 +1473,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0:.:.:$(structural):$(tid):$(pos_in_cds):$(pic)"
+        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
     end
 
     # SNP or complex variant: compute amino acid effect
@@ -1480,12 +1483,12 @@ function build_cann_string(
 
     # Codon/product suppressed because strain is downstream of a frameshift
     if codon == "." && isempty(unique_prods)
-        return "k0:.:.:downstream_frameshift:$(tid):$(pos_in_cds):$(pic)"
+        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)"
     end
 
     # Codon contains ambiguous base(s) — skip product and effect
     if occursin(r"[NnXx]", codon)
-        return "k0:$(codon):.:.:$(tid):$(pos_in_cds):$(pic)"
+        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)"
     end
 
     has_stop = any(p == "*" for p in unique_prods)
@@ -1498,7 +1501,7 @@ function build_cann_string(
     end
 
     if !is_indel
-        return "k0:$(codon):$(product_str):$(aa_effect):$(tid):$(pos_in_cds):$(pic)"
+        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)"
     else
         # Complex: indel with SNP at anchor position
         len_diff = alt_len - ref_len
@@ -1509,7 +1512,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0:$(codon):$(product_str):$(aa_effect)&$(structural):$(tid):$(pos_in_cds):$(pic)"
+        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
     end
 end
 
@@ -1536,7 +1539,7 @@ function decode_all_cann_annotations(
     annotations      = PositionAnnotation[]
 
     for entry in split(ce.cann_str, ',')
-        parts = split(entry, ':')
+        parts = split(entry, '|')
         length(parts) < 7 && continue
         startswith(String(parts[1]), 'r') || continue   # only r-keyed entries
 
@@ -1642,7 +1645,10 @@ function handle_variant_record!(
             fmt = parse_format_field(record.format_keys, record.sample_data[sidx])
             gt  = get(fmt, "GT", "")
             for alt_allele in nonref_alt_alleles(gt, record.alts)
-                alt_allele == "*" && continue
+                if alt_allele == "*"
+                    @warn "Unexpected * allele in CANN annotation at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
+                    continue
+                end
                 entry = build_cann_string(record.ref, alt_allele, v, annotation)
                 strain_map = get!(alt_strain_entries, alt_allele, Dict{String, Vector{String}}())
                 push!(get!(strain_map, v.strain, String[]), entry)
@@ -1719,7 +1725,10 @@ function handle_variant_record!(
     # Write one VCF cache entry per unique alt.
     n_orig_alts = length(record.alts)
     for (alt_i, alt) in enumerate(record.alts)
-        alt == "*" && continue  # spanning deletion placeholder from bcftools norm -a
+        if alt == "*"
+            @warn "Unexpected * allele in VCF cache write at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
+            continue
+        end
         haskey(alt_cann_entries, alt) || continue
 
         coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])

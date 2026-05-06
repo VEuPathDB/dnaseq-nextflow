@@ -21,7 +21,7 @@ process freebayes {
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
-      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | fixStarAlleles.py | bcftools sort | bcftools view -e 'GT="0/0"' > freebayes.vcf
+      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | mergeVariantsByLocation.py | bcftools sort | bcftools view -e 'GT="0/0"' | bcftools filter -e 'RPP > 20' > freebayes.vcf
 
     bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
     bcftools norm -m- freebayes.vcf | \\
