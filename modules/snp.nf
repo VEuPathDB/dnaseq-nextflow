@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-process freebayes {
+process runFreebayes {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
@@ -9,7 +9,7 @@ process freebayes {
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
+    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi")
 
   script:
     """
@@ -21,10 +21,37 @@ process freebayes {
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
-      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | mergeVariantsByLocation.py | bcftools sort | bcftools view -e 'GT="0/0"' | bcftools filter -e 'RPP > 20' > freebayes.vcf
+      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | mergeVariantsByLocation.py | bcftools sort > freebayes.vcf
 
-    bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
-    bcftools norm -m- freebayes.vcf | \\
+    bgzip freebayes.vcf
+    mv freebayes.vcf.gz ${sampleName}.vcf.gz
+    tabix -fp vcf ${sampleName}.vcf.gz
+    """
+
+  stub:
+    """
+    touch ${sampleName}.vcf.gz
+    touch ${sampleName}.vcf.gz.tbi
+    """
+}
+
+process filterAndSplitVcf {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  input:
+    tuple val(sampleName), path(rawVcfGz), path(rawVcfGzTbi)
+
+  output:
+    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
+
+  script:
+    """
+    set -euo pipefail
+
+    bcftools view -e 'GT="0/0"' $rawVcfGz | bcftools filter -e 'RPP > 20' > filtered.vcf
+
+    bcftools view -v snps filtered.vcf > freebayes.snps.vcf
+    bcftools norm -m- filtered.vcf | \\
       bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<" && ALT!="*"' > freebayes.indels.vcf
 
     bgzip freebayes.snps.vcf
@@ -32,8 +59,8 @@ process freebayes {
     bgzip freebayes.indels.vcf
     tabix -fp vcf freebayes.indels.vcf.gz
 
-    bgzip freebayes.vcf
-    mv freebayes.vcf.gz ${sampleName}.vcf.gz
+    bgzip filtered.vcf
+    mv filtered.vcf.gz ${sampleName}.vcf.gz
     tabix -fp vcf ${sampleName}.vcf.gz
     """
 

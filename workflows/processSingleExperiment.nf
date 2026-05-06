@@ -17,7 +17,8 @@ include { bedtoolsGenomecovStats } from '../modules/alignment.nf'
 include { mergeAlignmentStats } from '../modules/alignment.nf'
 
 // SNP
-include { freebayes } from '../modules/snp.nf'
+include { runFreebayes } from '../modules/snp.nf'
+include { filterAndSplitVcf } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
 include { mergeVcfs } from '../modules/snp.nf'
 include { makeMergedVariantIndex } from '../modules/snp.nf'
@@ -85,7 +86,8 @@ workflow ps {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
+    rawVcf = runFreebayes(gatkResults.bamTuple, reorderFastaResults)
+    freebayesResults = filterAndSplitVcf(rawVcf)
 
     // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
     combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
