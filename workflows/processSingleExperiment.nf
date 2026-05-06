@@ -88,12 +88,12 @@ workflow ps {
     rawVcf = runFreebayes(gatkResults.bamTuple, reorderFastaResults)
     freebayesResults = filterAndSplitVcf(rawVcf)
 
-    filteredVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
-        tuple(sampleName, vcfGz, vcfGzTbi)
+    filteredVcf = freebayesResults.vcf_files.map { sampleName, filteredVcfGz, filteredVcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+        tuple(sampleName, filteredVcfGz, filteredVcfGzTbi)
     }
 
     // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
-    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, filteredVcfGz, filteredVcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
     }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
@@ -133,7 +133,7 @@ workflow ps {
 
     if (params.ploidy != 1) {
 
-      snpsVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+      snpsVcf = freebayesResults.vcf_files.map { sampleName, filteredVcfGz, filteredVcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
         tuple(sampleName, snpsVcfGz, snpsVcfGzTbi)
       }
 
