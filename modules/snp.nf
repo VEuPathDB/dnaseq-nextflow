@@ -21,7 +21,7 @@ process runFreebayes {
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
-      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta -a | mergeVariantsByLocation.py | bcftools sort > freebayes.vcf
+      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta | bcftools sort > freebayes.vcf
 
     bgzip freebayes.vcf
     mv freebayes.vcf.gz ${sampleName}.vcf.gz
