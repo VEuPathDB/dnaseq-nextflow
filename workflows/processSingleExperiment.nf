@@ -20,7 +20,6 @@ include { mergeAlignmentStats } from '../modules/alignment.nf'
 include { runFreebayes } from '../modules/snp.nf'
 include { filterAndSplitVcf } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
-include { sanitizeVcf } from '../modules/snp.nf'
 include { makeCoverageBed } from '../modules/snp.nf'
 include { makeConsensusFromVcfAndBed } from '../modules/snp.nf'
 
@@ -88,20 +87,18 @@ workflow ps {
     rawVcf = runFreebayes(gatkResults.bamTuple, reorderFastaResults)
     freebayesResults = filterAndSplitVcf(rawVcf)
 
-    filteredVcf = freebayesResults.vcf_files.map { sampleName, filteredVcfGz, filteredVcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
-        tuple(sampleName, filteredVcfGz, filteredVcfGzTbi)
-    }
-
-    // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
-    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, filteredVcfGz, filteredVcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
     }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
-    sanitizeVcfResults = sanitizeVcf(filteredVcf)
-
     coverageBedResults = makeCoverageBed(gatkResults.bamTuple)
 
-    makeConsensusFromVcfAndBed(sanitizeVcfResults.join(coverageBedResults), reorderFastaResults)
+    makeConsensusFromVcfAndBed(
+        freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
+            tuple(sampleName, consensusVcfGz, consensusVcfGzTbi)
+        }.join(coverageBedResults),
+        reorderFastaResults
+    )
 
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
@@ -127,13 +124,18 @@ workflow ps {
     // CONVERT bed to bw here
 
     
-    makeSnpDensityResults = makeSnpDensity(freebayesResults.vcf_files, makeWindowFileResults)
+    makeSnpDensityResults = makeSnpDensity(
+        freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
+            tuple(sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi)
+        },
+        makeWindowFileResults
+    )
 
     makeDensityBigwigsResults = makeDensityBigwigs(makeSnpDensityResults, reorderFastaResults)
 
     if (params.ploidy != 1) {
 
-      snpsVcf = freebayesResults.vcf_files.map { sampleName, filteredVcfGz, filteredVcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+      snpsVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
         tuple(sampleName, snpsVcfGz, snpsVcfGzTbi)
       }
 
