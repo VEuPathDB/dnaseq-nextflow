@@ -704,3 +704,48 @@ def test_product_dat_downstream_of_frameshift_binary(work_dirs):
     rows = _read_product(work_dirs)
     bad = [i + 1 for i, r in enumerate(rows) if r[7] not in ('0', '1')]
     assert not bad, f"Rows with downstream_of_frameshift not 0/1 (col 8): {bad[:5]}"
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: snpEff — merged.ann.vcf.gz
+# ---------------------------------------------------------------------------
+
+def test_ann_vcf_exists(work_dirs):
+    path = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    assert os.path.exists(path)
+    assert os.path.exists(path + '.tbi')
+
+
+def test_ann_vcf_is_valid(work_dirs):
+    path = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    assert bcftools_is_valid(path)
+
+
+def test_ann_vcf_has_ann_header(work_dirs):
+    path = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    header = bcftools_header(path)
+    assert '##INFO=<ID=ANN' in header, "Missing snpEff ANN INFO header"
+
+
+def test_ann_vcf_has_cann_header(work_dirs):
+    path = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    header = bcftools_header(path)
+    assert '##INFO=<ID=CANN' in header, "Missing CANN INFO header (should carry through from processSeqVars)"
+    assert '##FORMAT=<ID=CA' in header
+    assert '##FORMAT=<ID=DFS' in header
+
+
+def test_ann_vcf_all_records_have_ann(work_dirs):
+    path = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    values = bcftools_query_info(path, 'ANN')
+    missing = [i + 1 for i, v in enumerate(values) if not v or v == '.']
+    assert not missing, f"Records missing ANN at positions: {missing[:5]}"
+
+
+def test_ann_vcf_has_some_cann_values(work_dirs):
+    """CANN is only present on coding variants. Verify at least some records
+    carry the CANN annotation (header presence verified separately)."""
+    path = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    values = bcftools_query_info(path, 'CANN')
+    annotated = [v for v in values if v and v != '.']
+    assert len(annotated) > 0, "No records have CANN in merged.ann.vcf.gz"
