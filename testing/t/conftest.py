@@ -4,7 +4,7 @@ import pytest
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--run-dir", required=True,
+        "--run-dir", required=False, default=None,
         help="Nextflow launch directory containing a completed mergeExperiments run"
     )
 
@@ -17,6 +17,9 @@ def run_dir(request):
 @pytest.fixture(scope="session")
 def work_dirs(run_dir):
     """Return dict mapping short process name -> work dir path for the most recent run."""
+    if run_dir is None:
+        pytest.skip("--run-dir not provided; skipping mergeExperiments E2E tests")
+
     r = subprocess.run(
         "nextflow log | tail -n1 | cut -f3",
         shell=True, cwd=run_dir, capture_output=True, text=True, check=True
@@ -34,5 +37,7 @@ def work_dirs(run_dir):
         if len(parts) != 2:
             continue
         process_name = parts[0].strip().split(':')[-1]
+        if process_name in dirs:
+            raise ValueError(f"Duplicate process name '{process_name}' in nextflow log output. Each process must run exactly once.")
         dirs[process_name] = parts[1].strip()
     return dirs
