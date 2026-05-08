@@ -17,14 +17,11 @@ include { bedtoolsGenomecovStats } from '../modules/alignment.nf'
 include { mergeAlignmentStats } from '../modules/alignment.nf'
 
 // SNP
-include { freebayes } from '../modules/snp.nf'
+include { runFreebayes } from '../modules/snp.nf'
+include { filterAndSplitVcf } from '../modules/snp.nf'
 include { makeIndelTSV } from '../modules/snp.nf'
-include { mergeVcfs } from '../modules/snp.nf'
-include { makeMergedVariantIndex } from '../modules/snp.nf'
-include { bcftoolsConsensusAndMask } from '../modules/snp.nf'
-include { addSampleToDefline } from '../modules/snp.nf'
-include { bcftoolsMpileupGvcf } from '../modules/snp.nf'
-include { mergeGvcfs } from '../modules/snp.nf'
+include { makeCoverageBed } from '../modules/snp.nf'
+include { makeConsensusFromVcfAndBed } from '../modules/snp.nf'
 
 // CNV
 include { genomecov } from '../modules/cnv.nf'
@@ -39,6 +36,7 @@ include { bedtoolsWindowed } from '../modules/cnv.nf'
 include { normaliseCoverage } from '../modules/cnv.nf'
 include { makeSnpDensity } from '../modules/cnv.nf'
 include { makeDensityBigwigs } from '../modules/cnv.nf'
+include { convertFreebayesToVarscanFormat } from '../modules/cnv.nf'
 include { getHeterozygousSNPs } from '../modules/cnv.nf'
 include { makeHeterozygousDensityBed } from '../modules/cnv.nf'
 include { makeHeterozygousDensityBigwig } from '../modules/cnv.nf'
@@ -86,34 +84,22 @@ workflow ps {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    freebayesResults = freebayes(gatkResults.bamTuple, reorderFastaResults)
+    rawVcf = runFreebayes(gatkResults.bamTuple, reorderFastaResults)
+    freebayesResults = filterAndSplitVcf(rawVcf)
 
-    // Extract the per-sample unfiltered VCF (sampleName, vcf.gz, vcf.gz.tbi) for downstream use
-    combinedVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
-        tuple(sampleName, vcfGz, vcfGzTbi)
-    }
-
-    // Feed the indels VCF produced by freebayes directly, bypassing the former filterIndels step
-    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi ->
+    makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
     }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
 
-    // NOTE:  Must ensure the order here is consistent for the vcf files and their indexes;  the lists of paths are each sorted
-    mergeVcfsResults = mergeVcfs(combinedVcf.count(), combinedVcf.map{ tuple it[1], it[2], "key" }.groupTuple(by: 2, sort: { a, b -> a <=> b } ))
+    coverageBedResults = makeCoverageBed(gatkResults.bamTuple)
 
-    makeMergedVariantIndexResults = makeMergedVariantIndex(mergeVcfsResults)
-
-    bcftoolsConsensusAndMaskResults = bcftoolsConsensusAndMask(combinedVcf, reorderFastaResults, gatkResults.bamFiles.collect())
-
-    addSampleToDefline(bcftoolsConsensusAndMaskResults)
-
-    mpileupGvcfResults = bcftoolsMpileupGvcf(gatkResults.bamTuple, reorderFastaResults)
-
-    mergeGvcfs(
-        mpileupGvcfResults.count(),
-        mpileupGvcfResults.map { sampleName, gvcfGz, gvcfGzTbi -> tuple(gvcfGz, gvcfGzTbi, "key") }
-            .groupTuple(by: 2, sort: { a, b -> a <=> b })
+    makeConsensusFromVcfAndBed(
+        freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
+            tuple(sampleName, consensusVcfGz, consensusVcfGzTbi)
+        }.join(coverageBedResults),
+        reorderFastaResults
     )
+
 
     genomecovResults = genomecov(gatkResults.bamTuple, reorderFastaResults)
 
@@ -125,26 +111,37 @@ workflow ps {
 
     calculateTPMResults = calculateTPM(htseqCountResults, params.footprintFile)
 
-    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.taxonId, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
+    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
     bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults.bamTuple)
 
-    normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults.join(picardResults.metrics))
+    normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults, params.chrsForCalcFile, params.ploidy)
 
     normaliseCoverageToBigWigResults = normaliseCoverageToBigWig(reorderFastaResults, normaliseCoverageResults)
 
     // CONVERT bed to bw here
 
     
-    makeSnpDensityResults = makeSnpDensity(freebayesResults.vcf_files, makeWindowFileResults)
+    makeSnpDensityResults = makeSnpDensity(
+        freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
+            tuple(sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi)
+        },
+        makeWindowFileResults
+    )
 
     makeDensityBigwigsResults = makeDensityBigwigs(makeSnpDensityResults, reorderFastaResults)
 
     if (params.ploidy != 1) {
 
-      getHeterozygousSNPsResults = getHeterozygousSNPs(freebayesResults.vcf_files)
+      snpsVcf = freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
+        tuple(sampleName, snpsVcfGz, snpsVcfGzTbi)
+      }
+
+      convertedSnpsVcf = convertFreebayesToVarscanFormat(snpsVcf)
+
+      getHeterozygousSNPsResults = getHeterozygousSNPs(convertedSnpsVcf)
 
       makeHeterozygousDensityBedResults = makeHeterozygousDensityBed(makeWindowFileResults, getHeterozygousSNPsResults)
 

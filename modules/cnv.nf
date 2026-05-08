@@ -49,7 +49,7 @@ process bedGraphToBigWig {
 
     stub:
     """
-    touch coverage.bw
+    touch ${sampleName}.bw
     """
 }
 
@@ -151,7 +151,7 @@ process calculateTPM {
 
   stub:
     """
-    touch tpm.txt
+    touch out.tpm
     """
 
 }
@@ -216,7 +216,9 @@ process normaliseCoverage {
   //publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
   input:
-    tuple val(sampleName), path(windowedCoverage), path(summaryMetrics)
+    tuple val(sampleName), path(windowedCoverage)
+    path chrsForCalcsFile
+    val ploidy
 
   output:
     tuple val(sampleName), path('normalisedCoverage.bed')
@@ -224,10 +226,11 @@ process normaliseCoverage {
   script:
     """
     set -euo pipefail
-    # NOTE final processing requires querying the DB so can stay in ReFlow
-    normaliseCoverageCNV.pl \\
-      --bedFile $windowedCoverage \\
-      --summaryMetrics $summaryMetrics
+    
+    makeNormalisedCoverageTrack.pl \\
+      --coverageFile $windowedCoverage \\
+      --chromosomes $chrsForCalcsFile \\
+      --ploidy $ploidy
     """
 
   stub:
@@ -301,7 +304,7 @@ process getHeterozygousSNPs {
   container 'veupathdb/vcf_parser_cnv:1.0.0'
 
   input:
-    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi)
 
   output:
     tuple val(sampleName), path('heterozygousSNPs.vcf')
@@ -370,6 +373,28 @@ process makeHeterozygousDensityBigwig {
     """
 }
 
+process convertFreebayesToVarscanFormat {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  input:
+    tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi)
+
+  output:
+    tuple val(sampleName), path('snps.varscan.vcf.gz'), path('snps.varscan.vcf.gz.tbi')
+
+  script:
+    """
+    set -euo pipefail
+    convertFreebayesToVarscanFormat.py --vcfFile $snpsVcfGz | bgzip > snps.varscan.vcf.gz
+    tabix -p vcf snps.varscan.vcf.gz
+    """
+
+  stub:
+    """
+    touch snps.varscan.vcf.gz snps.varscan.vcf.gz.tbi
+    """
+}
+
 process calculatePloidyAndGeneCNV {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
@@ -379,7 +404,6 @@ process calculatePloidyAndGeneCNV {
     tuple val(sampleName), path(sampleFile)
     path footprints
     val ploidy
-    val taxonId
     path geneSourceIdOrtholog
     path chrsForCalc
 
@@ -396,7 +420,6 @@ process calculatePloidyAndGeneCNV {
         --outputDir . \\
         --fpkmFile $sampleFile \\
         --sampleName $sampleName \\
-        --taxonId  $taxonId \\
         --geneFootprints $footprints \\
         --ploidy $ploidy \\
         --chrsForCalcsFile $chrsForCalc
@@ -406,7 +429,6 @@ process calculatePloidyAndGeneCNV {
         --ploidy $ploidy \\
         --outputDir . \\
         --sampleName $sampleName \\
-        --taxonId $taxonId \\
         --geneFootPrints $footprints \\
         --geneSourceIdOrthologFile $geneSourceIdOrtholog \\
         --chrsForCalcsFile $chrsForCalc

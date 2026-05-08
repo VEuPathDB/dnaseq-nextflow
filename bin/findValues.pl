@@ -3,31 +3,40 @@
 use strict;
 use Getopt::Long;
 
-# Creating Variable
-my ($vcfFile,$outputFile,$sample,$refPos,$shift_count,$refAllele,$altAllele, $refLen, $altLen);
+my ($vcfFile, $outputFile, $sample);
 
-# Creating Arguments
-&GetOptions("vcfFile|i=s" => \$vcfFile,
-            "outputFile|o=s" => \$outputFile,
-	    "sample|s=s" => \$sample,
-           );
+GetOptions(
+    "vcfFile|i=s"  => \$vcfFile,
+    "outputFile|o=s" => \$outputFile,
+    "sample|s=s"   => \$sample,
+);
 
-# Opening outputFile
-open(O,">$outputFile");
+open(O, ">$outputFile") or die "Cannot open $outputFile: $!";
+open(I, "zcat $vcfFile |") or die "Unable to open $vcfFile";
 
-# Starting output fasta file with defline. Retrieving total length of sequence.
-open(I,"zcat $vcfFile |") || die "Unable to open $vcfFile";
+while (<I>) {
+    next if /^#/;
 
-while(<I>){
-    if (/^(.+)\t(\d+)\t\.\t(\w+)\t(\w+)/) {
-        $refPos = $2;
-	$refAllele = $3;
-	$altAllele = $4;
-	$refLen = length($refAllele);
-	$altLen = length($altAllele);
-	$shift_count = $altLen - $refLen;
-	print O "$sample\t$1\t$2\t$shift_count\n";
-    }
+    # Require simple (non-symbolic) REF and ALT alleles
+    next unless /^(.+)\t(\d+)\t\.\t(\w+)\t(\w+)\t[^\t]+\t[^\t]+\t[^\t]+\t([^\t]+)\t(\S+)/;
+
+    my ($chrom, $pos, $ref, $alt, $format, $sample_data) = ($1, $2, $3, $4, $5, $6);
+
+    # Parse GT; skip heterozygous calls — they are masked as N×len(REF) in the
+    # consensus FASTA and therefore introduce no coordinate shift.
+    my @fmt_keys = split(/:/, $format);
+    my @fmt_vals = split(/:/, $sample_data);
+    my %fmt;
+    @fmt{@fmt_keys} = @fmt_vals;
+    my $gt = $fmt{GT} // next;
+
+    my @alleles = split(/[\/|]/, $gt);
+    my %uniq = map { $_ => 1 } @alleles;
+    next if keys(%uniq) > 1;   # heterozygous
+    next if $alleles[0] eq '0'; # homozygous ref
+
+    my $shift_count = length($alt) - length($ref);
+    print O "$sample\t$chrom\t$pos\t$shift_count\n";
 }
 
 close I;

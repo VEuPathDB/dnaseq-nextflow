@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-process freebayes {
+process runFreebayes {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
@@ -9,33 +9,85 @@ process freebayes {
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"), path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'), path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'), emit: vcf_files
+    tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi")
 
   script:
     """
     set -euo pipefail
 
-    # Run freebayes
+    minAltFraction=\$([ "$params.ploidy" -eq 1 ] && echo "0.8" || echo "0.3")
     freebayes \\
       -f $genomeReorderedFasta \\
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
-      --min-alternate-fraction $params.freebayesMinAltFraction \\
-      $resultSortedGatkBam > freebayes.vcf
+      --min-alternate-fraction \$minAltFraction \\
+      $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta | bcftools sort > freebayes.vcf
 
-    # Split into SNPs and indels for use in CNV
-    bcftools view -v snps freebayes.vcf > freebayes.snps.vcf
-    bcftools view -v indels freebayes.vcf > freebayes.indels.vcf
+    bgzip freebayes.vcf
+    mv freebayes.vcf.gz ${sampleName}.vcf.gz
+    tabix -fp vcf ${sampleName}.vcf.gz
+    """
 
-    # Compress and index split VCFs
-    bgzip freebayes.snps.vcf
-    tabix -fp vcf freebayes.snps.vcf.gz
+  stub:
+    """
+    touch ${sampleName}.vcf.gz
+    touch ${sampleName}.vcf.gz.tbi
+    """
+}
+
+// filterAndSplitVcf takes the raw complex VCF from runFreebayes and:
+//   - sanitizes (strips FreeBayes % artifacts)
+//   - produces consensus_input.vcf.gz: complex filtered, used for consensus FASTA generation
+//   - produces freebayes.indels.vcf.gz: indels extracted from complex VCF
+//   - produces ${sampleName}.vcf.gz: atomized+filtered, published for mergeExperiments
+//   - produces freebayes.snps.vcf.gz: SNPs extracted from atomized VCF
+process filterAndSplitVcf {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  publishDir "$params.outputDir", mode: "copy", pattern: "${sampleName}.vcf.gz*"
+
+  input:
+    tuple val(sampleName), path(rawVcfGz), path(rawVcfGzTbi)
+
+  output:
+    tuple val(sampleName),
+      path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi"),
+      path('freebayes.snps.vcf.gz'), path('freebayes.snps.vcf.gz.tbi'),
+      path('freebayes.indels.vcf.gz'), path('freebayes.indels.vcf.gz.tbi'),
+      path('consensus_input.vcf.gz'), path('consensus_input.vcf.gz.tbi'),
+      emit: vcf_files
+
+  script:
+    """
+    set -euo pipefail
+
+    # Sanitize: strip FreeBayes % artifacts
+    bgzip -d -c $rawVcfGz | sed 's/%//g' > sanitized.vcf
+
+    # Filter: drop hom-ref calls and high strand-bias
+    bcftools view -e 'GT="0/0"' sanitized.vcf | bcftools filter -e 'RPP > 20' > complex_filtered.vcf
+
+    # Consensus input: complex filtered (preserves complex variants for accurate FASTA)
+    bgzip -c complex_filtered.vcf > consensus_input.vcf.gz
+    tabix -fp vcf consensus_input.vcf.gz
+
+    # Indels from complex VCF (correctly represents deletion component of complex variants)
+    bcftools norm -m- complex_filtered.vcf | \\
+      bcftools view --include 'strlen(ALT)!=strlen(REF) && ALT!~"^<" && ALT!="*"' > freebayes.indels.vcf
     bgzip freebayes.indels.vcf
     tabix -fp vcf freebayes.indels.vcf.gz
 
-    # Compress and index unfiltered VCF; name by sample so files are unique when merged across samples
-    bgzip freebayes.vcf
-    mv freebayes.vcf.gz ${sampleName}.vcf.gz
+    # Atomize for mergeExperiments (single line per SNP across samples)
+    bcftools norm -a complex_filtered.vcf | mergeVariantsByLocation.py | bcftools sort > atomized_filtered.vcf
+
+    # SNPs from atomized
+    bcftools view -v snps atomized_filtered.vcf > freebayes.snps.vcf
+    bgzip freebayes.snps.vcf
+    tabix -fp vcf freebayes.snps.vcf.gz
+
+    # Published per-sample VCF: atomized, for mergeExperiments
+    bgzip atomized_filtered.vcf
+    mv atomized_filtered.vcf.gz ${sampleName}.vcf.gz
     tabix -fp vcf ${sampleName}.vcf.gz
     """
 
@@ -47,7 +99,8 @@ process freebayes {
     touch freebayes.snps.vcf.gz.tbi
     touch freebayes.indels.vcf.gz
     touch freebayes.indels.vcf.gz.tbi
-    touch ${sampleName}.coverage.txt
+    touch consensus_input.vcf.gz
+    touch consensus_input.vcf.gz.tbi
     """
 }
 
@@ -77,183 +130,60 @@ process makeIndelTSV {
 }
 
 
-process mergeVcfs {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
-
-  input:
-    val vcfCount
-    tuple path(samplevcfzip), path(samplevcfzipindex), val(key)
-
-  output:
-    path('result.vcf.gz')
-
-  script:
-    """
-    set -euo pipefail
-
-    if [ $vcfCount -gt 1 ]; then
-        bcftools merge -o result.vcf.gz -O z *.vcf.gz
-    else
-        cp *.vcf.gz result.vcf.gz
-    fi
-    """
-
-  stub:
-    """
-    touch result.vcf.gz
-    """
-
-}
-
-process makeMergedVariantIndex {
+process makeCoverageBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
-
-  input:
-    path(resultVcfGz)
-
-  output:
-    tuple path('result.vcf.gz'), path('result.vcf.gz.tbi')
-
-  script:
-    """
-    set -euo pipefail
-    cp $resultVcfGz hold.vcf.gz
-    gunzip hold.vcf.gz
-    sed -i 's/\\%//g' hold.vcf
-    bgzip hold.vcf
-    mv hold.vcf.gz result.vcf.gz
-    tabix -fp vcf result.vcf.gz
-    """
-
-  stub:
-    """
-    touch result.vcf.gz
-    touch result.vcf.gz.tbi
-    """
-
-}
-
-process bcftoolsMpileupGvcf {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
   input:
     tuple val(sampleName), path(bamFile), path(bamIndex)
-    tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.g.vcf.gz"), path("${sampleName}.g.vcf.gz.tbi")
+    tuple val(sampleName), path("${sampleName}.coverage.bed.gz")
 
   script:
     """
     set -euo pipefail
-    bcftools mpileup \\
-      --gvcf $params.minCoverage \\
-      -f $genomeReorderedFasta \\
-      -O z \\
-      -o ${sampleName}.g.vcf.gz \\
-      $bamFile
-    bcftools index -t ${sampleName}.g.vcf.gz
+    bedtools genomecov -ibam $bamFile -bga \\
+      | awk -v mc=$params.minCoverage '\$4 >= mc' \\
+      | bedtools merge -c 4 -o mean \\
+      | bgzip > ${sampleName}.coverage.bed.gz
     """
 
   stub:
     """
-    touch ${sampleName}.g.vcf.gz
-    touch ${sampleName}.g.vcf.gz.tbi
+    touch ${sampleName}.coverage.bed.gz
     """
 }
 
-process mergeGvcfs {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
+
+process makeConsensusFromVcfAndBed {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   publishDir "$params.outputDir", mode: "copy"
 
   input:
-    val gvcfCount
-    tuple path(gvcfFiles), path(gvcfIndexes), val(key)
-
-  output:
-    tuple path('coverage.g.vcf.gz'), path('coverage.g.vcf.gz.tbi')
-
-  script:
-    """
-    set -euo pipefail
-    if [ $gvcfCount -gt 1 ]; then
-        bcftools merge -O z -o coverage.g.vcf.gz *.g.vcf.gz
-    else
-        cp *.g.vcf.gz coverage.g.vcf.gz
-    fi
-    bcftools index -t coverage.g.vcf.gz
-    """
-
-  stub:
-    """
-    touch coverage.g.vcf.gz
-    touch coverage.g.vcf.gz.tbi
-    """
-}
-
-process bcftoolsConsensusAndMask {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
-
-  input:
-    tuple val(sampleName), path(concatVcfGz), path(concatVcfGzTbi)
+    tuple val(sampleName), path(vcfGz), path(vcfGzTbi), path(coverageBed)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
-    path(bamFile)
 
   output:
-    tuple val(sampleName), path('cons_masked.fa')
+    path "${sampleName}_consensus.fa.gz"
 
   script:
     """
     set -euo pipefail
-
-    bcftools consensus \\
-      -I \\
-      -f $genomeReorderedFasta $concatVcfGz > cons.fa
-
-    samtools mpileup -f cons.fa -A -B ${sampleName}.bam > temp.pileup
-
-    # Index the unmasked consensus
-    samtools faidx cons.fa
-
-    maskGenome.pl -p temp.pileup -f cons.fa.fai -dc $params.minCoverage -o masked.fa
-    fold -w 60 masked.fa > cons_masked.fa
-    rm temp.pileup
+    makeConsensusFastaFromVcfAndBed.py \\
+      --vcf $vcfGz \\
+      --bed $coverageBed \\
+      --ref $genomeReorderedFasta \\
+      --fai $genomeReorderedFastaIndex \\
+      --output consensus.fa
+    bgzip consensus.fa
+    mv consensus.fa.gz ${sampleName}_consensus.fa.gz
     """
 
   stub:
     """
-    touch cons_masked.fa
+    touch ${sampleName}_consensus.fa.gz
     """
-
-}
-
-process addSampleToDefline {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
-
-  publishDir "$params.outputDir", mode: "copy", saveAs: { filename -> "${sampleName}_consensus.fa.gz" }
-
-  input:
-  tuple val(sampleName), path(consFasta)
-
-  output:
-    path 'unique_ids.fa.gz'
-
-  script:
-    """
-    set -euo pipefail
-    addSampleToDefline.pl \\
-         -i $consFasta \\
-         -o unique_ids.fa \\
-         -s $sampleName
-    gzip unique_ids.fa
-    """
-
-  stub:
-    """
-    touch unique_ids.fa.gz
-    """
-
 }

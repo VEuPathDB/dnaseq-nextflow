@@ -25,10 +25,9 @@ process checkUniqueIds {
 
 process mergeVcfs {
   container 'veupathdb/dnaseqanalysis:1.0.0'
-  publishDir "$params.outputDir", mode: "copy", pattern: 'merged.vcf.gz'
 
   input:
-    path '*.vcf.gz'
+    path "*.vcf.gz"
 
   output:
     path 'merged.vcf.gz'
@@ -37,71 +36,133 @@ process mergeVcfs {
     """
     set -euo pipefail
 
-    for i in *.vcf.gz; do cp \$i \$i.tmp.vcf.gz; gunzip \$i.tmp.vcf.gz; bgzip \$i.tmp.vcf; cp \$i.tmp.vcf.gz \$i; rm \$i.tmp.vcf.gz; tabix \$i; done
-    bcftools merge \\
-          -o merged.vcf.gz \\
-          -O z *.vcf.gz
-    cp merged.vcf.gz merge.vcf.gz
-    gunzip merge.vcf.gz
-    sed -i 's/\\%//g' merge.vcf
-    mv merge.vcf merged.vcf
+    for vcf in *.vcf.gz; do bcftools index --tbi \$vcf; done
+    bcftools merge --merge all -O z -o merged.vcf.gz *.vcf.gz
     """
 
   stub:
     """
     touch merged.vcf.gz
-    touch merged.vcf
     """
 }
 
 
-process makeSnpFile {
+
+process mergeCoverageBeds {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
-    path 'merged.vcf.gz'
+    path coverageBeds
 
-  output: 
-    path 'snpFile.tsv', emit: snpFile
+  output:
+    path 'coverage.tsv'
 
   script:
     """
-    cp merged.vcf.gz hold.vcf.gz
-    gunzip hold.vcf.gz
-    perl /usr/bin/makeSnpFile.pl --vcf hold.vcf --output snpFile.tsv
+    set -euo pipefail
+    files=( $coverageBeds )
+    names=()
+    for f in "\${files[@]}"; do
+      names+=( "\$(basename "\$f" .coverage.bed.gz)" )
+    done
+    header="chrom\tstart\tend\t\$(IFS='\t'; echo "\${names[*]}")"
+    echo -e "\$header" > coverage.tsv
+    bedtools unionbedg -names "\${names[@]}" -filler 0 -i "\${files[@]}" >> coverage.tsv
     """
 
   stub:
     """
-    touch snpFile.tsv
+    touch coverage.tsv
+    """
+}
+
+
+process makeCodingData {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  input:
+    path fastas
+    path genomicIndelDb
+    path gtfFile
+    path genomeFastaFile
+
+  output:
+    path 'codingSequences.db', emit: codingSequencesDb
+    path 'codingIndels.db',    emit: codingIndelsDb
+
+  script:
+    """
+    set -euo pipefail
+    makeCodingData.jl \\
+      --genomic_indel_db $genomicIndelDb \\
+      --gtf_file $gtfFile \\
+      --genome_fasta $genomeFastaFile \\
+      --cds_db_out codingSequences.db \\
+      --indels_db_out codingIndels.db
+    """
+
+  stub:
+    """
+    touch codingSequences.db
+    touch codingIndels.db
+    """
+}
+
+
+process makeGenomicIndelDb {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
+
+  input:
+    path 'indels.tsv'
+
+  output:
+    path 'genomicIndels.db'
+
+  script:
+    """
+    set -euo pipefail
+    sqlite3 genomicIndels.db <<'SQL'
+CREATE TABLE genomic_indels (
+  strain      TEXT    NOT NULL,
+  sequence_id TEXT    NOT NULL,
+  position    INTEGER NOT NULL,
+  shift       INTEGER NOT NULL
+);
+.separator "\\t"
+.import indels.tsv genomic_indels
+CREATE INDEX idx_genomic_indels ON genomic_indels(sequence_id, strain, position);
+SQL
+    """
+
+  stub:
+    """
+    touch genomicIndels.db
     """
 }
 
 
 process processSeqVars {
   container 'veupathdb/dnaseqanalysis:1.0.0'
-  publishDir "$params.cacheFileDir", mode: "copy", pattern: "$params.cacheFile"
+
+  publishDir "$params.outputDir", mode: "copy", pattern: 'output.vcf.gz', saveAs: { params.vcfCacheFile }
+  publishDir "$params.outputDir", mode: "copy", pattern: 'output.vcf.gz.tbi'
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
 
   input:
-    path snpFile
+    path vcfFile
     path cacheFile
     path undoneStrainsFile
-    val  organism_abbrev
     val  reference_strain
-    path coverageDir
-    path genomeFasta
-    path consensusFasta
-    path indelFile
+    path transcriptDb
+    path indelDb
     path gtfFile
-    path coverageComplete
-    path bigwigsComplete
-    path bamsComplete
+    path coverageFile
 
   output:
-    path cacheFile
+    path 'output.vcf.gz', emit: outputVcf
+    path 'output.vcf.gz.tbi', emit: outputVcfIndex
     path 'variationFeature.dat', emit: variationFile
     path 'allele.dat', emit: alleleFile
     path 'product.dat', emit: productFile
@@ -110,136 +171,29 @@ process processSeqVars {
     """
     set -euo pipefail
 
-    cp $consensusFasta unzipped.fa.gz;
-    gunzip unzipped.fa.gz;
-
-    perl /usr/bin/processSequenceVariationsNew.pl \\
-      --new_sample_file $snpFile \\
+    processSequenceVariations.jl \\
+      --vcf_file $vcfFile \\
       --cache_file $cacheFile \\
       --undone_strains_file $undoneStrainsFile \\
-      --organism_abbrev $organism_abbrev \\
-      --reference_strain $reference_strain  \\
-      --coverage_directory $coverageDir \\
-      --genome $genomeFasta \\
-      --consensus unzipped.fa \\
-      --indelFile $indelFile \\
-      --gtfFile $gtfFile
+      --reference_strain $reference_strain \\
+      --transcript_db $transcriptDb \\
+      --indel_db $indelDb \\
+      --gtf_file $gtfFile \\
+      --coverage_file $coverageFile \\
+      --output_vcf output.vcf
 
     mv snpFeature.dat variationFeature.dat
+    bgzip output.vcf
+    tabix -p vcf output.vcf.gz
     """
 
   stub:
     """
-    touch cache.txt
-    touch snpFeature.dat
+    touch output.vcf.gz
+    touch output.vcf.gz.tbi
+    touch variationFeature.dat
     touch allele.dat
     touch product.dat
-    """
-}
-
-process addFeatureIdsToVariation {
-  publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeatureFinal.dat'
-
-  input:
-    path variationFile
-    path gusConfig
-
-  output:
-    path 'variationFeatureFinal.dat'
-
-  script:
-    """
-    set -euo pipefail
-    addFeatureIdsToVariation.pl \\
-         --variationFile $variationFile \\
-         --gusConfig $gusConfig
-    """
-
-  stub:
-    """
-    touch variationFeatureFinal.dat
-    """
-}
-
-process insertVariation {
-  tag "plugin"
-
-  input:
-    val extDbRlsSpec
-    path variationFile
-
-  output:
-    stdout
-
-  script:
-    """
-    set -euo pipefail
-
-    ga ApiCommonData::Load::Plugin::InsertVariant \\
-      --extDbRlsSpec '$extDbRlsSpec' \\
-      --variantFile '$variationFile' \\
-      --commit
-
-    echo "DONE"
-    """
-
-  stub:
-    """
-    echo "insert variation"
-    """
-}
-
-
-process insertProduct {
-  tag "plugin"
-
-  input:
-    path productFile
-
-  output:
-    stdout
-
-  script:
-    """
-    set -euo pipefail
-
-    ga ApiCommonData::Load::Plugin::InsertVariantProductSummary \\
-      --variantProductFile '$productFile' \\
-      --commit
-
-    echo "DONE"
-    """
-
-  stub:
-    """
-    echo "insert product"
-    """
-}
-
-
-process insertAllele {
-  tag "plugin"
-
-  input:
-    path alleleFile
-
-  output:
-    stdout
-
-  script:
-    """
-    set -euo pipefail
-
-    ga ApiCommonData::Load::Plugin::InsertVariantAlleleSummary \\
-      --variantAlleleFile '$alleleFile' \\
-      --commit
-
-    echo "DONE"
-    """
-
-  stub:
-    """
-    echo "insert allele"
     """
 }
 
@@ -254,7 +208,8 @@ process snpEff {
     path sequencesFa
 
   output:
-    path 'merged.ann.vcf'
+    path 'merged.ann.vcf.gz'
+    path 'merged.ann.vcf.gz.tbi'
 
   script:
     """
@@ -265,11 +220,13 @@ process snpEff {
     gzip -f genome/sequences.fa
     cp /usr/bin/snpEff/snpEff.config .
     java -jar /usr/bin/snpEff/snpEff.jar build -gtf22 -noCheckCds -noCheckProtein -v genome
-    java -Xmx4g -jar /usr/bin/snpEff/snpEff.jar genome $mergedVcf > merged.ann.vcf
+    java -Xmx4g -jar /usr/bin/snpEff/snpEff.jar -no-downstream -no-upstream genome $mergedVcf > merged.ann.vcf
+    bgzip merged.ann.vcf
+    tabix -p vcf merged.ann.vcf.gz
     """
 
   stub:
     """
-    touch merged.ann.vcf
+    touch merged.ann.vcf.gz merged.ann.vcf.gz.tbi
     """
 }

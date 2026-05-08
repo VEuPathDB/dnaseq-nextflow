@@ -15,13 +15,13 @@ process bwaIndex {
     """
     set -euo pipefail
     cp $genomeFasta genomeIndex
-    bwa index genomeIndex
+    bwa-mem2 index genomeIndex
     samtools faidx $genomeFasta
     """
 
   stub:
     """
-    touch genomeIndex.amb genomeIndex.ann genomeIndex.bwt genomeIndex.pac genomeIndex.sa
+    touch genomeIndex.amb genomeIndex.ann genomeIndex.bwt.2bit.64 genomeIndex.pac genomeIndex.0123
     """
 }
 
@@ -41,7 +41,7 @@ process bwaMem {
       set -euo pipefail
 
       if [ "$isPaired" = true ]; then
-          bwa mem \\
+          bwa-mem2 mem \\
               -t $params.bwaThreads \\
               -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
               genomeIndex \\
@@ -52,7 +52,7 @@ process bwaMem {
               samtools sort -o sort.bam fix.bam
               samtools markdup -r sort.bam result_sorted.bam
       else
-          bwa mem \\
+          bwa-mem2 mem \\
               -t $params.bwaThreads \\
               -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
               genomeIndex \\
@@ -160,12 +160,14 @@ process gatk {
       -I $picardBam \\
       -R $genomeReorderedFasta \\
       -T RealignerTargetCreator \\
+      -allowPotentiallyMisencodedQuals \\
       -o forIndelRealigner.intervals 2>realaligner.err
     # Locally realign reads within the target intervals to produce a cleaner BAM
     java -jar \$JARPATH \\
       -I $picardBam \\
       -R $genomeReorderedFasta \\
       -T IndelRealigner -targetIntervals forIndelRealigner.intervals \\
+      -allowPotentiallyMisencodedQuals \\
       -o ${sampleName}.bam 2>indelRealigner.err
 
     mv ${sampleName}.bai ${sampleName}.bam.bai
@@ -173,8 +175,8 @@ process gatk {
 
   stub:
     """
-    touch result_sorted_gatk.bam
-    touch result_sorted_gatk.bai
+    touch ${sampleName}.bam
+    touch ${sampleName}.bam.bai
     """
 }
 
