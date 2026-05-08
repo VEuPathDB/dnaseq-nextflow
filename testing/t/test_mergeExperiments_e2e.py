@@ -146,9 +146,9 @@ def test_coverage_tsv_strain_columns_match_inputs(work_dirs):
 def test_coverage_tsv_column_count_consistent(work_dirs):
     path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
     with open(path) as f:
-        lines = f.readlines()
-    expected_cols = len(lines[0].split('\t'))
-    bad = [i + 2 for i, line in enumerate(lines[1:]) if len(line.split('\t')) != expected_cols]
+        expected_cols = len(f.readline().split('\t'))
+        bad = [i + 2 for i, line in enumerate(f, start=1)
+               if len(line.split('\t')) != expected_cols]
     assert not bad, f"Wrong column count on lines: {bad[:5]}"
 
 
@@ -304,24 +304,23 @@ def test_coding_sequences_non_empty(work_dirs):
 def test_coding_sequences_start_with_atg(work_dirs):
     path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
     with sqlite3.connect(path) as conn:
-        rows = conn.execute("SELECT strain, transcript_id, sequence FROM coding_sequences").fetchall()
-    bad = [(s, t) for s, t, seq in rows if not seq.upper().startswith('ATG')]
-    assert not bad, f"{len(bad)} sequences don't start with ATG: {bad[:3]}"
+        bad_count = conn.execute(
+            "SELECT COUNT(*) FROM coding_sequences "
+            "WHERE UPPER(SUBSTR(sequence, 1, 3)) != 'ATG'"
+        ).fetchone()[0]
+    assert bad_count == 0, f"{bad_count} sequences don't start with ATG"
 
 
 def test_coding_sequences_valid_characters(work_dirs):
-    """Sequences may contain standard IUPAC nucleotide characters including:
-    - ACGT: standard bases
-    - N: masked/unknown base
-    - X: het indel placeholder (non-IUPAC, pipeline-specific)
-    - RYSWKM: IUPAC ambiguity codes for heterozygous SNP positions
-    """
+    """Sequences may contain ACGT, IUPAC ambiguity codes (RYSWKM), N (masked),
+    and X (het indel placeholder)."""
     path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
     with sqlite3.connect(path) as conn:
-        rows = conn.execute("SELECT strain, transcript_id, sequence FROM coding_sequences").fetchall()
-    pattern = re.compile(r'^[ACGTRYSWKMNXacgtryswkmnx]+$')
-    bad = [(s, t) for s, t, seq in rows if not pattern.match(seq)]
-    assert not bad, f"{len(bad)} sequences contain invalid characters: {bad[:3]}"
+        bad_count = conn.execute(
+            "SELECT COUNT(*) FROM coding_sequences "
+            "WHERE sequence GLOB '*[^ACGTRYSWKMNXacgtryswkmnx]*'"
+        ).fetchone()[0]
+    assert bad_count == 0, f"{bad_count} sequences contain invalid characters"
 
 
 def test_coding_indels_db_exists(work_dirs):
@@ -516,7 +515,7 @@ def test_variation_feature_major_allele_count_positive(work_dirs):
 def test_variation_feature_distinct_strain_count_in_range(work_dirs):
     """distinct_strain_count (col 13) includes the reference strain as a separate variation,
     so the upper bound is N_vcf_samples + 1."""
-    vcf_path = os.path.join(work_dirs['processSeqVars'], 'merged.vcf.gz')
+    vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
     n_strains = len(bcftools_samples(vcf_path))
     rows = _read_variation_feature(work_dirs)
     bad = [
