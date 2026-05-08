@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 
 import pytest
 
@@ -219,23 +220,26 @@ def test_merged_vcf_sample_names_match_input_strains(work_dirs):
 
 def test_merged_vcf_mostly_nonref_gt(work_dirs):
     """Nearly all records should have at least one non-ref GT.
-
-    A small number of all-ref records can appear when all called samples are
-    ./. (missing) except one 0/0, which is valid FreeBayes output. Allow up
-    to 1% such records.
-    """
+    Allow ≤1% for records where all samples are ./. or 0/0 (valid FreeBayes output
+    at low-coverage sites)."""
     vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
     all_count = bcftools_record_count(vcf_path)
-    filtered_vcf = '/tmp/e2e_nonref_check.vcf.gz'
-    subprocess.run(
-        ['bcftools', 'view', '--min-ac', '1', '-O', 'z', '-o', filtered_vcf, vcf_path],
-        capture_output=True, check=True
-    )
-    subprocess.run(['bcftools', 'index', '-t', filtered_vcf], check=True)
-    nonref_count = bcftools_record_count(filtered_vcf)
-    all_ref_count = all_count - nonref_count
-    assert all_ref_count / all_count <= 0.01, \
-        f"{all_ref_count}/{all_count} records ({100*all_ref_count/all_count:.1f}%) have no non-ref GT"
+    with tempfile.NamedTemporaryFile(suffix='.vcf.gz', delete=False) as tmp:
+        filtered_vcf = tmp.name
+    try:
+        subprocess.run(
+            ['bcftools', 'view', '--min-ac', '1', '-O', 'z', '-o', filtered_vcf, vcf_path],
+            capture_output=True, check=True
+        )
+        subprocess.run(['bcftools', 'index', '-t', filtered_vcf], check=True)
+        nonref_count = bcftools_record_count(filtered_vcf)
+    finally:
+        for f in [filtered_vcf, filtered_vcf + '.tbi']:
+            if os.path.exists(f):
+                os.unlink(f)
+    tolerance = int(all_count * 0.01)
+    assert all_count - nonref_count <= tolerance, \
+        f"{all_count - nonref_count} records have no non-ref GT (>{tolerance} allowed, {all_count} total)"
 
 
 def test_merged_vcf_record_count(work_dirs):
