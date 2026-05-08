@@ -180,3 +180,64 @@ def test_coverage_tsv_row_count(work_dirs):
     with open(path) as f:
         count = sum(1 for _ in f) - 1  # subtract header
     assert count > 0, "coverage.tsv has no data rows"
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: mergeVcfs
+# ---------------------------------------------------------------------------
+
+def test_merged_vcf_exists(work_dirs):
+    path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    assert os.path.exists(path)
+
+
+def test_merged_vcf_is_valid_bgzipped(work_dirs):
+    path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    assert bcftools_is_valid(path), "merged.vcf.gz fails bcftools validation"
+
+
+def test_merged_vcf_input_vcfs_have_tbi_index(work_dirs):
+    """The merge process indexes each input VCF before merging."""
+    work = work_dirs['mergeVcfs']
+    input_vcfs = sorted(f for f in os.listdir(work) if f != 'merged.vcf.gz' and f.endswith('.vcf.gz'))
+    missing = [v for v in input_vcfs if not os.path.exists(os.path.join(work, v + '.tbi'))]
+    assert not missing, f"Input VCFs missing tabix index: {missing}"
+
+
+def test_merged_vcf_sample_names_match_input_strains(work_dirs):
+    # Input VCFs are staged as 1.vcf.gz, 2.vcf.gz... — use coverage BEDs for ground truth strains
+    bed_work = work_dirs['mergeCoverageBeds']
+    expected = {
+        f.replace('.coverage.bed.gz', '')
+        for f in os.listdir(bed_work)
+        if f.endswith('.coverage.bed.gz')
+    }
+    vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    actual = set(bcftools_samples(vcf_path))
+    assert actual == expected, f"VCF samples {actual} != expected strains {expected}"
+
+
+def test_merged_vcf_mostly_nonref_gt(work_dirs):
+    """Nearly all records should have at least one non-ref GT.
+
+    A small number of all-ref records can appear when all called samples are
+    ./. (missing) except one 0/0, which is valid FreeBayes output. Allow up
+    to 1% such records.
+    """
+    vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    all_count = bcftools_record_count(vcf_path)
+    filtered_vcf = '/tmp/e2e_nonref_check.vcf.gz'
+    subprocess.run(
+        ['bcftools', 'view', '--min-ac', '1', '-O', 'z', '-o', filtered_vcf, vcf_path],
+        capture_output=True, check=True
+    )
+    subprocess.run(['bcftools', 'index', '-t', filtered_vcf], check=True)
+    nonref_count = bcftools_record_count(filtered_vcf)
+    all_ref_count = all_count - nonref_count
+    assert all_ref_count / all_count <= 0.01, \
+        f"{all_ref_count}/{all_count} records ({100*all_ref_count/all_count:.1f}%) have no non-ref GT"
+
+
+def test_merged_vcf_record_count(work_dirs):
+    vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    assert bcftools_record_count(vcf_path) > 0
