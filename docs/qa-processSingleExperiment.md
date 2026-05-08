@@ -245,6 +245,100 @@ cut -f1 $OUTPUT/indels.tsv | sort -u
 
 ---
 
+## Check 10: Het SNPs — Exhaustive IUPAC Verification
+
+Every `0/1` SNP in the published VCF must produce the correct IUPAC ambiguity code
+at the coordinate-shifted consensus position. This is an exhaustive check, not a
+spot-check.
+
+IUPAC mapping used: `{A,G}=R  {C,T}=Y  {G,C}=S  {A,T}=W  {G,T}=K  {A,C}=M`
+
+```bash
+OUTPUT=/path/to/output
+REF=/path/to/genome.fa
+SAMPLE=LV39cl5
+
+declare -A IUPAC
+IUPAC[AG]=R; IUPAC[GA]=R
+IUPAC[CT]=Y; IUPAC[TC]=Y
+IUPAC[GC]=S; IUPAC[CG]=S
+IUPAC[AT]=W; IUPAC[TA]=W
+IUPAC[GT]=K; IUPAC[TG]=K
+IUPAC[AC]=M; IUPAC[CA]=M
+
+PASS=0; FAIL=0
+while IFS=$'\t' read -r CHROM POS ID REF_BASE ALT_BASE REST; do
+    OFFSET=$(grep "^${SAMPLE}	${CHROM}" $OUTPUT/indels.tsv \
+        | awk -v p="$POS" '$3 < p {sum += $4} END {print sum+0}')
+    CONS_POS=$((POS + OFFSET))
+    CONS_BASE=$(samtools faidx /tmp/${SAMPLE}_consensus.fa ${CHROM}:${CONS_POS}-${CONS_POS} | tail -1 | tr 'a-z' 'A-Z')
+    REF_U=$(echo "$REF_BASE" | tr 'a-z' 'A-Z')
+    ALT_U=$(echo "$ALT_BASE" | tr 'a-z' 'A-Z')
+    EXPECT="${IUPAC[${REF_U}${ALT_U}]}"
+    if [ "$CONS_BASE" = "$EXPECT" ]; then PASS=$((PASS+1))
+    else echo "FAIL: POS=$POS REF=$REF_U ALT=$ALT_U expect=$EXPECT cons=$CONS_BASE"; FAIL=$((FAIL+1))
+    fi
+done < <(zcat $OUTPUT/${SAMPLE}.vcf.gz | grep -v "^#" \
+    | awk 'substr($10,1,3)=="0/1" && $8~/TYPE=snp/' | cut -f1-5,7-)
+
+echo "PASS: $PASS  FAIL: $FAIL"
+# Repeat for each SAMPLE
+```
+
+All `FAIL` lines indicate a bug. `PASS` count should equal the total `0/1 TYPE=snp`
+record count in the VCF.
+
+**Note:** Atomized complex variants carry `TYPE=complex` in INFO even for their
+single-base SNP row — those are caught by Check 11, not here.
+
+---
+
+## Check 11: No Duplicate SNP Rows — Multi-row Sites Are SNP + Indel Only
+
+A SNP call (single-base REF → single-base ALT) must never appear on more than one
+row at the same position. The only valid reason for two rows at the same position
+is an atomized complex variant: one SNP-like row (`len(REF)==1 && len(ALT)==1`) and
+one indel-like row (`len(REF) != len(ALT)`).
+
+**Why `TYPE=` is not the right filter:** atomized complex variants retain
+`TYPE=complex` in INFO for both the SNP and indel rows. Length-based discrimination
+is the correct approach.
+
+```bash
+OUTPUT=/path/to/output
+SAMPLE=LV39cl5
+
+# Find positions with more than one row
+MULTI=$(zcat $OUTPUT/${SAMPLE}.vcf.gz | grep -v "^#" \
+    | awk '{print $1"_"$2}' | sort | uniq -d)
+echo "Positions with >1 row: $(echo "$MULTI" | grep -c .)"
+
+COUNT_GOOD=0; COUNT_BAD=0
+for SITE in $MULTI; do
+    CHROM=$(echo $SITE | cut -d_ -f1)
+    POS=$(echo $SITE | cut -d_ -f2)
+    SNP_LIKE=$(zcat $OUTPUT/${SAMPLE}.vcf.gz | grep -v "^#" \
+        | awk -v c=$CHROM -v p=$POS '$1==c && $2==p && length($4)==1 && length($5)==1' | wc -l)
+    TOTAL=$(zcat $OUTPUT/${SAMPLE}.vcf.gz | grep -v "^#" \
+        | awk -v c=$CHROM -v p=$POS '$1==c && $2==p' | wc -l)
+    if [ "$SNP_LIKE" -le 1 ] && [ "$TOTAL" -eq 2 ]; then
+        COUNT_GOOD=$((COUNT_GOOD+1))
+    else
+        COUNT_BAD=$((COUNT_BAD+1))
+        echo "FAIL $SITE: total=$TOTAL snp-like=$SNP_LIKE"
+        zcat $OUTPUT/${SAMPLE}.vcf.gz | grep -v "^#" \
+            | awk -v c=$CHROM -v p=$POS '$1==c && $2==p {print "  ref="$4,"alt="$5}'
+    fi
+done
+echo "Good (1 SNP-like + 1 indel-like): $COUNT_GOOD  Bad: $COUNT_BAD"
+# Repeat for each SAMPLE
+```
+
+Any `FAIL` line means a SNP was emitted on two separate rows at the same position,
+which would cause double-counting in downstream merge.
+
+---
+
 ## Quick-pass Summary Template
 
 ```
@@ -259,6 +353,8 @@ Sample: _______________   Run date: _______________
 [ ] Check 7: Large deletions absent from consensus (spot-checked ≥ 1)
 [ ] Check 8: Zero-coverage regions are N in consensus
 [ ] Check 9: Multi-sample: all samples present in indels.tsv
+[ ] Check 10: All het SNPs (0/1 TYPE=snp) map to correct IUPAC code — PASS count = total het SNP count
+[ ] Check 11: No duplicate SNP rows; all multi-row positions are exactly 1 SNP-like + 1 indel-like
 
 Notes / failures:
 ```
