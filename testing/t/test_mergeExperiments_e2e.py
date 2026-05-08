@@ -588,6 +588,11 @@ def test_allele_dat_exists(work_dirs):
     assert os.path.exists(os.path.join(work_dirs['processSeqVars'], 'allele.dat'))
 
 
+def test_allele_dat_row_count(work_dirs):
+    rows = _read_allele(work_dirs)
+    assert len(rows) > 0, "allele.dat has no data rows"
+
+
 def test_allele_dat_column_count(work_dirs):
     rows = _read_allele(work_dirs)
     bad = [i + 1 for i, r in enumerate(rows) if len(r) != 5]
@@ -610,7 +615,7 @@ def test_allele_dat_allele_count_gte_strain_count(work_dirs):
     rows = _read_allele(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if int(r[2]) < int(r[1])
+        if not r[1].isdigit() or not r[2].isdigit() or int(r[2]) < int(r[1])
     ]
     assert not bad, f"Rows where allele_count < distinct_strain_count: {bad[:5]}"
 
@@ -652,6 +657,11 @@ def _read_product(work_dirs):
 
 def test_product_dat_exists(work_dirs):
     assert os.path.exists(os.path.join(work_dirs['processSeqVars'], 'product.dat'))
+
+
+def test_product_dat_row_count(work_dirs):
+    rows = _read_product(work_dirs)
+    assert len(rows) > 0, "product.dat has no data rows"
 
 
 def test_product_dat_column_count(work_dirs):
