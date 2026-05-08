@@ -429,14 +429,17 @@ def test_output_vcf_has_cann_header(work_dirs):
     assert '##FORMAT=<ID=DFS' in header
 
 
-def test_output_vcf_has_cann_values(work_dirs):
-    """Verify that at least some records have CANN populated.
-    Note: Not all records may have CANN if annotation was selective or skipped for low-confidence calls."""
+def test_output_vcf_has_cann_header_and_some_values(work_dirs):
+    """CANN is only set on records overlapping coding regions.
+    Non-coding variants have CANN='.'. Verify: (1) CANN header present,
+    (2) at least some records have non-'.' CANN (i.e., the pipeline did produce
+    coding annotations)."""
     path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    header = bcftools_header(path)
+    assert '##INFO=<ID=CANN' in header, "CANN INFO header missing"
     values = bcftools_query_info(path, 'CANN')
-    assert len(values) > 0, "No CANN values found in VCF"
-    populated = [v for v in values if v and v != '.']
-    assert len(populated) > 0, "No records have CANN values (all empty or missing)"
+    annotated = [v for v in values if v and v != '.']
+    assert len(annotated) > 0, "No records have CANN annotation (expected at least some coding variants)"
 
 
 def test_output_vcf_record_count(work_dirs):
@@ -511,14 +514,14 @@ def test_variation_feature_major_allele_count_positive(work_dirs):
 
 
 def test_variation_feature_distinct_strain_count_in_range(work_dirs):
-    # distinct_strain_count comes from upstream mergeVcfs, which may have more strains
-    # than the processSeqVars input. Just verify it's a positive integer.
+    vcf_path = os.path.join(work_dirs['processSeqVars'], 'merged.vcf.gz')
+    n_strains = len(bcftools_samples(vcf_path))
     rows = _read_variation_feature(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not r[12].isdigit() or int(r[12]) < 1
+        if not r[12].isdigit() or not (1 <= int(r[12]) <= n_strains)
     ]
-    assert not bad, f"Rows with invalid distinct_strain_count (col 13): {bad[:5]}"
+    assert not bad, f"Rows with distinct_strain_count out of range [1,{n_strains}] (col 13): {bad[:5]}"
 
 
 def test_variation_feature_is_coding_binary(work_dirs):
