@@ -404,3 +404,163 @@ def test_coding_sequences_length_invariant(work_dirs):
         f"{len(mismatches)} length mismatches (first 3): "
         + str(mismatches[:3])
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: processSeqVars — output.vcf.gz
+# ---------------------------------------------------------------------------
+
+def test_output_vcf_exists(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    assert os.path.exists(path)
+    assert os.path.exists(path + '.tbi')
+
+
+def test_output_vcf_is_valid(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    assert bcftools_is_valid(path)
+
+
+def test_output_vcf_has_cann_header(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    header = bcftools_header(path)
+    assert '##INFO=<ID=CANN' in header
+    assert '##FORMAT=<ID=CA' in header
+    assert '##FORMAT=<ID=DFS' in header
+
+
+def test_output_vcf_has_cann_values(work_dirs):
+    """Verify that at least some records have CANN populated.
+    Note: Not all records may have CANN if annotation was selective or skipped for low-confidence calls."""
+    path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    values = bcftools_query_info(path, 'CANN')
+    assert len(values) > 0, "No CANN values found in VCF"
+    populated = [v for v in values if v and v != '.']
+    assert len(populated) > 0, "No records have CANN values (all empty or missing)"
+
+
+def test_output_vcf_record_count(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    assert bcftools_record_count(path) > 0
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: processSeqVars — variationFeature.dat
+# ---------------------------------------------------------------------------
+
+def _read_variation_feature(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'variationFeature.dat')
+    rows = []
+    with open(path) as f:
+        for line in f:
+            rows.append(line.rstrip('\n').split('\t'))
+    return rows
+
+
+def test_variation_feature_exists(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'variationFeature.dat')
+    assert os.path.exists(path)
+
+
+def test_variation_feature_column_count(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 18]
+    assert not bad, f"Rows with wrong column count (expected 18): {bad[:5]}"
+
+
+def test_variation_feature_row_count(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    assert len(rows) > 0
+
+
+def test_variation_feature_location_positive_int(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[0].isdigit() or int(r[0]) <= 0]
+    assert not bad, f"Rows with invalid location (col 1): {bad[:5]}"
+
+
+def test_variation_feature_seq_id_nonempty(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[2].strip()]
+    assert not bad, f"Rows with empty seq_id (col 3): {bad[:5]}"
+
+
+def test_variation_feature_reference_strain(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    values = {r[3] for r in rows}
+    assert len(values) == 1, f"Multiple reference_strain values in col 4: {values}"
+    assert next(iter(values)), "reference_strain (col 4) is empty"
+
+
+def test_variation_feature_has_nonsynonymous_binary(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[5] not in ('0', '1')]
+    assert not bad, f"Rows with has_nonsynonymous not 0/1 (col 6): {bad[:5]}"
+
+
+def test_variation_feature_major_allele_nonempty(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[6].strip()]
+    assert not bad, f"Rows with empty major_allele (col 7): {bad[:5]}"
+
+
+def test_variation_feature_major_allele_count_positive(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[8].isdigit() or int(r[8]) <= 0]
+    assert not bad, f"Rows with major_allele_count <= 0 (col 9): {bad[:5]}"
+
+
+def test_variation_feature_distinct_strain_count_in_range(work_dirs):
+    # distinct_strain_count comes from upstream mergeVcfs, which may have more strains
+    # than the processSeqVars input. Just verify it's a positive integer.
+    rows = _read_variation_feature(work_dirs)
+    bad = [
+        i + 1 for i, r in enumerate(rows)
+        if not r[12].isdigit() or int(r[12]) < 1
+    ]
+    assert not bad, f"Rows with invalid distinct_strain_count (col 13): {bad[:5]}"
+
+
+def test_variation_feature_is_coding_binary(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[14] not in ('0', '1')]
+    assert not bad, f"Rows with is_coding not 0/1 (col 15): {bad[:5]}"
+
+
+def test_variation_feature_coding_rows_have_transcript(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[14] == '1' and not r[1].strip()]
+    assert not bad, f"is_coding=1 rows with empty transcript_id (col 2): {bad[:5]}"
+
+
+def test_variation_feature_has_stop_codon_binary(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[16] not in ('0', '1')]
+    assert not bad, f"Rows with has_stop_codon not 0/1 (col 17): {bad[:5]}"
+
+
+def test_variation_feature_ref_allele_nonempty(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[4].strip()]
+    assert not bad, f"Rows with empty ref_allele (col 5): {bad[:5]}"
+
+
+def test_variation_feature_distinct_allele_count_gte_1(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[13].isdigit() or int(r[13]) < 1]
+    assert not bad, f"Rows with distinct_allele_count < 1 (col 14): {bad[:5]}"
+
+
+def test_variation_feature_total_allele_count_gte_strain_count(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [
+        i + 1 for i, r in enumerate(rows)
+        if not r[15].isdigit() or int(r[15]) < int(r[12])
+    ]
+    assert not bad, f"Rows where total_allele_count < distinct_strain_count (col 16 < col 13): {bad[:5]}"
+
+
+def test_variation_feature_nonsynonymous_implies_coding(work_dirs):
+    rows = _read_variation_feature(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[5] == '1' and r[14] != '1']
+    assert not bad, f"has_nonsynonymous=1 but is_coding!=1 on rows: {bad[:5]}"
