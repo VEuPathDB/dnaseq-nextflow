@@ -35,7 +35,7 @@ def bcftools_record_count(vcf_path):
     for line in r.stdout.split('\n'):
         if line.startswith('SN') and 'number of records:' in line:
             return int(line.split('\t')[3])
-    return 0
+    raise ValueError(f"Could not parse record count from bcftools stats output for {vcf_path}")
 
 
 def bcftools_query_info(vcf_path, field):
@@ -80,30 +80,30 @@ def test_genomic_indel_db_exists(work_dirs):
 
 def test_genomic_indel_db_schema(work_dirs):
     db_path = os.path.join(work_dirs['makeGenomicIndelDb'], 'genomicIndels.db')
-    conn = sqlite3.connect(db_path)
-    cur = conn.execute("PRAGMA table_info(genomic_indels)")
-    cols = {row[1] for row in cur.fetchall()}
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute("PRAGMA table_info(genomic_indels)")
+        cols = {row[1] for row in cur.fetchall()}
     assert cols == {'strain', 'sequence_id', 'position', 'shift'}, \
         f"Unexpected columns: {cols}"
 
 
 def test_genomic_indel_db_index(work_dirs):
     db_path = os.path.join(work_dirs['makeGenomicIndelDb'], 'genomicIndels.db')
-    conn = sqlite3.connect(db_path)
-    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
-    indexes = {row[0] for row in cur.fetchall()}
+    with sqlite3.connect(db_path) as conn:
+        cur = conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        indexes = {row[0] for row in cur.fetchall()}
     assert 'idx_genomic_indels' in indexes, f"Missing index. Found: {indexes}"
 
 
 def test_genomic_indel_db_row_count(work_dirs):
     db_path = os.path.join(work_dirs['makeGenomicIndelDb'], 'genomicIndels.db')
-    conn = sqlite3.connect(db_path)
-    count = conn.execute("SELECT COUNT(*) FROM genomic_indels").fetchone()[0]
+    with sqlite3.connect(db_path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM genomic_indels").fetchone()[0]
     assert count > 0, "genomic_indels table is empty"
 
 
 def test_genomic_indel_db_no_zero_shift(work_dirs):
     db_path = os.path.join(work_dirs['makeGenomicIndelDb'], 'genomicIndels.db')
-    conn = sqlite3.connect(db_path)
-    zeros = conn.execute("SELECT COUNT(*) FROM genomic_indels WHERE shift = 0").fetchone()[0]
+    with sqlite3.connect(db_path) as conn:
+        zeros = conn.execute("SELECT COUNT(*) FROM genomic_indels WHERE shift = 0").fetchone()[0]
     assert zeros == 0, f"{zeros} rows have shift=0"
