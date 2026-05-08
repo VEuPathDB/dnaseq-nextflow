@@ -700,6 +700,12 @@ def test_product_dat_pos_in_cds_positive(work_dirs):
     assert not bad, f"Rows with pos_in_cds <= 0 (col 6): {bad[:5]}"
 
 
+def test_product_dat_col7_pos_in_codon_1_2_3(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[6] not in ('1', '2', '3')]
+    assert not bad, f"Rows with col 7 (dup pos_in_codon) not in {{1,2,3}}: {bad[:5]}"
+
+
 def test_product_dat_downstream_of_frameshift_binary(work_dirs):
     rows = _read_product(work_dirs)
     bad = [i + 1 for i, r in enumerate(rows) if r[7] not in ('0', '1')]
