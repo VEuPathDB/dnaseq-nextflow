@@ -3,8 +3,9 @@
 Build a consensus FASTA from a standard VCF (FreeBayes / bcftools) plus a
 BED file that defines covered regions.
 
-Unlike makeConsensusFastaFromGvcf.py, coverage information is taken from the
-BED file rather than the DP FORMAT field of a g.vcf.
+Coverage at VCF record positions is not re-checked: FreeBayes already enforces
+--min-coverage, so every called variant has sufficient depth.  The BED is used
+only to fill non-variant gaps between records with ref sequence or N.
 """
 
 import argparse
@@ -57,17 +58,6 @@ def load_coverage_bed(bed_path):
     return result
 
 
-def is_covered(intervals, starts, pos):
-    """Return True if 0-based pos falls in any covered interval. O(log n)."""
-    if not intervals:
-        return False
-    idx = bisect.bisect_right(starts, pos) - 1
-    if idx < 0:
-        return False
-    _, iv_end = intervals[idx]
-    return pos < iv_end
-
-
 def fill_gap(ref_seq, gap_start, gap_end, intervals, starts):
     """Fill [gap_start, gap_end) with ref bases where covered, N elsewhere. No per-base loop."""
     if gap_start >= gap_end:
@@ -112,12 +102,16 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals, starts):
 
     Logic
     -----
-    SNPs        → IUPAC code derived from GT alleles (N if uncovered)
+    SNPs        → IUPAC code derived from GT alleles
     Hom indel   → emit the called allele sequence
     Het 0/1     → emit REF (one allele is reference)
     Het 1/2     → 'X' × len(REF) (both alleles non-ref, ambiguous)
     Missing GT  → 'N' × len(REF)
-    Gaps        → fill_gap (ref or N based on coverage)
+    Gaps        → fill_gap (ref or N based on BED coverage)
+
+    Coverage at VCF positions is not re-checked against the BED: FreeBayes
+    already enforces --min-coverage, so every record in the VCF has sufficient
+    depth.  The BED is used only to fill non-variant gaps with ref or N.
     """
     segments = []
     ref_pos = 0   # current 0-based reference coordinate
@@ -136,12 +130,6 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals, starts):
         gt_str = v.gt_bases[0] if v.gt_bases else './.'
 
         if '.' in gt_str:
-            segments.append('N' * len(v.REF))
-            ref_pos = pos + len(v.REF)
-            continue
-
-        # Check coverage at this position
-        if not is_covered(intervals, starts, pos):
             segments.append('N' * len(v.REF))
             ref_pos = pos + len(v.REF)
             continue
