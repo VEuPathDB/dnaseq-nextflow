@@ -241,3 +241,112 @@ def test_merged_vcf_mostly_nonref_gt(work_dirs):
 def test_merged_vcf_record_count(work_dirs):
     vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
     assert bcftools_record_count(vcf_path) > 0
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: makeCodingData — structural
+# ---------------------------------------------------------------------------
+
+def test_coding_sequences_db_exists(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    assert os.path.exists(path)
+
+
+def test_coding_sequences_db_schema(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(path) as conn:
+        cur = conn.execute("PRAGMA table_info(coding_sequences)")
+        cols = {row[1] for row in cur.fetchall()}
+    assert cols == {'strain', 'transcript_id', 'sequence'}, \
+        f"Unexpected columns: {cols}"
+
+
+def test_coding_sequences_all_strains_present(work_dirs):
+    bed_work = work_dirs['mergeCoverageBeds']
+    expected_strains = {
+        f.replace('.coverage.bed.gz', '')
+        for f in os.listdir(bed_work)
+        if f.endswith('.coverage.bed.gz')
+    }
+    path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(path) as conn:
+        actual_strains = {
+            row[0]
+            for row in conn.execute("SELECT DISTINCT strain FROM coding_sequences")
+        }
+    assert expected_strains.issubset(actual_strains), \
+        f"Missing strains: {expected_strains - actual_strains}"
+
+
+def test_coding_sequences_all_transcripts_all_strains(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(path) as conn:
+        n_strains = conn.execute("SELECT COUNT(DISTINCT strain) FROM coding_sequences").fetchone()[0]
+        n_transcripts = conn.execute("SELECT COUNT(DISTINCT transcript_id) FROM coding_sequences").fetchone()[0]
+        n_rows = conn.execute("SELECT COUNT(*) FROM coding_sequences").fetchone()[0]
+    assert n_rows == n_strains * n_transcripts, \
+        f"Expected {n_strains}×{n_transcripts}={n_strains * n_transcripts} rows, got {n_rows}"
+
+
+def test_coding_sequences_non_empty(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(path) as conn:
+        empty = conn.execute(
+            "SELECT COUNT(*) FROM coding_sequences WHERE sequence IS NULL OR sequence = ''"
+        ).fetchone()[0]
+    assert empty == 0, f"{empty} rows have empty sequence"
+
+
+def test_coding_sequences_start_with_atg(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute("SELECT strain, transcript_id, sequence FROM coding_sequences").fetchall()
+    bad = [(s, t) for s, t, seq in rows if not seq.upper().startswith('ATG')]
+    assert not bad, f"{len(bad)} sequences don't start with ATG: {bad[:3]}"
+
+
+def test_coding_sequences_valid_characters(work_dirs):
+    """Sequences may contain standard IUPAC nucleotide characters including:
+    - ACGT: standard bases
+    - N: masked/unknown base
+    - X: het indel placeholder (non-IUPAC, pipeline-specific)
+    - RYSWKM: IUPAC ambiguity codes for heterozygous SNP positions
+    """
+    path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute("SELECT strain, transcript_id, sequence FROM coding_sequences").fetchall()
+    pattern = re.compile(r'^[ACGTRYSWKMNXacgtryswkmnx]+$')
+    bad = [(s, t) for s, t, seq in rows if not pattern.match(seq)]
+    assert not bad, f"{len(bad)} sequences contain invalid characters: {bad[:3]}"
+
+
+def test_coding_indels_db_exists(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingIndels.db')
+    assert os.path.exists(path)
+
+
+def test_coding_indels_db_schema(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingIndels.db')
+    with sqlite3.connect(path) as conn:
+        cur = conn.execute("PRAGMA table_info(indels)")
+        cols = {row[1] for row in cur.fetchall()}
+    assert cols == {'strain', 'transcript_id', 'position', 'shift_amount'}, \
+        f"Unexpected columns: {cols}"
+
+
+def test_coding_indels_no_zero_shift(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingIndels.db')
+    with sqlite3.connect(path) as conn:
+        zeros = conn.execute(
+            "SELECT COUNT(*) FROM indels WHERE shift_amount = 0"
+        ).fetchone()[0]
+    assert zeros == 0, f"{zeros} rows have shift_amount=0"
+
+
+def test_coding_indels_positions_positive(work_dirs):
+    path = os.path.join(work_dirs['makeCodingData'], 'codingIndels.db')
+    with sqlite3.connect(path) as conn:
+        bad = conn.execute(
+            "SELECT COUNT(*) FROM indels WHERE position < 1"
+        ).fetchone()[0]
+    assert bad == 0, f"{bad} rows have position < 1"
