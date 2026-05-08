@@ -107,3 +107,76 @@ def test_genomic_indel_db_no_zero_shift(work_dirs):
     with sqlite3.connect(db_path) as conn:
         zeros = conn.execute("SELECT COUNT(*) FROM genomic_indels WHERE shift = 0").fetchone()[0]
     assert zeros == 0, f"{zeros} rows have shift=0"
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: mergeCoverageBeds
+# ---------------------------------------------------------------------------
+
+def test_coverage_tsv_exists(work_dirs):
+    path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
+    assert os.path.exists(path)
+
+
+def test_coverage_tsv_header(work_dirs):
+    path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
+    with open(path) as f:
+        header = f.readline().rstrip('\n').split('\t')
+    assert header[:3] == ['chrom', 'start', 'end'], \
+        f"First 3 header cols wrong: {header[:3]}"
+    assert len(header) > 3, "No strain columns in header"
+
+
+def test_coverage_tsv_strain_columns_match_inputs(work_dirs):
+    work = work_dirs['mergeCoverageBeds']
+    bed_strains = sorted(
+        f.replace('.coverage.bed.gz', '')
+        for f in os.listdir(work)
+        if f.endswith('.coverage.bed.gz')
+    )
+    path = os.path.join(work, 'coverage.tsv')
+    with open(path) as f:
+        header = f.readline().rstrip('\n').split('\t')
+    tsv_strains = sorted(header[3:])
+    assert tsv_strains == bed_strains, \
+        f"TSV strains {tsv_strains} != BED strains {bed_strains}"
+
+
+def test_coverage_tsv_column_count_consistent(work_dirs):
+    path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
+    with open(path) as f:
+        lines = f.readlines()
+    expected_cols = len(lines[0].split('\t'))
+    bad = [i + 2 for i, line in enumerate(lines[1:]) if len(line.split('\t')) != expected_cols]
+    assert not bad, f"Wrong column count on lines: {bad[:5]}"
+
+
+def test_coverage_tsv_start_less_than_end(work_dirs):
+    path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
+    bad = []
+    with open(path) as f:
+        next(f)  # skip header
+        for i, line in enumerate(f, start=2):
+            cols = line.rstrip('\n').split('\t')
+            if int(cols[1]) >= int(cols[2]):
+                bad.append(i)
+    assert not bad, f"start >= end on lines: {bad[:5]}"
+
+
+def test_coverage_tsv_no_negative_values(work_dirs):
+    path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
+    bad = []
+    with open(path) as f:
+        next(f)
+        for i, line in enumerate(f, start=2):
+            cols = line.rstrip('\n').split('\t')
+            if any(float(c) < 0 for c in cols[3:]):
+                bad.append(i)
+    assert not bad, f"Negative coverage values on lines: {bad[:5]}"
+
+
+def test_coverage_tsv_row_count(work_dirs):
+    path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
+    with open(path) as f:
+        count = sum(1 for _ in f) - 1  # subtract header
+    assert count > 0, "coverage.tsv has no data rows"
