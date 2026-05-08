@@ -1,10 +1,11 @@
 #!/usr/bin/env julia
 
 # processSequenceVariations.jl
-# Reads a merged multi-sample FreeBayes GVCF and a coordinate-sorted VCF cache file,
+# Reads a merged multi-sample FreeBayes VCF and a coordinate-sorted VCF cache file,
 # streams them concurrently in a sorted merge, annotates coding variants via SQLite
 # transcript/indel databases, and writes four output files:
 #   cache.vcf (CANN-annotated VCF cache), snpFeature.dat, allele.dat, product.dat
+# Coverage information is read from a coverage.tsv produced by mergeCoverageBeds.
 
 using SQLite
 using SQLite.DBInterface: execute
@@ -352,16 +353,14 @@ function get_indel_shift(db::SQLite.DB, transcript_id::String, strain::String, p
 end
 
 # ---------------------------------------------------------------------------
-# GVCF record structure
+# VCF record structure
 # ---------------------------------------------------------------------------
 
-struct GVCFRecord
+struct VCFRecord
     chrom::String
     pos::Int
     ref::String
     alts::Vector{String}
-    is_ref_block::Bool
-    end_pos::Int                  # = pos for variants; = INFO/END for REF blocks
     info::String
     format_keys::Vector{String}
     sample_data::Vector{String}   # raw per-sample FORMAT strings
@@ -481,18 +480,18 @@ function close_peeked(pf::PeekedFile)
 end
 
 # ---------------------------------------------------------------------------
-# GVCF I/O
+# VCF I/O
 # ---------------------------------------------------------------------------
 
 """
-    parse_gvcf_header(io) -> (all_strains, chrom_rank)
+    parse_vcf_header(io) -> (all_strains, chrom_rank, info_headers)
 
 Reads ## meta lines, builds chrom_rank from ##contig lines, extracts sample
 names from #CHROM line. Leaves io positioned at first data line.
 """
-function parse_gvcf_header(io::IO)
-    chrom_rank = Dict{String,Int}()
-    all_strains = String[]
+function parse_vcf_header(io::IO)
+    chrom_rank   = Dict{String,Int}()
+    all_strains  = String[]
     info_headers = String[]
     contig_count = 0
 
@@ -507,35 +506,34 @@ function parse_gvcf_header(io::IO)
             end
         elseif startswith(line, "#CHROM")
             fields = split(line, '\t')
-            # Columns 10+ (1-based) are sample names
             all_strains = String[String(fields[i]) for i in 10:length(fields)]
             break
         end
     end
 
-    debug_log("GVCF header: ", length(all_strains), " samples, ",
+    debug_log("VCF header: ", length(all_strains), " samples, ",
               length(chrom_rank), " contigs")
     (all_strains, chrom_rank, info_headers)
 end
 
 """
-    open_gvcf_peeked(path) -> (PeekedFile, all_strains, chrom_rank, info_headers)
+    open_vcf_peeked(path) -> (PeekedFile, all_strains, chrom_rank, info_headers)
 
-Opens a bgzip-compressed GVCF via subprocess, parses its header, returns
+Opens a bgzip-compressed VCF via subprocess, parses its header, returns
 a PeekedFile positioned at the first data line.
 """
-function open_gvcf_peeked(path::String)
+function open_vcf_peeked(path::String)
     io = open(`bgzip -d -c $path`)
-    (all_strains, chrom_rank, info_headers) = parse_gvcf_header(io)
+    (all_strains, chrom_rank, info_headers) = parse_vcf_header(io)
     pf = PeekedFile(io, "", false)
     advance!(pf)
     (pf, all_strains, chrom_rank, info_headers)
 end
 
 """
-    parse_gvcf_record(line, n_samples) -> GVCFRecord
+    parse_vcf_record(line, n_samples) -> VCFRecord
 """
-function parse_gvcf_record(line::String, n_samples::Int)::GVCFRecord
+function parse_vcf_record(line::String, n_samples::Int)::VCFRecord
     fields = split(line, '\t')
     chrom = String(fields[1])
     pos   = parse(Int, fields[2])
@@ -543,20 +541,13 @@ function parse_gvcf_record(line::String, n_samples::Int)::GVCFRecord
     alts  = String[String(a) for a in split(fields[5], ',')]
     info  = String(fields[8])
     fmt   = String(fields[9])
-
-    is_ref_block = all(startswith(a, "<") for a in alts)
-
-    end_pos = pos
-    if is_ref_block
-        m = match(r"END=(\d+)", info)
-        !isnothing(m) && (end_pos = parse(Int, m.captures[1]))
-    end
-
     format_keys = String[String(k) for k in split(fmt, ':')]
     sample_data = String[String(fields[9+i]) for i in 1:n_samples if 9+i <= length(fields)]
-
-    GVCFRecord(chrom, pos, ref, alts, is_ref_block, end_pos, info, format_keys, sample_data)
+    VCFRecord(chrom, pos, ref, alts, info, format_keys, sample_data)
 end
+
+# Returns true if all ALTs have the same length as REF (SNP or MNP, not indel)
+is_snp_record(record::VCFRecord) = all(length(a) == length(record.ref) for a in record.alts)
 
 """
     parse_format_field(format_keys, sample_str) -> Dict{String,String}
@@ -569,6 +560,102 @@ function parse_format_field(format_keys::Vector{String}, sample_str::String)::Di
         result[key] = String(values[i])
     end
     result
+end
+
+# ---------------------------------------------------------------------------
+# Coverage I/O (coverage.tsv produced by mergeCoverageBeds)
+# ---------------------------------------------------------------------------
+
+mutable struct CoverageFileHandle
+    fh::IO
+    sample_cols::Vector{Tuple{Int, String}}   # (col_index_1based, sample_name)
+    peeked::Union{String, Nothing}
+    exhausted::Bool
+end
+
+"""
+    open_coverage_file(path) -> CoverageFileHandle
+
+Opens coverage.tsv, reads the header to build a sample→column-index mapping,
+and buffers the first data line.
+"""
+function open_coverage_file(path::String)::CoverageFileHandle
+    fh = open(path, "r")
+    header = readline(fh)
+    fields = split(header, '\t')
+    # Columns 4+ are sample names (1-based indexing: column 4 = index 4)
+    sample_cols = Tuple{Int, String}[(i, String(fields[i])) for i in 4:length(fields)]
+    first_line  = eof(fh) ? nothing : readline(fh)
+    CoverageFileHandle(fh, sample_cols, first_line, first_line === nothing)
+end
+
+"""
+    load_chrom_coverage!(cfh, chrom, chrom_rank, chrom_coverage)
+
+Advances cfh past any lines for chromosomes that sort before `chrom` (by chrom_rank),
+then reads all intervals for `chrom` into `chrom_coverage`, replacing prior contents.
+Interval vectors are already sorted since coverage.tsv is position-sorted.
+"""
+function load_chrom_coverage!(
+    cfh::CoverageFileHandle,
+    chrom::String,
+    chrom_rank::Dict{String, Int},
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
+)
+    empty!(chrom_coverage)
+    cfh.exhausted && return
+
+    target_rank = get(chrom_rank, chrom, typemax(Int))
+
+    # Advance past chromosomes that sort before the target
+    while !cfh.exhausted
+        fields    = split(cfh.peeked, '\t')
+        line_rank = get(chrom_rank, String(fields[1]), typemax(Int))
+        line_rank >= target_rank && break
+        cfh.peeked    = eof(cfh.fh) ? nothing : readline(cfh.fh)
+        cfh.exhausted = cfh.peeked === nothing
+    end
+
+    # Read all lines for this chrom
+    while !cfh.exhausted
+        fields = split(cfh.peeked, '\t')
+        String(fields[1]) != chrom && break
+
+        start_pos = parse(Int, fields[2])
+        end_pos   = parse(Int, fields[3])
+
+        for (col_idx, sample) in cfh.sample_cols
+            col_idx > length(fields) && continue
+            dp = parse(Float64, String(fields[col_idx]))
+            if dp > 0.0
+                push!(get!(chrom_coverage, sample, Tuple{Int,Int,Float64}[]),
+                      (start_pos, end_pos, dp))
+            end
+        end
+
+        cfh.peeked    = eof(cfh.fh) ? nothing : readline(cfh.fh)
+        cfh.exhausted = cfh.peeked === nothing
+    end
+end
+
+"""
+    get_coverage(chrom_coverage, sample, pos) -> (covered, mean_dp)
+
+Binary search for coverage at 0-based `pos`. Returns (false, 0.0) if not covered.
+coverage.tsv uses 0-based half-open intervals [start, end) matching BED convention.
+Pass VCF positions as `record.pos - 1` to convert from 1-based to 0-based.
+"""
+function get_coverage(
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}},
+    sample::String,
+    pos::Int
+)::Tuple{Bool, Float64}
+    intervals = get(chrom_coverage, sample, nothing)
+    (isnothing(intervals) || isempty(intervals)) && return (false, 0.0)
+    idx = searchsortedlast(intervals, pos, by = x -> x[1])
+    idx == 0 && return (false, 0.0)
+    (_, end_, dp) = intervals[idx]
+    return pos < end_ ? (true, dp) : (false, 0.0)
 end
 
 # ---------------------------------------------------------------------------
@@ -633,21 +720,64 @@ function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_header
     for h in info_headers
         write(fh, h, "\n")
     end
-    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key:codon:aa:effect:transcript_id:pos_in_cds:pos_in_codon. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
+    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
     write(fh, "##FORMAT=<ID=CA,Number=1,Type=String,Description=\"CANN key(s) per GT allele. Alleles separated by '/' (unphased) or '|' (phased). Multiple transcript keys for one allele separated by ';'. 'r'=ref allele no CDS annotation, '.'=missing/no-call\">\n")
     write(fh, "##FORMAT=<ID=DFS,Number=1,Type=Integer,Description=\"Downstream of frameshift: 1 if this sample carries an upstream indel that disrupts the reading frame at this position, 0 otherwise.\">\n")
     chrom_line = join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", all_strains...], '\t')
     write(fh, chrom_line, "\n")
 end
 
+"""
+    remap_sample_for_split(sample_str, format_keys, n_orig_alts, target_alt_i) -> String
+
+When a multi-allelic record is split into one record per ALT, remap each sample's FORMAT
+string so that GT allele indices are valid for a 1-ALT record:
+  - target alt index (target_alt_i, 1-based in original) → 1
+  - ref (0) → 0
+  - any other alt index → 0 (treated as ref in this split record)
+Also replaces GL with "." because GL has n*(n+1)/2 values for n alleles and SnpEff will
+reject split records whose GL length no longer matches the single-ALT allele count.
+"""
+function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
+                                 n_orig_alts::Int, target_alt_i::Int)::String
+    n_orig_alts == 1 && return sample_str   # nothing to remap for single-alt records
+    values = split(sample_str, ':')
+    result = String[String(v) for v in values]
+    for (fi, key) in enumerate(format_keys)
+        fi > length(result) && break
+        if key == "GT"
+            gt = result[fi]
+            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+            sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+            sep = isnothing(sep_idx) ? nothing : gt[sep_idx]
+            remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
+            if isnothing(sep_idx)
+                idx = tryparse(Int, gt)
+                isnothing(idx) && continue
+                result[fi] = string(remap(idx))
+            else
+                a1 = tryparse(Int, gt[1:sep_idx-1])
+                a2 = tryparse(Int, gt[sep_idx+1:end])
+                (isnothing(a1) || isnothing(a2)) && continue
+                result[fi] = "$(remap(a1))$(sep)$(remap(a2))"
+            end
+        elseif key == "GL"
+            result[fi] = "."
+        end
+    end
+    join(result, ':')
+end
+
 function write_vcf_cache_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
                                 cann_str::String, gvcf_info::String,
                                 format_keys::Vector{String}, sample_data::Vector{String},
-                                ca_values::Vector{String}, dfs_values::Vector{String})
+                                ca_values::Vector{String}, dfs_values::Vector{String},
+                                n_orig_alts::Int=1, target_alt_i::Int=1)
     info    = "$(gvcf_info);CANN=$(cann_str)"
     format  = join([format_keys..., "CA", "DFS"], ':')
-    samples = [i <= length(ca_values) ? "$(sample_data[i]):$(ca_values[i]):$(get(dfs_values, i, "."))" : "$(sample_data[i]):.:."
-               for i in 1:length(sample_data)]
+    remapped = [remap_sample_for_split(s, format_keys, n_orig_alts, target_alt_i) for s in sample_data]
+    samples = [i <= length(ca_values) ? "$(remapped[i]):$(ca_values[i]):$(get(dfs_values, i, "."))" : "$(remapped[i]):.:."
+               for i in 1:length(remapped)]
     write(fh, join([chrom, string(pos), ".", ref, alt, ".", ".", info, format, samples...], '\t'), "\n")
 end
 
@@ -707,6 +837,34 @@ function gt_allele_idx(gt::String)::Int
 end
 
 """
+    nonref_alt_alleles(gt, alts) -> Vector{String}
+
+Returns the unique non-ref allele strings carried by this sample, in index order.
+For GT="0/1" returns [alts[1]]; for GT="1/1" returns [alts[1]]; for GT="1/2"
+returns [alts[1], alts[2]].  Returns [] for missing or ref-only GTs.
+"""
+function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
+    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return String[]
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    idxs = if isnothing(sep_idx)
+        [parse(Int, gt)]
+    else
+        a1 = gt[1:sep_idx-1]; a2 = gt[sep_idx+1:end]
+        (a1 == "." || a2 == ".") && return String[]
+        [parse(Int, a1), parse(Int, a2)]
+    end
+    seen = Set{Int}()
+    result = String[]
+    for i in idxs
+        i == 0 && continue
+        i in seen && continue
+        push!(seen, i)
+        i <= length(alts) && push!(result, alts[i])
+    end
+    result
+end
+
+"""
     compute_percent(fmt, allele_idx) -> String
 
 Computes AO/(RO+AO)*100 for alt allele. Returns "0.0" for ref or missing.
@@ -730,17 +888,17 @@ function compute_percent(fmt::Dict{String,String}, allele_idx::Int)::String
 end
 
 """
-    build_variations_from_record(record, all_strains, undone_strains, prev_coverage_span)
+    build_variations_from_record(record, all_strains, undone_strains, chrom_coverage)
         -> Vector{Variation}
 
-Builds per-strain Variation records from a GVCF variant record.
-Skips undone strains and missing GTs.
+Builds per-strain Variation records from a VCF variant record.
+For missing GTs, synthesizes a reference call if coverage.tsv shows the position covered.
 """
 function build_variations_from_record(
-    record::GVCFRecord,
+    record::VCFRecord,
     all_strains::Vector{String},
     undone_strains::Set{String},
-    prev_coverage_span::Dict{String, Tuple{String, Int, Int}}
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
 )::Vector{Variation}
     variations = Variation[]
 
@@ -752,25 +910,22 @@ function build_variations_from_record(
 
         gt = get(fmt, "GT", "")
         if isempty(gt) || gt == "." || gt == "./." || gt == ".|."
-            # Sample has no call at this position; check if a prior REF block covers it
-            span = get(prev_coverage_span, strain, nothing)
-            if !isnothing(span)
-                span_chrom, span_end, span_dp = span
-                if span_chrom == record.chrom && record.pos <= span_end
-                    v = Variation()
-                    v.sequence_source_id = record.chrom
-                    v.location           = record.pos
-                    v.strain             = strain
-                    v.reference          = record.ref
-                    v.base               = record.ref
-                    v.coverage           = string(span_dp)
-                    v.percent            = "100"
-                    v.quality            = "."
-                    v.pvalue             = "."
-                    v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
-                    v.matches_reference  = 1
-                    push!(variations, v)
-                end
+            # No call: synthesize a reference Variation if position is covered
+            (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
+            if covered
+                v = Variation()
+                v.sequence_source_id = record.chrom
+                v.location           = record.pos
+                v.strain             = strain
+                v.reference          = record.ref
+                v.base               = record.ref
+                v.coverage           = string(dp)
+                v.percent            = "100"
+                v.quality            = "."
+                v.pvalue             = "."
+                v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
+                v.matches_reference  = 1
+                push!(variations, v)
             end
             continue
         end
@@ -779,7 +934,10 @@ function build_variations_from_record(
         dp     = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
 
         base = gt_to_base(gt, record.ref, record.alts)
-        isempty(base) && continue
+        if isempty(base) || base == "*"
+            base == "*" && @warn "Unexpected * allele in GT at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
+            continue
+        end
 
         aidx = gt_allele_idx(gt)
         pct  = compute_percent(fmt, aidx)
@@ -805,7 +963,7 @@ function build_variations_from_record(
 end
 
 # ---------------------------------------------------------------------------
-# Sorted-merge helpers: sort keys over VCF/GVCF lines
+# Sorted-merge helpers: sort keys over VCF lines
 # ---------------------------------------------------------------------------
 
 """
@@ -824,29 +982,6 @@ function peek_sort_key(line::String, chrom_rank::Dict{String,Int})::Tuple{Int,In
     (rank, parse(Int, pos_str))
 end
 
-"""
-    peek_end_key(line, chrom_rank) -> (Int, Int)
-
-Returns (chrom_rank, END) for GVCF REF blocks; (chrom_rank, POS) for variants.
-Used to determine the span of a REF block without full parsing.
-"""
-function peek_end_key(line::String, chrom_rank::Dict{String,Int})::Tuple{Int,Int}
-    fields = split(line, '\t'; limit=9)
-    length(fields) < 8 && return peek_sort_key(line, chrom_rank)
-
-    chrom   = String(fields[1])
-    pos     = parse(Int, fields[2])
-    alt_str = String(fields[5])
-    info    = String(fields[8])
-    rank    = get(chrom_rank, chrom, typemax(Int))
-
-    if startswith(alt_str, "<")
-        m = match(r"END=(\d+)", info)
-        !isnothing(m) && return (rank, parse(Int, m.captures[1]))
-    end
-
-    (rank, pos)
-end
 
 # ---------------------------------------------------------------------------
 # Resource management
@@ -1102,7 +1237,9 @@ function write_snp_feature(
     distinct_allele_count  = length(allele_counts)
     has_nonsynonymous_allele = length(product_counts) > 1 ? 1 : 0
 
-    sorted_alleles  = sort(collect(keys(allele_counts));  by = a -> (-allele_counts[a], a))
+    n_alt_alleles   = count(a -> a != ref_allele, keys(allele_counts))
+    sorted_alleles  = sort(collect(keys(allele_counts));
+                          by = a -> (n_alt_alleles >= 2 && a == ref_allele ? 1 : 0, -allele_counts[a], a))
     sorted_products = sort(collect(keys(product_counts)); by = p -> (-product_counts[p], p))
 
     major_allele       = sorted_alleles[1]
@@ -1278,13 +1415,13 @@ end
     build_ref_cann_entry(key, annotation) -> String
 
 Builds the r-keyed CANN entry for the reference allele at a coding position.
-Format mirrors alt entries: key:codon:aa:effect:transcript_id:pos_in_cds:pos_in_codon
+Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon
 """
 function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::String
     annotation.is_coding != 1 && return "."
     codon = isempty(annotation.ref_codon)   ? "." : annotation.ref_codon
     aa    = isempty(annotation.ref_product) ? "." : annotation.ref_product
-    "$(key):$(codon):$(aa):reference:$(annotation.transcript_id):$(annotation.pos_in_cds):$(annotation.pos_in_codon_val)"
+    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)"
 end
 
 """
@@ -1336,7 +1473,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0:.:.:$(structural):$(tid):$(pos_in_cds):$(pic)"
+        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
     end
 
     # SNP or complex variant: compute amino acid effect
@@ -1346,12 +1483,12 @@ function build_cann_string(
 
     # Codon/product suppressed because strain is downstream of a frameshift
     if codon == "." && isempty(unique_prods)
-        return "k0:.:.:downstream_frameshift:$(tid):$(pos_in_cds):$(pic)"
+        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)"
     end
 
     # Codon contains ambiguous base(s) — skip product and effect
     if occursin(r"[NnXx]", codon)
-        return "k0:$(codon):.:.:$(tid):$(pos_in_cds):$(pic)"
+        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)"
     end
 
     has_stop = any(p == "*" for p in unique_prods)
@@ -1364,7 +1501,7 @@ function build_cann_string(
     end
 
     if !is_indel
-        return "k0:$(codon):$(product_str):$(aa_effect):$(tid):$(pos_in_cds):$(pic)"
+        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)"
     else
         # Complex: indel with SNP at anchor position
         len_diff = alt_len - ref_len
@@ -1375,7 +1512,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0:$(codon):$(product_str):$(aa_effect)&$(structural):$(tid):$(pos_in_cds):$(pic)"
+        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
     end
 end
 
@@ -1402,7 +1539,7 @@ function decode_all_cann_annotations(
     annotations      = PositionAnnotation[]
 
     for entry in split(ce.cann_str, ',')
-        parts = split(entry, ':')
+        parts = split(entry, '|')
         length(parts) < 7 && continue
         startswith(String(parts[1]), 'r') || continue   # only r-keyed entries
 
@@ -1431,26 +1568,35 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains) -> Bool
+    handle_variant_record!(records, cache_entries, ctx, writers, transcript_cache, all_strains, chrom_coverage) -> Bool
 
-Processes one variant GVCF record end-to-end. Returns true if output was written.
+Processes one variant VCF record end-to-end. Returns true if output was written.
 cache_entries: Dict keyed by (ref, alt) for positions with a cache hit at this coordinate.
 """
 function handle_variant_record!(
-    record::GVCFRecord,
+    records::Vector{VCFRecord},
     cache_entries::Dict{Tuple{String,String},CacheEntry},
     ctx::ProcessingContext,
     writers::OutputWriters,
     transcript_cache::TranscriptSequenceCache,
     all_strains::Vector{String},
-    prev_coverage_span::Dict{String, Tuple{String, Int, Int}}
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
 )::Bool
-    seq_id   = record.chrom
-    location = record.pos
+    seq_id   = records[1].chrom
+    location = records[1].pos
     debug_log("Processing position: ", seq_id, ":", location)
 
-    variations = build_variations_from_record(record, all_strains, ctx.undone_strains, prev_coverage_span)
+    # Build variations from all records at this position (SNPs + indels combined)
+    variations = Variation[]
+    for r in records
+        append!(variations, build_variations_from_record(r, all_strains, ctx.undone_strains, chrom_coverage))
+    end
     isempty(variations) && return false
+
+    # For cache lookup, CANN annotation, and VCF cache writing: use only the first SNP record.
+    # Indel records at the same position are included in variation tables but not AA annotation.
+    snp_records = filter(is_snp_record, records)
+    record = isempty(snp_records) ? records[1] : snp_records[1]
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = if !isempty(cache_entries)
@@ -1465,6 +1611,9 @@ function handle_variant_record!(
     alt_strain_entries = Dict{String, Dict{String, Vector{String}}}()
     first_annotation   = annotations[1]
     any_output         = false
+
+    # Map strain name -> sample index for GT lookup when keying CANN entries by original alt allele
+    strain_idx_map = Dict{String, Int}(s => i for (i, s) in enumerate(all_strains))
 
     for annotation in annotations
         annotate_variations!(variations, annotation, ctx, transcript_cache)
@@ -1485,13 +1634,25 @@ function handle_variant_record!(
         write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
         write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation)
 
-        # Collect per-sample CANN entry for each alt under this annotation
+        # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
+        # v.base may be an IUPAC ambiguity code for het calls; the VCF cache write loop below
+        # iterates record.alts, so we must use the original allele strings as keys here.
         for v in variations
             v.strain == ctx.reference_strain && continue
-            v.base == record.ref && continue
-            entry = build_cann_string(record.ref, v.base, v, annotation)
-            strain_map = get!(alt_strain_entries, v.base, Dict{String, Vector{String}}())
-            push!(get!(strain_map, v.strain, String[]), entry)
+            v.matches_reference == 1 && continue
+            sidx = get(strain_idx_map, v.strain, 0)
+            (sidx == 0 || sidx > length(record.sample_data)) && continue
+            fmt = parse_format_field(record.format_keys, record.sample_data[sidx])
+            gt  = get(fmt, "GT", "")
+            for alt_allele in nonref_alt_alleles(gt, record.alts)
+                if alt_allele == "*"
+                    @warn "Unexpected * allele in CANN annotation at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
+                    continue
+                end
+                entry = build_cann_string(record.ref, alt_allele, v, annotation)
+                strain_map = get!(alt_strain_entries, alt_allele, Dict{String, Vector{String}}())
+                push!(get!(strain_map, v.strain, String[]), entry)
+            end
         end
     end
 
@@ -1510,8 +1671,8 @@ function handle_variant_record!(
         push!(ref_cann_entries, entry)
     end
 
-    # Build modified sample data: fill in GT=0 and DP for samples covered by a prior
-    # REF block span but absent from this variant record (missing GT).
+    # Build modified sample data: fill in GT=0 and DP for samples that are covered
+    # at this position but were left as missing GT by bcftools merge.
     gt_idx = findfirst(==("GT"), record.format_keys)
     dp_idx = findfirst(==("DP"), record.format_keys)
     modified_sample_data = copy(record.sample_data)
@@ -1520,13 +1681,11 @@ function handle_variant_record!(
         fmt = parse_format_field(record.format_keys, modified_sample_data[i])
         gt = get(fmt, "GT", "")
         (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
-        span = get(prev_coverage_span, strain, nothing)
-        isnothing(span) && continue
-        span_chrom, span_end, span_dp = span
-        (span_chrom == record.chrom && record.pos <= span_end) || continue
+        (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
+        covered || continue
         fields = fill(".", length(record.format_keys))
         !isnothing(gt_idx) && (fields[gt_idx] = "0")
-        !isnothing(dp_idx) && (fields[dp_idx] = string(span_dp))
+        !isnothing(dp_idx) && (fields[dp_idx] = string(round(Int, dp)))
         modified_sample_data[i] = join(fields, ":")
     end
 
@@ -1564,7 +1723,12 @@ function handle_variant_record!(
     end
 
     # Write one VCF cache entry per unique alt.
-    for alt in record.alts
+    n_orig_alts = length(record.alts)
+    for (alt_i, alt) in enumerate(record.alts)
+        if alt == "*"
+            @warn "Unexpected * allele in VCF cache write at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
+            continue
+        end
         haskey(alt_cann_entries, alt) || continue
 
         coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])
@@ -1578,7 +1742,8 @@ function handle_variant_record!(
         dfs_values = [get(strain_to_dfs, s, ".") for s in all_strains]
         write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
                               full_cann, record.info, record.format_keys,
-                              modified_sample_data, ca_values, dfs_values)
+                              modified_sample_data, ca_values, dfs_values,
+                              n_orig_alts, alt_i)
     end
 
     true
@@ -1593,14 +1758,18 @@ function main()
     global DEBUG = haskey(args, "debug")
     debug_log("Debug mode enabled")
 
-    # Open GVCF and parse header
-    debug_log("Opening GVCF: ", args["vcf_file"])
-    (gvcf_pf, all_strains, chrom_rank, info_headers) = open_gvcf_peeked(args["vcf_file"])
-    debug_log("GVCF: ", length(all_strains), " strains")
+    # Open VCF and parse header
+    debug_log("Opening VCF: ", args["vcf_file"])
+    (vcf_pf, all_strains, chrom_rank, info_headers) = open_vcf_peeked(args["vcf_file"])
+    debug_log("VCF: ", length(all_strains), " strains")
 
     # Open VCF cache (may be absent/empty on first run)
     debug_log("Opening cache: ", args["cache_file"])
     cache_pf = open_cache_peeked(args["cache_file"])
+
+    # Open coverage file
+    debug_log("Opening coverage: ", args["coverage_file"])
+    coverage_fh = open_coverage_file(args["coverage_file"])
 
     # Initialize processing context
     ctx = initialize_processing_context(args, all_strains)
@@ -1613,59 +1782,41 @@ function main()
 
     transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
 
-    # Per-sample last-seen REF block span: strain -> (chrom, end_pos, dp)
-    # Used to synthesize reference calls at variant positions for covered samples
-    # that bcftools merge left as missing GT.
-    prev_coverage_span = Dict{String, Tuple{String, Int, Int}}()
+    chrom_coverage = Dict{String, Vector{Tuple{Int, Int, Float64}}}()
+    current_chrom  = ""
 
-    # Span-aware sorted-merge loop
     n_processed = 0
 
-    while !gvcf_pf.exhausted
-        gvcf_start = peek_sort_key(gvcf_pf.line, chrom_rank)
-        gvcf_end   = peek_end_key(gvcf_pf.line, chrom_rank)
-        cache_key  = cache_pf.exhausted ? (typemax(Int), typemax(Int)) :
-                                           peek_sort_key(cache_pf.line, chrom_rank)
+    while !vcf_pf.exhausted
+        vcf_start = peek_sort_key(vcf_pf.line, chrom_rank)
+        cache_key = cache_pf.exhausted ? (typemax(Int), typemax(Int)) :
+                                          peek_sort_key(cache_pf.line, chrom_rank)
 
-        # Drain cache entries that precede the current GVCF record start
+        # Drain cache entries that precede the current VCF record start
         # (positions that were variant in a prior run but are now absent)
-        if !cache_pf.exhausted && cache_key < gvcf_start
+        if !cache_pf.exhausted && cache_key < vcf_start
             advance!(cache_pf)
             continue
         end
 
-        # Parse and advance GVCF
-        record = parse_gvcf_record(gvcf_pf.line, length(all_strains))
-        advance!(gvcf_pf)
-
-        if record.is_ref_block
-            # Update per-sample coverage spans from this REF block
-            for (i, strain) in enumerate(all_strains)
-                strain in ctx.undone_strains && continue
-                i > length(record.sample_data) && continue
-                fmt = parse_format_field(record.format_keys, record.sample_data[i])
-                dp_str = get(fmt, "DP", "0")
-                dp = isempty(dp_str) || dp_str == "." ? 0 : parse(Int, dp_str)
-                if dp > 0
-                    prev_coverage_span[strain] = (record.chrom, record.end_pos, dp)
-                end
-            end
-
-            # Drain all cache entries within this REF block span [pos, end_pos]
-            # These positions were variant before but are now reference-covered
-            while !cache_pf.exhausted
-                ck = peek_sort_key(cache_pf.line, chrom_rank)
-                ck > gvcf_end && break
-                advance!(cache_pf)
-            end
-            continue
+        # Parse and advance VCF — collect all records sharing this chrom+pos
+        records = VCFRecord[]
+        while !vcf_pf.exhausted && peek_sort_key(vcf_pf.line, chrom_rank) == vcf_start
+            push!(records, parse_vcf_record(vcf_pf.line, length(all_strains)))
+            advance!(vcf_pf)
         end
 
-        # Variant record: collect all cache entries at this (chrom, pos)
+        # Load coverage intervals when the chromosome changes
+        if records[1].chrom != current_chrom
+            current_chrom = records[1].chrom
+            load_chrom_coverage!(coverage_fh, current_chrom, chrom_rank, chrom_coverage)
+        end
+
+        # Collect all cache entries at this (chrom, pos)
         cache_entries = Dict{Tuple{String,String},CacheEntry}()
         while !cache_pf.exhausted
             ck = peek_sort_key(cache_pf.line, chrom_rank)
-            ck != gvcf_start && break
+            ck != vcf_start && break
             parsed = parse_cache_vcf_record(cache_pf.line)
             if !isnothing(parsed)
                 (_, _, ref, alt, cann_str) = parsed
@@ -1674,7 +1825,7 @@ function main()
             advance!(cache_pf)
         end
 
-        if handle_variant_record!(record, cache_entries, ctx, writers, transcript_cache, all_strains, prev_coverage_span)
+        if handle_variant_record!(records, cache_entries, ctx, writers, transcript_cache, all_strains, chrom_coverage)
             n_processed += 1
             if n_processed % 1000 == 0
                 @info "Processed $n_processed variant positions"
@@ -1684,8 +1835,9 @@ function main()
 
     debug_log("Processing complete. Total positions processed: ", n_processed)
 
-    close_peeked(gvcf_pf)
+    close_peeked(vcf_pf)
     close_peeked(cache_pf)
+    close(coverage_fh.fh)
     close_output_writers(writers)
     close_processing_context(ctx)
 

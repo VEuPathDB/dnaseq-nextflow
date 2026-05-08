@@ -37,7 +37,7 @@ process mergeVcfs {
     set -euo pipefail
 
     for vcf in *.vcf.gz; do bcftools index --tbi \$vcf; done
-    bcftools merge -O z -o merged.vcf.gz *.vcf.gz
+    bcftools merge --merge all -O z -o merged.vcf.gz *.vcf.gz
     """
 
   stub:
@@ -47,31 +47,32 @@ process mergeVcfs {
 }
 
 
-process mergeGvcfs {
-  container 'biocontainers/bcftools:v1.9-1-deb_cv1'
 
+process mergeCoverageBeds {
+  container 'veupathdb/dnaseqanalysis:1.0.0'
 
   input:
-    path "*.vcf.gz"
+    path coverageBeds
 
   output:
-    path 'merged.vcf.gz'
+    path 'coverage.tsv'
 
   script:
     """
     set -euo pipefail
-
-    for vcf in *.vcf.gz; do bcftools index --tbi \$vcf; done
-    bcftools merge \
-        --merge all \
-        --output-type z \
-        --output merged.vcf.gz \
-        *.vcf.gz
+    files=( $coverageBeds )
+    names=()
+    for f in "\${files[@]}"; do
+      names+=( "\$(basename "\$f" .coverage.bed.gz)" )
+    done
+    header="chrom\tstart\tend\t\$(IFS='\t'; echo "\${names[*]}")"
+    echo -e "\$header" > coverage.tsv
+    bedtools unionbedg -names "\${names[@]}" -filler 0 -i "\${files[@]}" >> coverage.tsv
     """
 
   stub:
     """
-    touch merged.vcf.gz
+    touch coverage.tsv
     """
 }
 
@@ -157,6 +158,7 @@ process processSeqVars {
     path transcriptDb
     path indelDb
     path gtfFile
+    path coverageFile
 
   output:
     path 'output.vcf.gz', emit: outputVcf
@@ -177,6 +179,7 @@ process processSeqVars {
       --transcript_db $transcriptDb \\
       --indel_db $indelDb \\
       --gtf_file $gtfFile \\
+      --coverage_file $coverageFile \\
       --output_vcf output.vcf
 
     mv snpFeature.dat variationFeature.dat
@@ -188,7 +191,7 @@ process processSeqVars {
     """
     touch output.vcf.gz
     touch output.vcf.gz.tbi
-    touch snpFeature.dat
+    touch variationFeature.dat
     touch allele.dat
     touch product.dat
     """

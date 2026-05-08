@@ -1,18 +1,20 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-include { mergeGvcfs } from '../modules/mergeExperiments.nf'
+include { mergeVcfs }          from '../modules/mergeExperiments.nf'
+include { mergeCoverageBeds }  from '../modules/mergeExperiments.nf'
 include { makeGenomicIndelDb } from '../modules/mergeExperiments.nf'
-include { makeCodingData } from '../modules/mergeExperiments.nf'
-include { processSeqVars } from '../modules/mergeExperiments.nf'
-include { snpEff } from '../modules/mergeExperiments.nf'
+include { makeCodingData }     from '../modules/mergeExperiments.nf'
+include { processSeqVars }     from '../modules/mergeExperiments.nf'
+include { snpEff }             from '../modules/mergeExperiments.nf'
 
 workflow me {
 
   take:
     fastas_qch
-    gvcfs_qch
+    vcfs_qch
     indels_qch
+    coverages_qch
 
   main:
 
@@ -20,15 +22,27 @@ workflow me {
 
     genomicIndelDb = makeGenomicIndelDb(combinedIndels)
 
-    allFastas      = fastas_qch.collect()
+    allFastas = fastas_qch.collect()
 
-    allgvcfs = gvcfs_qch.collect().branch { single: it.size() == 1; multiple: true }
+    allVcfs       = vcfs_qch.collect()
+    allVcfsBranch = allVcfs.branch { single: it.size() == 1; multiple: true }
+    mergedVcf     = allVcfsBranch.single.map { it[0] }
+                      .mix(mergeVcfs(allVcfsBranch.multiple))
 
-    mergedGvcf = allgvcfs.single.map { it[0] }.mix(mergeGvcfs(allgvcfs.multiple))
+    coverageTsv = mergeCoverageBeds(coverages_qch.collect())
 
     codingData = makeCodingData(allFastas, genomicIndelDb, params.gtfFile, params.genomeFastaFile)
 
-    processSeqVarsResults = processSeqVars(mergedGvcf, params.vcfCacheFile, params.undoneStrains, params.reference_strain, codingData.codingSequencesDb, codingData.codingIndelsDb, params.gtfFile)
+    processSeqVarsResults = processSeqVars(
+      mergedVcf,
+      params.vcfCacheFile,
+      params.undoneStrains,
+      params.reference_strain,
+      codingData.codingSequencesDb,
+      codingData.codingIndelsDb,
+      params.gtfFile,
+      coverageTsv
+    )
 
     snpEff(processSeqVarsResults.outputVcf, params.gtfFile, params.genomeFastaFile)
 

@@ -49,7 +49,7 @@ process bedGraphToBigWig {
 
     stub:
     """
-    touch coverage.bw
+    touch ${sampleName}.bw
     """
 }
 
@@ -151,7 +151,7 @@ process calculateTPM {
 
   stub:
     """
-    touch tpm.txt
+    touch out.tpm
     """
 
 }
@@ -216,7 +216,7 @@ process normaliseCoverage {
   //publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
   input:
-    tuple val(sampleName), path(windowedCoverage), path(summaryMetrics)
+    tuple val(sampleName), path(windowedCoverage)
     path chrsForCalcsFile
     val ploidy
 
@@ -243,7 +243,7 @@ process makeSnpDensity {
   container  'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
   input:
-    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi), path(gvcfGz), path(gvcfGzTbi)
+    tuple val(sampleName), path(freebayesVcfGz), path(freebayesVcfGzTbi), path(snpsVcfGz), path(snpsVcfGzTbi), path(indelsVcfGz), path(indelsVcfGzTbi)
     tuple path(windows), path(genome)
 
   output:

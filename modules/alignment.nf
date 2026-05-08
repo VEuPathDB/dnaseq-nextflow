@@ -160,12 +160,14 @@ process gatk {
       -I $picardBam \\
       -R $genomeReorderedFasta \\
       -T RealignerTargetCreator \\
+      -allowPotentiallyMisencodedQuals \\
       -o forIndelRealigner.intervals 2>realaligner.err
     # Locally realign reads within the target intervals to produce a cleaner BAM
     java -jar \$JARPATH \\
       -I $picardBam \\
       -R $genomeReorderedFasta \\
       -T IndelRealigner -targetIntervals forIndelRealigner.intervals \\
+      -allowPotentiallyMisencodedQuals \\
       -o ${sampleName}.bam 2>indelRealigner.err
 
     mv ${sampleName}.bai ${sampleName}.bam.bai
@@ -173,8 +175,8 @@ process gatk {
 
   stub:
     """
-    touch result_sorted_gatk.bam
-    touch result_sorted_gatk.bai
+    touch ${sampleName}.bam
+    touch ${sampleName}.bam.bai
     """
 }
 
