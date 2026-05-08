@@ -875,18 +875,12 @@ def test_reference_strain_nonempty_and_consistent_with_vf(work_dirs):
     used by GUS — not a VCF sample name. Verify it is non-empty and consistent across
     all rows (the cross-output check is that it never changes mid-file)."""
     vf_rows = _read_variation_feature(work_dirs)
+    assert vf_rows, "variationFeature.dat is empty"
     ref_strain = vf_rows[0][3]
     assert ref_strain, "reference_strain (col 4) is empty in first row of variationFeature.dat"
     inconsistent = [i + 1 for i, r in enumerate(vf_rows) if r[3] != ref_strain]
     assert not inconsistent, \
         f"reference_strain changes mid-file on rows: {inconsistent[:5]}"
-
-
-def test_variation_feature_reference_strain_uniform(work_dirs):
-    """All rows in variationFeature.dat must have the same reference_strain (col 4)."""
-    vf_rows = _read_variation_feature(work_dirs)
-    values = {r[3] for r in vf_rows}
-    assert len(values) == 1, f"variationFeature.dat col 4 has multiple values: {values}"
 
 
 def test_cann_present_in_some_output_vcf_records(work_dirs):
