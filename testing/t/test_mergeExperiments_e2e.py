@@ -514,14 +514,16 @@ def test_variation_feature_major_allele_count_positive(work_dirs):
 
 
 def test_variation_feature_distinct_strain_count_in_range(work_dirs):
+    """distinct_strain_count (col 13) includes the reference strain as a separate variation,
+    so the upper bound is N_vcf_samples + 1."""
     vcf_path = os.path.join(work_dirs['processSeqVars'], 'merged.vcf.gz')
     n_strains = len(bcftools_samples(vcf_path))
     rows = _read_variation_feature(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not r[12].isdigit() or not (1 <= int(r[12]) <= n_strains)
+        if not r[12].isdigit() or not (1 <= int(r[12]) <= n_strains + 1)
     ]
-    assert not bad, f"Rows with distinct_strain_count out of range [1,{n_strains}] (col 13): {bad[:5]}"
+    assert not bad, f"Rows with distinct_strain_count out of range [1,{n_strains + 1}] (col 13): {bad[:5]}"
 
 
 def test_variation_feature_is_coding_binary(work_dirs):
