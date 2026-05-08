@@ -569,3 +569,138 @@ def test_variation_feature_nonsynonymous_implies_coding(work_dirs):
     rows = _read_variation_feature(work_dirs)
     bad = [i + 1 for i, r in enumerate(rows) if r[5] == '1' and r[14] != '1']
     assert not bad, f"has_nonsynonymous=1 but is_coding!=1 on rows: {bad[:5]}"
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: processSeqVars — allele.dat
+# ---------------------------------------------------------------------------
+
+def _read_allele(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'allele.dat')
+    rows = []
+    with open(path) as f:
+        for line in f:
+            rows.append(line.rstrip('\n').split('\t'))
+    return rows
+
+
+def test_allele_dat_exists(work_dirs):
+    assert os.path.exists(os.path.join(work_dirs['processSeqVars'], 'allele.dat'))
+
+
+def test_allele_dat_column_count(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 5]
+    assert not bad, f"Rows with wrong column count (expected 5): {bad[:5]}"
+
+
+def test_allele_dat_allele_nonempty(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[0].strip()]
+    assert not bad, f"Rows with empty allele (col 1): {bad[:5]}"
+
+
+def test_allele_dat_distinct_strain_count_positive(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[1].isdigit() or int(r[1]) <= 0]
+    assert not bad, f"Rows with distinct_strain_count <= 0 (col 2): {bad[:5]}"
+
+
+def test_allele_dat_allele_count_gte_strain_count(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [
+        i + 1 for i, r in enumerate(rows)
+        if int(r[2]) < int(r[1])
+    ]
+    assert not bad, f"Rows where allele_count < distinct_strain_count: {bad[:5]}"
+
+
+def test_allele_dat_avg_coverage_non_negative(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if float(r[3]) < 0]
+    assert not bad, f"Rows with avg_coverage < 0 (col 4): {bad[:5]}"
+
+
+def test_allele_dat_avg_percent_in_range(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not (0.0 <= float(r[4]) <= 100.0)]
+    assert not bad, f"Rows with avg_percent outside 0–100 (col 5): {bad[:5]}"
+
+
+def test_allele_dat_two_decimal_places(work_dirs):
+    rows = _read_allele(work_dirs)
+    pattern = re.compile(r'^\d+\.\d{2}$')
+    bad = [
+        i + 1 for i, r in enumerate(rows)
+        if not pattern.match(r[3]) or not pattern.match(r[4])
+    ]
+    assert not bad, f"Rows where avg_coverage or avg_percent not 2dp: {bad[:5]}"
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: processSeqVars — product.dat
+# ---------------------------------------------------------------------------
+
+def _read_product(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'product.dat')
+    rows = []
+    with open(path) as f:
+        for line in f:
+            rows.append(line.rstrip('\n').split('\t'))
+    return rows
+
+
+def test_product_dat_exists(work_dirs):
+    assert os.path.exists(os.path.join(work_dirs['processSeqVars'], 'product.dat'))
+
+
+def test_product_dat_column_count(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 8]
+    assert not bad, f"Rows with wrong column count (expected 8): {bad[:5]}"
+
+
+def test_product_dat_codon_is_three_acgt(work_dirs):
+    """Codons are three nucleotide characters; N is allowed for masked positions."""
+    rows = _read_product(work_dirs)
+    pattern = re.compile(r'^[ACGTN]{3}$')
+    bad = [i + 1 for i, r in enumerate(rows) if not pattern.match(r[0])]
+    assert not bad, f"Rows with invalid codon (col 1): {bad[:5]}"
+
+
+def test_product_dat_pos_in_codon_1_2_3(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[1] not in ('1', '2', '3')]
+    assert not bad, f"Rows with pos_in_codon not in {{1,2,3}} (col 2): {bad[:5]}"
+
+
+def test_product_dat_transcript_id_nonempty(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[2].strip()]
+    assert not bad, f"Rows with empty transcript_id (col 3): {bad[:5]}"
+
+
+def test_product_dat_product_count_non_negative(work_dirs):
+    """product_count (col 4) is 0 for downstream-of-frameshift rows where the
+    codon is disrupted; non-negative is the correct invariant."""
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[3].lstrip('-').isdigit() or int(r[3]) < 0]
+    assert not bad, f"Rows with product_count < 0 (col 4): {bad[:5]}"
+
+
+def test_product_dat_amino_acid_single_char_or_stop(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if len(r[4]) != 1]
+    assert not bad, f"Rows where amino_acid is not single char (col 5): {bad[:5]}"
+
+
+def test_product_dat_pos_in_cds_positive(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[5].isdigit() or int(r[5]) <= 0]
+    assert not bad, f"Rows with pos_in_cds <= 0 (col 6): {bad[:5]}"
+
+
+def test_product_dat_downstream_of_frameshift_binary(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[7] not in ('0', '1')]
+    assert not bad, f"Rows with downstream_of_frameshift not 0/1 (col 8): {bad[:5]}"
