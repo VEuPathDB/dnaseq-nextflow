@@ -354,3 +354,53 @@ def test_coding_indels_positions_positive(work_dirs):
             "SELECT COUNT(*) FROM indels WHERE position < 1"
         ).fetchone()[0]
     assert bad == 0, f"{bad} rows have position < 1"
+
+
+def test_coding_sequences_length_invariant(work_dirs):
+    """
+    For every (strain, transcript), the CDS sequence length must equal:
+      sum(exon_stop - exon_start + 1 for each CDS exon)
+      + sum(shift for genomic indels within any exon of this transcript, for this strain)
+
+    Derived from Check 3 in docs/qa-makeCodingData-2026-03-18.md.
+    """
+    work = work_dirs['makeCodingData']
+
+    gtf_path = next(
+        os.path.join(work, f) for f in os.listdir(work) if f.endswith('.gtf')
+    )
+    exons_by_transcript = parse_gtf_cds_exons(gtf_path)
+
+    with sqlite3.connect(os.path.join(work, 'codingSequences.db')) as cds_conn, \
+         sqlite3.connect(os.path.join(work, 'genomicIndels.db')) as indel_conn:
+        rows = cds_conn.execute(
+            "SELECT strain, transcript_id, LENGTH(sequence) FROM coding_sequences"
+        ).fetchall()
+
+        mismatches = []
+        for strain, tid, actual_len in rows:
+            if tid not in exons_by_transcript:
+                continue  # transcript not in GTF subset — skip
+
+            exon_list = exons_by_transcript[tid]
+            ref_len = sum(stop - start + 1 for _, start, stop in exon_list)
+
+            shift_total = 0
+            for seq_id, start, stop in exon_list:
+                row = indel_conn.execute(
+                    """SELECT COALESCE(SUM(shift), 0)
+                       FROM genomic_indels
+                       WHERE strain = ? AND sequence_id = ?
+                         AND position >= ? AND position <= ?""",
+                    (strain, seq_id, start, stop)
+                ).fetchone()
+                shift_total += row[0]
+
+            expected_len = ref_len + shift_total
+            if actual_len != expected_len:
+                mismatches.append((strain, tid, expected_len, actual_len))
+
+    assert not mismatches, (
+        f"{len(mismatches)} length mismatches (first 3): "
+        + str(mismatches[:3])
+    )
