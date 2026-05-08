@@ -765,3 +765,147 @@ def test_ann_vcf_has_some_cann_values(work_dirs):
     values = bcftools_query_info(path, 'CANN')
     annotated = [v for v in values if v and v != '.']
     assert len(annotated) > 0, "No records have CANN in merged.ann.vcf.gz"
+
+
+# ---------------------------------------------------------------------------
+# Layer 2: Cross-output consistency
+# ---------------------------------------------------------------------------
+
+def test_strain_names_consistent_across_vcf_and_coverage(work_dirs):
+    """VCF sample names and coverage.tsv strain columns must match exactly."""
+    vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    vcf_strains = set(bcftools_samples(vcf_path))
+
+    tsv_path = os.path.join(work_dirs['mergeCoverageBeds'], 'coverage.tsv')
+    with open(tsv_path) as f:
+        header = f.readline().rstrip('\n').split('\t')
+    tsv_strains = set(header[3:])
+
+    assert vcf_strains == tsv_strains, \
+        f"VCF samples {vcf_strains} != coverage.tsv strains {tsv_strains}"
+
+
+def test_strain_names_consistent_in_genomic_indel_db(work_dirs):
+    """Strains in genomic_indels must be a subset of VCF sample names."""
+    vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    vcf_strains = set(bcftools_samples(vcf_path))
+
+    db_path = os.path.join(work_dirs['makeGenomicIndelDb'], 'genomicIndels.db')
+    with sqlite3.connect(db_path) as conn:
+        db_strains = {
+            row[0]
+            for row in conn.execute("SELECT DISTINCT strain FROM genomic_indels")
+        }
+    assert db_strains.issubset(vcf_strains), \
+        f"genomic_indels strains not a subset of VCF samples: {db_strains - vcf_strains}"
+
+
+def test_strain_names_consistent_in_coding_sequences(work_dirs):
+    """VCF sample names must all be present in coding_sequences.db."""
+    vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
+    vcf_strains = set(bcftools_samples(vcf_path))
+
+    db_path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(db_path) as conn:
+        db_strains = {
+            row[0]
+            for row in conn.execute("SELECT DISTINCT strain FROM coding_sequences")
+        }
+    assert vcf_strains.issubset(db_strains), \
+        f"VCF strains not present in coding_sequences: {vcf_strains - db_strains}"
+
+
+def test_variant_count_output_vcf_equals_ann_vcf(work_dirs):
+    """snpEff annotates records but does not add or remove them."""
+    output_vcf = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    ann_vcf = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    output_count = bcftools_record_count(output_vcf)
+    ann_count = bcftools_record_count(ann_vcf)
+    assert output_count == ann_count, \
+        f"output.vcf.gz has {output_count} records but merged.ann.vcf.gz has {ann_count}"
+
+
+def test_variation_feature_count_lte_vcf_record_count(work_dirs):
+    """variationFeature.dat row count must be > 0 and <= VCF records x max transcripts per position."""
+    vcf_path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    vcf_count = bcftools_record_count(vcf_path)
+
+    vf_path = os.path.join(work_dirs['processSeqVars'], 'variationFeature.dat')
+    with open(vf_path) as f:
+        vf_count = sum(1 for _ in f)
+
+    assert vf_count > 0, "variationFeature.dat is empty"
+    assert vf_count <= vcf_count * 20, (
+        f"variationFeature.dat rows ({vf_count}) suspiciously exceed "
+        f"20x VCF records ({vcf_count})"
+    )
+
+
+def test_allele_dat_row_count_consistent_with_coding_variants(work_dirs):
+    """allele.dat is only emitted for coding variants. Row count must be > 0
+    and <= 4x coding variationFeature rows (conservatively: <= 4 distinct alleles per site)."""
+    vf_rows = _read_variation_feature(work_dirs)
+    coding_row_count = sum(1 for r in vf_rows if r[14] == '1')
+    allele_row_count = len(_read_allele(work_dirs))
+    assert allele_row_count > 0, "allele.dat is empty"
+    assert allele_row_count <= coding_row_count * 4, (
+        f"allele.dat rows ({allele_row_count}) far exceed "
+        f"4x coding variationFeature rows ({coding_row_count})"
+    )
+
+
+def test_product_dat_transcripts_in_coding_sequences(work_dirs):
+    """Every transcript_id in product.dat must exist in codingSequences.db."""
+    db_path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
+    with sqlite3.connect(db_path) as conn:
+        known = {
+            row[0]
+            for row in conn.execute("SELECT DISTINCT transcript_id FROM coding_sequences")
+        }
+
+    prod_rows = _read_product(work_dirs)
+    product_transcripts = {r[2] for r in prod_rows if r[2]}
+    orphans = product_transcripts - known
+    assert not orphans, \
+        f"product.dat references transcripts not in codingSequences.db: {list(orphans)[:5]}"
+
+
+def test_reference_strain_nonempty_and_consistent_with_vf(work_dirs):
+    """variationFeature.dat col 4 (reference_strain) is the reference genome identifier
+    used by GUS — not a VCF sample name. Verify it is non-empty and consistent across
+    all rows (the cross-output check is that it never changes mid-file)."""
+    vf_rows = _read_variation_feature(work_dirs)
+    ref_strain = vf_rows[0][3]
+    assert ref_strain, "reference_strain (col 4) is empty in first row of variationFeature.dat"
+    inconsistent = [i + 1 for i, r in enumerate(vf_rows) if r[3] != ref_strain]
+    assert not inconsistent, \
+        f"reference_strain changes mid-file on rows: {inconsistent[:5]}"
+
+
+def test_variation_feature_reference_strain_uniform(work_dirs):
+    """All rows in variationFeature.dat must have the same reference_strain (col 4)."""
+    vf_rows = _read_variation_feature(work_dirs)
+    values = {r[3] for r in vf_rows}
+    assert len(values) == 1, f"variationFeature.dat col 4 has multiple values: {values}"
+
+
+def test_cann_present_in_some_output_vcf_records(work_dirs):
+    """CANN is only set on coding variants. Verify at least some records
+    have non-'.' CANN in output.vcf.gz (confirms coding annotation ran)."""
+    path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
+    values = bcftools_query_info(path, 'CANN')
+    annotated = [v for v in values if v and v != '.']
+    assert len(annotated) > 0, \
+        "No records have CANN in output.vcf.gz (expected at least some coding variants)"
+
+
+def test_cann_and_ann_both_in_merged_ann_vcf(work_dirs):
+    """merged.ann.vcf.gz must have ANN on all records and CANN on at least some."""
+    path = os.path.join(work_dirs['snpEff'], 'merged.ann.vcf.gz')
+    ann_values = bcftools_query_info(path, 'ANN')
+    cann_values = bcftools_query_info(path, 'CANN')
+    missing_ann = [i + 1 for i, v in enumerate(ann_values) if not v or v == '.']
+    assert not missing_ann, f"Records missing ANN in merged.ann.vcf.gz: {missing_ann[:5]}"
+    annotated_cann = [v for v in cann_values if v and v != '.']
+    assert len(annotated_cann) > 0, \
+        "No records have CANN in merged.ann.vcf.gz (expected at least some coding variants)"
