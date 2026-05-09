@@ -155,8 +155,18 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals, starts):
                 # 0/1 – one allele is REF; emit REF unchanged
                 segments.append(v.REF)
             else:
-                # 1/2 – both alleles non-ref; mask with X
-                segments.append('X' * len(v.REF))
+                # 1/2 – both alleles non-ref
+                ref_len = len(v.REF)
+                if all(len(a) == ref_len for a in alleles):
+                    # MNP: same-length alleles — decompose per position into IUPAC
+                    out = []
+                    for i in range(ref_len):
+                        bases = frozenset(a[i] for a in alleles)
+                        out.append(IUPAC.get(bases, 'N'))
+                    segments.append(''.join(out))
+                else:
+                    # True indel with length change; mask with X
+                    segments.append('X' * ref_len)
             ref_pos = pos + len(v.REF)
 
     # Fill remaining reference positions after the last VCF record
