@@ -7,13 +7,20 @@ process runFreebayes {
   input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
+    path genomeRepeatsBed
 
   output:
     tuple val(sampleName), path("${sampleName}.vcf.gz"), path("${sampleName}.vcf.gz.tbi")
 
   script:
+    def targetsArg = genomeRepeatsBed.name != 'NO_FILE' ? "--targets targets.bed" : ""
     """
     set -euo pipefail
+
+    if [ -n "$targetsArg" ]; then
+      awk 'OFS="\\t"{print \$1,\$2}' ${genomeReorderedFasta}.fai > genome.sizes
+      bedtools complement -i $genomeRepeatsBed -g genome.sizes > targets.bed
+    fi
 
     minAltFraction=\$([ "$params.ploidy" -eq 1 ] && echo "0.8" || echo "0.3")
     freebayes \\
@@ -21,6 +28,7 @@ process runFreebayes {
       -p $params.ploidy \\
       --min-coverage $params.minCoverage \\
       --min-alternate-fraction \$minAltFraction \\
+      $targetsArg \\
       $resultSortedGatkBam | bcftools norm -f $genomeReorderedFasta | bcftools sort > freebayes.vcf
 
     bgzip freebayes.vcf

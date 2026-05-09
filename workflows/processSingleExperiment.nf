@@ -84,7 +84,8 @@ workflow ps {
 
     gatkResults = gatk(reorderFastaResults, picardResults.bam_and_dict )
 
-    rawVcf = runFreebayes(gatkResults.bamTuple, reorderFastaResults)
+    genomeRepeatsBed = params.genomeRepeatsBedFile ? file(params.genomeRepeatsBedFile) : file('NO_FILE')
+    rawVcf = runFreebayes(gatkResults.bamTuple, reorderFastaResults, genomeRepeatsBed)
     freebayesResults = filterAndSplitVcf(rawVcf)
 
     makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
