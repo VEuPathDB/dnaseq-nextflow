@@ -1056,9 +1056,9 @@ function open_output_writers(output_vcf, output_cache)
     snp_fh    = open("snpFeature.dat", "w")
     write(snp_fh,     "location\ttranscript_id\tseq_id\treference_strain\tref_allele\thas_nonsynonymous_allele\tmajor_allele\tminor_allele\tmajor_allele_count\tminor_allele_count\tmajor_product\tminor_product\tdistinct_strain_count\tdistinct_allele_count\tis_coding\ttotal_allele_count\thas_stop_codon\tref_codon\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh,  "allele\tdistinct_strain_count\tallele_count\tavg_coverage\tavg_percent\n")
+    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_count\tavg_coverage\tavg_percent\n")
     product_fh = open("product.dat", "w")
-    write(product_fh, "codon\tpos_in_codon\ttranscript_id\tcount\tproduct\tpos_in_cds\tpos_in_codon\tdownstream_of_frameshift\n")
+    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tpos_in_cds\tdownstream_of_frameshift\n")
 
     OutputWriters(vcf_fh, cache_fh, snp_fh, allele_fh, product_fh)
 end
@@ -1307,7 +1307,9 @@ function write_allele_and_product_files(
     allele_fh::IO,
     product_fh::IO,
     variations::Vector{Variation},
-    annotation::PositionAnnotation
+    annotation::PositionAnnotation,
+    seq_id::String,
+    location::Int
 )
     annotation.is_coding != 1 && return
 
@@ -1336,6 +1338,8 @@ function write_allele_and_product_files(
         avg_pct = allele_count > 0 ? sum_percent  / allele_count : 0.0
 
         write(allele_fh, join([
+            string(location),
+            seq_id,
             allele,
             string(length(distinct_strains)),
             string(allele_count),
@@ -1358,13 +1362,14 @@ function write_allele_and_product_files(
             product = translate_codon(ec)
             count   = get(all_product_counts, product, 0)
             write(product_fh, join([
+                string(location),
+                seq_id,
                 ec,
                 string(annotation.pos_in_codon_val),
                 annotation.transcript_id,
                 string(count),
                 product,
                 string(annotation.pos_in_cds),
-                string(annotation.pos_in_codon_val),
                 string(v.downstream_of_frameshift)
             ], "\t"), "\n")
         end
@@ -1620,7 +1625,7 @@ function handle_variant_record!(
         any_output = true
 
         write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
-        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation)
+        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation, seq_id, location)
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below

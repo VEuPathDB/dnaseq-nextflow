@@ -596,41 +596,53 @@ def test_allele_dat_row_count(work_dirs):
 
 def test_allele_dat_column_count(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 5]
-    assert not bad, f"Rows with wrong column count (expected 5): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 7]
+    assert not bad, f"Rows with wrong column count (expected 7): {bad[:5]}"
+
+
+def test_allele_dat_location_positive_int(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[0].isdigit() or int(r[0]) <= 0]
+    assert not bad, f"Rows with invalid location (col 1): {bad[:5]}"
+
+
+def test_allele_dat_seq_id_nonempty(work_dirs):
+    rows = _read_allele(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[1].strip()]
+    assert not bad, f"Rows with empty seq_id (col 2): {bad[:5]}"
 
 
 def test_allele_dat_allele_nonempty(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[0].strip()]
-    assert not bad, f"Rows with empty allele (col 1): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[2].strip()]
+    assert not bad, f"Rows with empty allele (col 3): {bad[:5]}"
 
 
 def test_allele_dat_distinct_strain_count_positive(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[1].isdigit() or int(r[1]) <= 0]
-    assert not bad, f"Rows with distinct_strain_count <= 0 (col 2): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[3].isdigit() or int(r[3]) <= 0]
+    assert not bad, f"Rows with distinct_strain_count <= 0 (col 4): {bad[:5]}"
 
 
 def test_allele_dat_allele_count_gte_strain_count(work_dirs):
     rows = _read_allele(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not r[1].isdigit() or not r[2].isdigit() or int(r[2]) < int(r[1])
+        if not r[3].isdigit() or not r[4].isdigit() or int(r[4]) < int(r[3])
     ]
     assert not bad, f"Rows where allele_count < distinct_strain_count: {bad[:5]}"
 
 
 def test_allele_dat_avg_coverage_non_negative(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if float(r[3]) < 0]
-    assert not bad, f"Rows with avg_coverage < 0 (col 4): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if float(r[5]) < 0]
+    assert not bad, f"Rows with avg_coverage < 0 (col 6): {bad[:5]}"
 
 
 def test_allele_dat_avg_percent_in_range(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not (0.0 <= float(r[4]) <= 100.0)]
-    assert not bad, f"Rows with avg_percent outside 0–100 (col 5): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not (0.0 <= float(r[6]) <= 100.0)]
+    assert not bad, f"Rows with avg_percent outside 0–100 (col 7): {bad[:5]}"
 
 
 def test_allele_dat_two_decimal_places(work_dirs):
@@ -638,7 +650,7 @@ def test_allele_dat_two_decimal_places(work_dirs):
     pattern = re.compile(r'^\d+\.\d{2}$')
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not pattern.match(r[3]) or not pattern.match(r[4])
+        if not pattern.match(r[5]) or not pattern.match(r[6])
     ]
     assert not bad, f"Rows where avg_coverage or avg_percent not 2dp: {bad[:5]}"
 
@@ -668,60 +680,66 @@ def test_product_dat_row_count(work_dirs):
 
 def test_product_dat_column_count(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 8]
-    assert not bad, f"Rows with wrong column count (expected 8): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 9]
+    assert not bad, f"Rows with wrong column count (expected 9): {bad[:5]}"
+
+
+def test_product_dat_location_positive_int(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[0].isdigit() or int(r[0]) <= 0]
+    assert not bad, f"Rows with invalid location (col 1): {bad[:5]}"
+
+
+def test_product_dat_seq_id_nonempty(work_dirs):
+    rows = _read_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[1].strip()]
+    assert not bad, f"Rows with empty seq_id (col 2): {bad[:5]}"
 
 
 def test_product_dat_codon_is_three_acgt(work_dirs):
     """Codons are three nucleotide characters; N is allowed for masked positions."""
     rows = _read_product(work_dirs)
     pattern = re.compile(r'^[ACGTN]{3}$')
-    bad = [i + 1 for i, r in enumerate(rows) if not pattern.match(r[0])]
-    assert not bad, f"Rows with invalid codon (col 1): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not pattern.match(r[2])]
+    assert not bad, f"Rows with invalid codon (col 3): {bad[:5]}"
 
 
 def test_product_dat_pos_in_codon_1_2_3(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[1] not in ('1', '2', '3')]
-    assert not bad, f"Rows with pos_in_codon not in {{1,2,3}} (col 2): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if r[3] not in ('1', '2', '3')]
+    assert not bad, f"Rows with pos_in_codon not in {{1,2,3}} (col 4): {bad[:5]}"
 
 
 def test_product_dat_transcript_id_nonempty(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[2].strip()]
-    assert not bad, f"Rows with empty transcript_id (col 3): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[4].strip()]
+    assert not bad, f"Rows with empty transcript_id (col 5): {bad[:5]}"
 
 
 def test_product_dat_product_count_non_negative(work_dirs):
-    """product_count (col 4) is 0 for downstream-of-frameshift rows where the
+    """product_count (col 6) is 0 for downstream-of-frameshift rows where the
     codon is disrupted; non-negative is the correct invariant."""
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[3].lstrip('-').isdigit() or int(r[3]) < 0]
-    assert not bad, f"Rows with product_count < 0 (col 4): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[5].lstrip('-').isdigit() or int(r[5]) < 0]
+    assert not bad, f"Rows with product_count < 0 (col 6): {bad[:5]}"
 
 
 def test_product_dat_amino_acid_single_char_or_stop(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r[4]) != 1]
-    assert not bad, f"Rows where amino_acid is not single char (col 5): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r[6]) != 1]
+    assert not bad, f"Rows where amino_acid is not single char (col 7): {bad[:5]}"
 
 
 def test_product_dat_pos_in_cds_positive(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[5].isdigit() or int(r[5]) <= 0]
-    assert not bad, f"Rows with pos_in_cds <= 0 (col 6): {bad[:5]}"
-
-
-def test_product_dat_col7_pos_in_codon_1_2_3(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[6] not in ('1', '2', '3')]
-    assert not bad, f"Rows with col 7 (dup pos_in_codon) not in {{1,2,3}}: {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[7].isdigit() or int(r[7]) <= 0]
+    assert not bad, f"Rows with pos_in_cds <= 0 (col 8): {bad[:5]}"
 
 
 def test_product_dat_downstream_of_frameshift_binary(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[7] not in ('0', '1')]
-    assert not bad, f"Rows with downstream_of_frameshift not 0/1 (col 8): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if r[8] not in ('0', '1')]
+    assert not bad, f"Rows with downstream_of_frameshift not 0/1 (col 9): {bad[:5]}"
 
 
 # ---------------------------------------------------------------------------
@@ -867,7 +885,7 @@ def test_product_dat_transcripts_in_coding_sequences(work_dirs):
         }
 
     prod_rows = _read_product(work_dirs)
-    product_transcripts = {r[2] for r in prod_rows if r[2]}
+    product_transcripts = {r[4] for r in prod_rows if r[4]}
     orphans = product_transcripts - known
     assert not orphans, \
         f"product.dat references transcripts not in codingSequences.db: {list(orphans)[:5]}"
