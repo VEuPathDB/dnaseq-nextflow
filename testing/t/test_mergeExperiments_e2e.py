@@ -454,6 +454,7 @@ def _read_variation_feature(work_dirs):
     path = os.path.join(work_dirs['processSeqVars'], 'variationFeature.dat')
     rows = []
     with open(path) as f:
+        next(f)  # skip header
         for line in f:
             rows.append(line.rstrip('\n').split('\t'))
     return rows
@@ -578,6 +579,7 @@ def _read_allele(work_dirs):
     path = os.path.join(work_dirs['processSeqVars'], 'allele.dat')
     rows = []
     with open(path) as f:
+        next(f)  # skip header
         for line in f:
             rows.append(line.rstrip('\n').split('\t'))
     return rows
@@ -649,6 +651,7 @@ def _read_product(work_dirs):
     path = os.path.join(work_dirs['processSeqVars'], 'product.dat')
     rows = []
     with open(path) as f:
+        next(f)  # skip header
         for line in f:
             rows.append(line.rstrip('\n').split('\t'))
     return rows
@@ -831,6 +834,7 @@ def test_variation_feature_count_lte_vcf_record_count(work_dirs):
 
     vf_path = os.path.join(work_dirs['processSeqVars'], 'variationFeature.dat')
     with open(vf_path) as f:
+        next(f)  # skip header
         vf_count = sum(1 for _ in f)
 
     assert vf_count > 0, "variationFeature.dat is empty"

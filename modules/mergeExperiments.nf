@@ -144,8 +144,7 @@ SQL
 process processSeqVars {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy", pattern: 'output.vcf.gz', saveAs: { params.vcfCacheFile }
-  publishDir "$params.outputDir", mode: "copy", pattern: 'output.vcf.gz.tbi'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'cache.tsv'
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
@@ -163,6 +162,7 @@ process processSeqVars {
   output:
     path 'output.vcf.gz', emit: outputVcf
     path 'output.vcf.gz.tbi', emit: outputVcfIndex
+    path 'cache.tsv', emit: outputCache
     path 'variationFeature.dat', emit: variationFile
     path 'allele.dat', emit: alleleFile
     path 'product.dat', emit: productFile
@@ -180,7 +180,8 @@ process processSeqVars {
       --indel_db $indelDb \\
       --gtf_file $gtfFile \\
       --coverage_file $coverageFile \\
-      --output_vcf output.vcf
+      --output_vcf output.vcf \\
+      --output_cache cache.tsv
 
     mv snpFeature.dat variationFeature.dat
     bgzip output.vcf
@@ -191,6 +192,7 @@ process processSeqVars {
     """
     touch output.vcf.gz
     touch output.vcf.gz.tbi
+    touch cache.tsv
     touch variationFeature.dat
     touch allele.dat
     touch product.dat
