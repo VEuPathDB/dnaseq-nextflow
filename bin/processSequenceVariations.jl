@@ -1,10 +1,11 @@
 #!/usr/bin/env julia
 
 # processSequenceVariations.jl
-# Reads a merged multi-sample FreeBayes VCF and a coordinate-sorted VCF cache file,
+# Reads a merged multi-sample FreeBayes VCF and a coordinate-sorted TSV cache file,
 # streams them concurrently in a sorted merge, annotates coding variants via SQLite
-# transcript/indel databases, and writes four output files:
-#   cache.vcf (CANN-annotated VCF cache), snpFeature.dat, allele.dat, product.dat
+# transcript/indel databases, and writes five output files:
+#   output.vcf (CANN-annotated VCF for SnpEff), cache.tsv (position cache),
+#   snpFeature.dat, allele.dat, product.dat
 # Coverage information is read from a coverage.tsv produced by mergeCoverageBeds.
 
 using SQLite
@@ -367,13 +368,6 @@ struct VCFRecord
 end
 
 # ---------------------------------------------------------------------------
-# VCF cache entry (result of parsing one cache data line)
-# ---------------------------------------------------------------------------
-
-struct CacheEntry
-    cann_str::String
-end
-
 # ---------------------------------------------------------------------------
 # Variation record (mutable, used during processing)
 # ---------------------------------------------------------------------------
@@ -423,7 +417,8 @@ struct ProcessingContext
 end
 
 struct OutputWriters
-    vcf_cache_fh::IO
+    vcf_fh::IO    # CANN-annotated VCF output for SnpEff
+    cache_fh::IO  # TSV position cache for subsequent runs
     snp_fh::IO
     allele_fh::IO
     product_fh::IO
@@ -659,22 +654,22 @@ function get_coverage(
 end
 
 # ---------------------------------------------------------------------------
-# VCF cache I/O
+# TSV cache I/O
+# Cache format: chrom \t pos \t transcript_id \t pos_in_cds  (one row per CDS transcript)
 # ---------------------------------------------------------------------------
 
 """
     open_cache_peeked(path) -> PeekedFile
 
-Opens the VCF cache file for reading. Returns a pre-exhausted PeekedFile
-if the file is absent or empty. Skips VCF header lines (#-prefixed).
+Opens the TSV cache file for reading. Returns a pre-exhausted PeekedFile
+if the file is absent or empty. Skips comment lines (#-prefixed).
 """
 function open_cache_peeked(path::String)::PeekedFile
     if !isfile(path) || filesize(path) == 0
         return PeekedFile(IOBuffer(""), "", true)
     end
 
-    fh = endswith(path, ".gz") ? open(`bgzip -d -c $path`) : open(path, "r")
-    # Skip header lines
+    fh = open(path, "r")
     while !eof(fh)
         line = readline(fh)
         if !startswith(line, '#')
@@ -685,34 +680,64 @@ function open_cache_peeked(path::String)::PeekedFile
             return pf
         end
     end
-    # File contained only headers
     close(fh)
     PeekedFile(IOBuffer(""), "", true)
 end
 
 """
-    parse_cache_vcf_record(line) -> (chrom, pos, ref, alt, cann_str) or nothing
+    parse_cache_tsv_record(line) -> (chrom, pos, transcript_id, pos_in_cds) or nothing
 """
-function parse_cache_vcf_record(line::String)
+function parse_cache_tsv_record(line::AbstractString)
     startswith(line, '#') && return nothing
+    isempty(line)          && return nothing
     fields = split(line, '\t')
-    length(fields) < 8 && return nothing
-
+    length(fields) < 4 && return nothing
     chrom = String(fields[1])
     pos   = parse(Int, fields[2])
-    ref   = String(fields[4])
-    alt   = String(fields[5])
-    info  = String(fields[8])
+    tid   = String(fields[3])
+    pic   = parse(Int, fields[4])
+    (chrom, pos, tid, pic)
+end
 
-    cann_str = "."
-    for part in split(info, ';')
-        if startswith(part, "CANN=")
-            cann_str = String(part[6:end])
-            break
-        end
+"""
+    write_cache_entries(fh, chrom, pos, annotations)
+
+Writes one TSV row per coding transcript annotation.
+"""
+function write_cache_entries(fh::IO, chrom::String, pos::Int, annotations::Vector{PositionAnnotation})
+    for ann in annotations
+        ann.is_coding == 1 || continue
+        write(fh, join([chrom, string(pos), ann.transcript_id, string(ann.pos_in_cds)], '\t'), "\n")
     end
+end
 
-    (chrom, pos, ref, alt, cann_str)
+"""
+    build_annotations_from_cache(entries, reference_strain, transcript_db, transcript_cache)
+        -> Vector{PositionAnnotation}
+
+Reconstructs PositionAnnotations from cached (transcript_id, pos_in_cds) pairs,
+loading sequences from transcript_db as needed.
+"""
+function build_annotations_from_cache(
+    entries::Vector{Tuple{String,Int}},
+    reference_strain::String,
+    transcript_db::SQLite.DB,
+    transcript_cache::TranscriptSequenceCache
+)::Vector{PositionAnnotation}
+    isempty(entries) && return [PositionAnnotation(0, "", 0, 0, 0, "", "")]
+    annotations = PositionAnnotation[]
+    for (tid, pos_in_cds) in entries
+        load_transcript_if_needed!(transcript_cache, transcript_db, tid)
+        ref_seq = get_strain_seq(transcript_cache, tid, reference_strain)
+        if isempty(ref_seq)
+            ref_seq = get_strain_seq(transcript_cache, tid, "reference")
+        end
+        pos_in_codon_val = position_in_codon(pos_in_cds)
+        ref_codon   = isempty(ref_seq) ? "" : extract_codon(ref_seq, pos_in_cds)
+        ref_product = isempty(ref_codon) ? "" : translate_codon(ref_codon)
+        push!(annotations, PositionAnnotation(1, tid, 0, pos_in_cds, pos_in_codon_val, ref_codon, ref_product))
+    end
+    annotations
 end
 
 function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_headers::Vector{String})
@@ -768,11 +793,11 @@ function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
     join(result, ':')
 end
 
-function write_vcf_cache_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
-                                cann_str::String, gvcf_info::String,
-                                format_keys::Vector{String}, sample_data::Vector{String},
-                                ca_values::Vector{String}, dfs_values::Vector{String},
-                                n_orig_alts::Int=1, target_alt_i::Int=1)
+function write_vcf_entry(fh::IO, chrom::String, pos::Int, ref::String, alt::String,
+                          cann_str::String, gvcf_info::String,
+                          format_keys::Vector{String}, sample_data::Vector{String},
+                          ca_values::Vector{String}, dfs_values::Vector{String},
+                          n_orig_alts::Int=1, target_alt_i::Int=1)
     info    = "$(gvcf_info);CANN=$(cann_str)"
     format  = join([format_keys..., "CA", "DFS"], ':')
     remapped = [remap_sample_for_split(s, format_keys, n_orig_alts, target_alt_i) for s in sample_data]
@@ -1022,15 +1047,20 @@ function initialize_processing_context(args, all_strains::Vector{String})
 end
 
 """
-    open_output_writers(output_vcf) -> OutputWriters
+    open_output_writers(output_vcf, output_cache) -> OutputWriters
 """
-function open_output_writers(output_vcf)
-    vcf_cache_fh = open(output_vcf, "w")
-    snp_fh       = open("snpFeature.dat", "w")
-    allele_fh    = open("allele.dat", "w")
-    product_fh   = open("product.dat", "w")
+function open_output_writers(output_vcf, output_cache)
+    vcf_fh    = open(output_vcf, "w")
+    cache_fh  = open(output_cache, "w")
+    write(cache_fh, "#chrom\tpos\ttranscript_id\tpos_in_cds\n")
+    snp_fh    = open("snpFeature.dat", "w")
+    write(snp_fh,     "location\ttranscript_id\tseq_id\treference_strain\tref_allele\thas_nonsynonymous_allele\tmajor_allele\tminor_allele\tmajor_allele_count\tminor_allele_count\tmajor_product\tminor_product\tdistinct_strain_count\tdistinct_allele_count\tis_coding\ttotal_allele_count\thas_stop_codon\tref_codon\n")
+    allele_fh = open("allele.dat", "w")
+    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_count\tavg_coverage\tavg_percent\n")
+    product_fh = open("product.dat", "w")
+    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tpos_in_cds\tdownstream_of_frameshift\n")
 
-    OutputWriters(vcf_cache_fh, snp_fh, allele_fh, product_fh)
+    OutputWriters(vcf_fh, cache_fh, snp_fh, allele_fh, product_fh)
 end
 
 function close_processing_context(ctx::ProcessingContext)
@@ -1039,7 +1069,8 @@ function close_processing_context(ctx::ProcessingContext)
 end
 
 function close_output_writers(writers::OutputWriters)
-    close(writers.vcf_cache_fh)
+    close(writers.vcf_fh)
+    close(writers.cache_fh)
     close(writers.snp_fh)
     close(writers.allele_fh)
     close(writers.product_fh)
@@ -1276,7 +1307,9 @@ function write_allele_and_product_files(
     allele_fh::IO,
     product_fh::IO,
     variations::Vector{Variation},
-    annotation::PositionAnnotation
+    annotation::PositionAnnotation,
+    seq_id::String,
+    location::Int
 )
     annotation.is_coding != 1 && return
 
@@ -1305,6 +1338,8 @@ function write_allele_and_product_files(
         avg_pct = allele_count > 0 ? sum_percent  / allele_count : 0.0
 
         write(allele_fh, join([
+            string(location),
+            seq_id,
             allele,
             string(length(distinct_strains)),
             string(allele_count),
@@ -1327,13 +1362,14 @@ function write_allele_and_product_files(
             product = translate_codon(ec)
             count   = get(all_product_counts, product, 0)
             write(product_fh, join([
+                string(location),
+                seq_id,
                 ec,
                 string(annotation.pos_in_codon_val),
                 annotation.transcript_id,
                 string(count),
                 product,
                 string(annotation.pos_in_cds),
-                string(annotation.pos_in_codon_val),
                 string(v.downstream_of_frameshift)
             ], "\t"), "\n")
         end
@@ -1516,52 +1552,6 @@ function build_cann_string(
     end
 end
 
-"""
-    decode_all_cann_annotations(ce, ctx, transcript_cache) -> Vector{PositionAnnotation}
-
-Reconstructs one PositionAnnotation per unique transcript encoded in ce.cann_str.
-The comma-separated CANN entries may cover multiple overlapping transcripts.
-Returns a single non-coding annotation when cann_str is ".".
-"""
-function decode_all_cann_annotations(
-    ce::CacheEntry,
-    ctx::ProcessingContext,
-    transcript_cache::TranscriptSequenceCache
-)::Vector{PositionAnnotation}
-    ce.cann_str == "." && return [PositionAnnotation(0, "", 0, 0, 0, "", "")]
-
-    # Reconstruct PositionAnnotations from r-keyed entries only.
-    # r-keyed entries encode the reference allele annotation per transcript and carry
-    # all the data needed (ref_codon, ref_product, pos_in_cds, pos_in_codon).
-    # k-keyed entries (alt annotations) are ignored here — they will be recomputed
-    # from SQLite sequences by annotate_variations!.
-    seen_transcripts = Set{String}()
-    annotations      = PositionAnnotation[]
-
-    for entry in split(ce.cann_str, ',')
-        parts = split(entry, '|')
-        length(parts) < 7 && continue
-        startswith(String(parts[1]), 'r') || continue   # only r-keyed entries
-
-        transcript_id = String(parts[5])
-        isempty(transcript_id) && continue
-        transcript_id in seen_transcripts && continue
-        push!(seen_transcripts, transcript_id)
-
-        ref_codon        = parts[2] == "." ? "" : String(parts[2])
-        ref_product      = parts[3] == "." ? "" : String(parts[3])
-        pos_in_cds       = parts[6] == "." ? 0  : parse(Int, parts[6])
-        pos_in_codon_val = parts[7] == "." ? 0  : parse(Int, parts[7])
-
-        debug_log("    Loading sequences for transcript (cache hit): ", transcript_id)
-        load_transcript_if_needed!(transcript_cache, ctx.transcript_db, transcript_id)
-
-        push!(annotations, PositionAnnotation(1, transcript_id, 0, pos_in_cds,
-                                              pos_in_codon_val, ref_codon, ref_product))
-    end
-
-    isempty(annotations) ? [PositionAnnotation(0, "", 0, 0, 0, "", "")] : annotations
-end
 
 # ---------------------------------------------------------------------------
 # Core record handler
@@ -1571,11 +1561,11 @@ end
     handle_variant_record!(records, cache_entries, ctx, writers, transcript_cache, all_strains, chrom_coverage) -> Bool
 
 Processes one variant VCF record end-to-end. Returns true if output was written.
-cache_entries: Dict keyed by (ref, alt) for positions with a cache hit at this coordinate.
+cache_entries: Vector of (transcript_id, pos_in_cds) pairs from the TSV cache, or empty.
 """
 function handle_variant_record!(
     records::Vector{VCFRecord},
-    cache_entries::Dict{Tuple{String,String},CacheEntry},
+    cache_entries::Vector{Tuple{String,Int}},
     ctx::ProcessingContext,
     writers::OutputWriters,
     transcript_cache::TranscriptSequenceCache,
@@ -1593,18 +1583,21 @@ function handle_variant_record!(
     end
     isempty(variations) && return false
 
-    # For cache lookup, CANN annotation, and VCF cache writing: use only the first SNP record.
+    # For CANN annotation and VCF output: use only the first SNP record.
     # Indel records at the same position are included in variation tables but not AA annotation.
     snp_records = filter(is_snp_record, records)
     record = isempty(snp_records) ? records[1] : snp_records[1]
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = if !isempty(cache_entries)
-        ce = first(values(cache_entries))
-        decode_all_cann_annotations(ce, ctx, transcript_cache)
+        debug_log("    Cache hit at ", seq_id, ":", location)
+        build_annotations_from_cache(cache_entries, ctx.reference_strain, ctx.transcript_db, transcript_cache)
     else
         annotate_position_all(seq_id, location, ctx, transcript_cache)
     end
+
+    # Write TSV cache entries for this position (one row per coding transcript)
+    write_cache_entries(writers.cache_fh, seq_id, location, annotations)
 
     # Accumulate per-sample CANN entries across all annotations (transcripts).
     # alt_strain_entries: alt -> strain -> [entry per transcript, in annotation order]
@@ -1632,10 +1625,10 @@ function handle_variant_record!(
         any_output = true
 
         write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
-        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation)
+        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation, seq_id, location)
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
-        # v.base may be an IUPAC ambiguity code for het calls; the VCF cache write loop below
+        # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
         # iterates record.alts, so we must use the original allele strings as keys here.
         for v in variations
             v.strain == ctx.reference_strain && continue
@@ -1659,7 +1652,6 @@ function handle_variant_record!(
     any_output || return false
 
     # Build r-keyed CANN entries for the reference allele (one per coding transcript).
-    # These are identical across all alt cache lines at this position.
     ref_keys         = String[]
     ref_cann_entries = String[]
     for (i, annotation) in enumerate(annotations)
@@ -1690,11 +1682,8 @@ function handle_variant_record!(
     end
 
     # Build per-alt CANN key assignments and per-strain CA mappings.
-    # Unique annotation entries across all strains are deduplicated; each unique
-    # entry gets a k-key. Strains with the same annotation share a key.
-    # k-keys are local to each alt (reset per alt).
-    alt_cann_entries   = Dict{String, Vector{String}}()          # alt -> ordered unique keyed entries
-    alt_strain_to_ca   = Dict{String, Dict{String, Vector{String}}}()  # alt -> strain -> [keys per transcript]
+    alt_cann_entries   = Dict{String, Vector{String}}()
+    alt_strain_to_ca   = Dict{String, Dict{String, Vector{String}}}()
 
     for (alt, strain_map) in alt_strain_entries
         entry_to_key   = Dict{String, String}()
@@ -1722,11 +1711,11 @@ function handle_variant_record!(
         alt_strain_to_ca[alt] = strain_keys
     end
 
-    # Write one VCF cache entry per unique alt.
+    # Write one VCF output entry per unique alt (for SnpEff downstream).
     n_orig_alts = length(record.alts)
     for (alt_i, alt) in enumerate(record.alts)
         if alt == "*"
-            @warn "Unexpected * allele in VCF cache write at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
+            @warn "Unexpected * allele in VCF output at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
             continue
         end
         haskey(alt_cann_entries, alt) || continue
@@ -1740,10 +1729,10 @@ function handle_variant_record!(
                                     ref_keys, all_strains, strain_to_alt_keys)
         strain_to_dfs = Dict{String,String}(v.strain => string(v.downstream_of_frameshift) for v in variations)
         dfs_values = [get(strain_to_dfs, s, ".") for s in all_strains]
-        write_vcf_cache_entry(writers.vcf_cache_fh, seq_id, location, record.ref, alt,
-                              full_cann, record.info, record.format_keys,
-                              modified_sample_data, ca_values, dfs_values,
-                              n_orig_alts, alt_i)
+        write_vcf_entry(writers.vcf_fh, seq_id, location, record.ref, alt,
+                        full_cann, record.info, record.format_keys,
+                        modified_sample_data, ca_values, dfs_values,
+                        n_orig_alts, alt_i)
     end
 
     true
@@ -1776,9 +1765,9 @@ function main()
     debug_log("Context: ", length(ctx.all_strains), " strains, ",
               length(ctx.cds_intervals), " CDS intervals")
 
-    # Open output writers and write VCF cache header
-    writers = open_output_writers(args["output_vcf"])
-    write_vcf_cache_header(writers.vcf_cache_fh, ctx.all_strains, info_headers)
+    # Open output writers and write VCF header
+    writers = open_output_writers(args["output_vcf"], args["output_cache"])
+    write_vcf_cache_header(writers.vcf_fh, ctx.all_strains, info_headers)
 
     transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
 
@@ -1813,14 +1802,14 @@ function main()
         end
 
         # Collect all cache entries at this (chrom, pos)
-        cache_entries = Dict{Tuple{String,String},CacheEntry}()
+        cache_entries = Tuple{String,Int}[]
         while !cache_pf.exhausted
             ck = peek_sort_key(cache_pf.line, chrom_rank)
             ck != vcf_start && break
-            parsed = parse_cache_vcf_record(cache_pf.line)
+            parsed = parse_cache_tsv_record(cache_pf.line)
             if !isnothing(parsed)
-                (_, _, ref, alt, cann_str) = parsed
-                cache_entries[(ref, alt)] = CacheEntry(cann_str)
+                (_, _, tid, pos_in_cds) = parsed
+                push!(cache_entries, (tid, pos_in_cds))
             end
             advance!(cache_pf)
         end
@@ -1847,4 +1836,6 @@ end
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end
