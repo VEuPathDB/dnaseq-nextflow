@@ -94,3 +94,12 @@ nextflow run main.nf -entry runTests -profile tests
 ```
 
 Tests in `testing/t/` use Perl's `Test2::V0` framework, run via `prove`.
+
+Additional tests (not wired into the Nextflow test profile — run manually):
+```bash
+# Julia unit tests
+julia testing/t/handleVariantRecord.jl
+
+# Python unit tests
+python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v
+```

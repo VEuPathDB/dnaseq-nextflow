@@ -55,6 +55,8 @@ def main():
                     continue
                 # One row per (location, seq_id, allele, transcript_id). When SnpEff emits
                 # multiple effects for the same transcript+allele, first one wins.
+                # SnpEff orders ANN entries by impact severity (HIGH first), so first-wins
+                # preserves the most severe annotation for each transcript.
                 key = (location, seq_id, allele, transcript_id)
                 if key in seen:
                     continue
