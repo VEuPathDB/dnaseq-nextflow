@@ -862,19 +862,6 @@ function gt_to_base(gt::String, ref::String, alts::Vector{String})::String
 end
 
 """
-    gt_allele_idx(gt) -> Int
-
-Returns the primary alt allele index from GT (0 = ref). Used for percent computation.
-"""
-function gt_allele_idx(gt::String)::Int
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-    isnothing(sep_idx) && return parse(Int, gt)
-    a1 = parse(Int, gt[1:sep_idx-1])
-    a2 = parse(Int, gt[sep_idx+1:end])
-    a1 != 0 ? a1 : a2
-end
-
-"""
     nonref_alt_alleles(gt, alts) -> Vector{String}
 
 Returns the unique non-ref allele strings carried by this sample, in index order.
@@ -1376,7 +1363,11 @@ function write_allele_and_product_files(
         for (strain, cov, pct) in entries
             push!(distinct_strains, strain)
             sid = get(sample_id_map, strain, 0)
-            sid > 0 && push!(strain_ids, sid)
+            if sid > 0
+                push!(strain_ids, sid)
+            else
+                @warn "strain not found in sample_id_map, omitted from strain_ids" strain
+            end
             sum_coverage += cov
             sum_percent  += pct
         end
