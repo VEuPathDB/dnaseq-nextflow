@@ -213,8 +213,8 @@ process snpEff {
     path sequencesFa
 
   output:
-    path 'merged.ann.vcf.gz'
-    path 'merged.ann.vcf.gz.tbi'
+    path 'merged.ann.vcf.gz',     emit: annotatedVcf
+    path 'merged.ann.vcf.gz.tbi', emit: annotatedVcfIndex
 
   script:
     """
@@ -249,6 +249,7 @@ process parseSnpEffAnnotations {
 
   script:
     """
+    set -euo pipefail
     parseSnpEffAnnotations.py --vcf $annVcf --output snpeff.dat
     """
 

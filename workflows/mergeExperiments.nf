@@ -47,6 +47,6 @@ workflow me {
 
     snpEff(processSeqVarsResults.outputVcf, params.gtfFile, params.genomeFastaFile)
 
-    parseSnpEffAnnotations(snpEff.out[0])
+    parseSnpEffAnnotations(snpEff.out.annotatedVcf)
 
 }
