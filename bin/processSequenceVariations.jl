@@ -378,8 +378,9 @@ mutable struct Variation
     strain::String
     reference::String
     base::String
+    alt_allele::String   # actual VCF alt base for het calls; empty otherwise
     coverage::String
-    percent::String
+    percent::String      # alt_fraction = AO/(RO+AO)*100; for het, ref_fraction = 100 - percent
     quality::String
     pvalue::String
     snp_source_id::String
@@ -397,7 +398,7 @@ mutable struct Variation
 end
 
 function Variation()
-    Variation("", 0, "", "", "", "", "", "", "", "",
+    Variation("", 0, "", "", "", "", "", "", "", "", "",
               0, 0, 0, 0, "", String[], "", "", 0, 0, 0)
 end
 
@@ -414,6 +415,7 @@ struct ProcessingContext
     indel_db::SQLite.DB
     fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}
     all_strains::Vector{String}
+    sample_id_map::Dict{String,Int}
 end
 
 struct OutputWriters
@@ -422,6 +424,15 @@ struct OutputWriters
     snp_fh::IO
     allele_fh::IO
     product_fh::IO
+end
+
+function write_sample_dat(all_strains::Vector{String}, path::String="sample.dat")
+    open(path, "w") do fh
+        write(fh, "strain_id\tsample_name\n")
+        for (i, name) in enumerate(all_strains)
+            write(fh, "$(i)\t$(name)\n")
+        end
+    end
 end
 
 struct PositionAnnotation
@@ -858,7 +869,9 @@ Returns the primary alt allele index from GT (0 = ref). Used for percent computa
 function gt_allele_idx(gt::String)::Int
     sep_idx = findfirst(c -> c == '/' || c == '|', gt)
     isnothing(sep_idx) && return parse(Int, gt)
-    parse(Int, gt[1:sep_idx-1])
+    a1 = parse(Int, gt[1:sep_idx-1])
+    a2 = parse(Int, gt[sep_idx+1:end])
+    a1 != 0 ? a1 : a2
 end
 
 """
@@ -890,21 +903,32 @@ function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
 end
 
 """
-    compute_percent(fmt, allele_idx) -> String
+    compute_percent(fmt, gt) -> String
 
-Computes AO/(RO+AO)*100 for alt allele. Returns "0.0" for ref or missing.
+Computes AO/(RO+AO)*100 for the alt allele. For het calls (0/1), picks the non-ref allele
+index so percent stores the alt fraction; ref fraction = 100 - percent.
+Returns "0.0" for ref-only or missing data.
 """
-function compute_percent(fmt::Dict{String,String}, allele_idx::Int)::String
-    allele_idx == 0 && return "0.0"
-
+function compute_percent(fmt::Dict{String,String}, gt::String)::String
     ao_str = get(fmt, "AO", "")
     ro_str = get(fmt, "RO", "0")
     isempty(ao_str) && return "0.0"
 
-    ao_values = split(ao_str, ',')
-    allele_idx > length(ao_values) && return "0.0"
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    if isnothing(sep_idx)
+        aidx = parse(Int, gt)
+        aidx == 0 && return "0.0"
+    else
+        a1 = parse(Int, gt[1:sep_idx-1])
+        a2 = parse(Int, gt[sep_idx+1:end])
+        aidx = a1 != 0 ? a1 : a2
+        aidx == 0 && return "0.0"
+    end
 
-    ao = parse(Float64, ao_values[allele_idx])
+    ao_values = split(ao_str, ',')
+    aidx > length(ao_values) && return "0.0"
+
+    ao = parse(Float64, ao_values[aidx])
     ro = parse(Float64, isempty(ro_str) ? "0" : ro_str)
     total = ro + ao
     total <= 0 && return "0.0"
@@ -964,9 +988,13 @@ function build_variations_from_record(
             continue
         end
 
-        aidx = gt_allele_idx(gt)
-        pct  = compute_percent(fmt, aidx)
+        pct  = compute_percent(fmt, gt)
         gq   = get(fmt, "GQ", "0")
+
+        # Detect het call: GT has separator and both alleles differ (e.g. 0/1)
+        sep_idx  = findfirst(c -> c == '/' || c == '|', gt)
+        is_het   = !isnothing(sep_idx) && gt[1:sep_idx-1] != gt[sep_idx+1:end]
+        alt_alts = is_het ? nonref_alt_alleles(gt, record.alts) : String[]
 
         v = Variation()
         v.sequence_source_id = record.chrom
@@ -974,6 +1002,7 @@ function build_variations_from_record(
         v.strain             = strain
         v.reference          = record.ref
         v.base               = base
+        v.alt_allele         = isempty(alt_alts) ? "" : alt_alts[1]
         v.coverage           = string(dp)
         v.percent            = pct
         v.quality            = gq
@@ -1042,7 +1071,8 @@ function initialize_processing_context(args, all_strains::Vector{String})
         transcript_db,
         indel_db,
         fs_info,
-        all_strains
+        all_strains,
+        Dict{String,Int}(name => i for (i, name) in enumerate(all_strains))
     )
 end
 
@@ -1056,7 +1086,7 @@ function open_output_writers(output_vcf, output_cache)
     snp_fh    = open("snpFeature.dat", "w")
     write(snp_fh,     "location\ttranscript_id\tseq_id\treference_strain\tref_allele\thas_nonsynonymous_allele\tmajor_allele\tminor_allele\tmajor_allele_count\tminor_allele_count\tmajor_product\tminor_product\tdistinct_strain_count\tdistinct_allele_count\tis_coding\ttotal_allele_count\thas_stop_codon\tref_codon\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_count\tavg_coverage\tavg_percent\n")
+    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_count\tavg_coverage\tavg_percent\tstrain_ids\n")
     product_fh = open("product.dat", "w")
     write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tpos_in_cds\tdownstream_of_frameshift\n")
 
@@ -1217,6 +1247,7 @@ function build_reference_variation(
     Variation(
         seq_id, location, reference_strain,
         ref_allele, ref_allele,
+        "",      # alt_allele: empty — reference variation is never a het call
         "", "",
         "", "",
         "",
@@ -1253,10 +1284,17 @@ function write_snp_feature(
     product_counts  = Dict{String,Int}()
     strain_set      = Set{String}()
     has_stop_codon  = 0
-    total_allele_count = length(variations)
+    total_allele_count = length(variations)  # +1 per het call below
 
     for v in variations
-        allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+        if !isempty(v.alt_allele)
+            # Het call: contributes one ref-allele and one alt-allele observation
+            allele_counts[v.reference]  = get(allele_counts, v.reference,  0) + 1
+            allele_counts[v.alt_allele] = get(allele_counts, v.alt_allele, 0) + 1
+            total_allele_count += 1
+        else
+            allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+        end
         push!(strain_set, v.strain)
         for p in v.product
             product_counts[p] = get(product_counts, p, 0) + 1
@@ -1309,44 +1347,55 @@ function write_allele_and_product_files(
     variations::Vector{Variation},
     annotation::PositionAnnotation,
     seq_id::String,
-    location::Int
+    location::Int,
+    sample_id_map::Dict{String,Int}
 )
-    annotation.is_coding != 1 && return
+    # Expand het calls into ref and alt component entries; hom calls contribute one entry.
+    # Each entry: (allele, strain, coverage, percent)
+    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64}}}()
 
-    allele_counts = Dict{String,Int}()
     for v in variations
-        allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
+        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
+
+        if !isempty(v.alt_allele)
+            # Het call: emit ref component (100-pct) and alt component (pct) separately
+            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct))
+            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct))
+        else
+            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct))
+        end
     end
 
-    for allele in keys(allele_counts)
+    for (allele, entries) in allele_entries
         distinct_strains = Set{String}()
-        allele_count = 0
+        strain_ids       = Set{Int}()
         sum_coverage = 0.0
         sum_percent  = 0.0
 
-        for v in variations
-            v.base != allele && continue
-            allele_count += 1
-            push!(distinct_strains, v.strain)
-            cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-            pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
+        for (strain, cov, pct) in entries
+            push!(distinct_strains, strain)
+            sid = get(sample_id_map, strain, 0)
+            sid > 0 && push!(strain_ids, sid)
             sum_coverage += cov
             sum_percent  += pct
         end
 
-        avg_cov = allele_count > 0 ? sum_coverage / allele_count : 0.0
-        avg_pct = allele_count > 0 ? sum_percent  / allele_count : 0.0
-
+        n        = length(entries)
+        ids_str  = "{" * join(sort(collect(strain_ids)), ",") * "}"
         write(allele_fh, join([
             string(location),
             seq_id,
             allele,
             string(length(distinct_strains)),
-            string(allele_count),
-            @sprintf("%.2f", avg_cov),
-            @sprintf("%.2f", avg_pct)
+            string(n),
+            @sprintf("%.2f", sum_coverage / n),
+            @sprintf("%.2f", sum_percent  / n),
+            ids_str
         ], "\t"), "\n")
     end
+
+    annotation.is_coding != 1 && return
 
     all_product_counts = Dict{String,Int}()
     for v in variations
@@ -1769,7 +1818,7 @@ function handle_variant_record!(
         any_output = true
 
         write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
-        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation, seq_id, location)
+        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation, seq_id, location, ctx.sample_id_map)
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
@@ -1828,6 +1877,7 @@ function main()
     debug_log("Opening VCF: ", args["vcf_file"])
     (vcf_pf, all_strains, chrom_rank, info_headers) = open_vcf_peeked(args["vcf_file"])
     debug_log("VCF: ", length(all_strains), " strains")
+    write_sample_dat(all_strains)
 
     # Open VCF cache (may be absent/empty on first run)
     debug_log("Opening cache: ", args["cache_file"])

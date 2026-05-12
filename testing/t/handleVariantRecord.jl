@@ -240,6 +240,75 @@ end
     @test isempty(result)
 end
 
+@testset "initialize_processing_context builds sample_id_map from all_strains" begin
+    tmp_dir = mktempdir()
+    transcript_db_path = joinpath(tmp_dir, "transcripts.db")
+    indel_db_path      = joinpath(tmp_dir, "indels.db")
+    SQLite.DB(transcript_db_path) |> close
+    let db = SQLite.DB(indel_db_path)
+        SQLite.execute(db, "CREATE TABLE indels (strain TEXT, transcript_id TEXT, position INTEGER, shift_amount INTEGER)")
+        close(db)
+    end
+    gtf_path = joinpath(tmp_dir, "empty.gtf")
+    write(gtf_path, "")
+
+    args = Dict(
+        "transcript_db"      => transcript_db_path,
+        "indel_db"           => indel_db_path,
+        "gtf_file"           => gtf_path,
+        "reference_strain"   => "refStrain",
+        "undone_strains_file"=> "",
+    )
+    all_strains = ["strainA", "strainB", "strainC"]
+    ctx = initialize_processing_context(args, all_strains)
+
+    @test ctx.sample_id_map["strainA"] == 1
+    @test ctx.sample_id_map["strainB"] == 2
+    @test ctx.sample_id_map["strainC"] == 3
+    @test length(ctx.sample_id_map) == 3
+end
+
+@testset "write_sample_dat writes strain_id/sample_name TSV" begin
+    tmp = tempname()
+    write_sample_dat(["alpha", "beta", "gamma"], tmp)
+    lines = readlines(tmp)
+    @test lines[1] == "strain_id\tsample_name"
+    @test lines[2] == "1\talpha"
+    @test lines[3] == "2\tbeta"
+    @test lines[4] == "3\tgamma"
+    @test length(lines) == 4
+end
+
+@testset "write_allele_and_product_files emits strain_ids array in allele.dat" begin
+    sample_id_map = Dict{String,Int}("s1" => 1, "s2" => 2, "s3" => 3)
+
+    # Three hom variations: s1→A, s2→G, s3→G
+    v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"
+    v2 = Variation(); v2.strain = "s2"; v2.base = "G"; v2.reference = "A"; v2.coverage = "30"; v2.percent = "100"
+    v3 = Variation(); v3.strain = "s3"; v3.base = "G"; v3.reference = "A"; v3.coverage = "30"; v3.percent = "100"
+    variations = [v1, v2, v3]
+
+    annotation = PositionAnnotation(0, "", 0, 0, 0, "", "")
+
+    allele_buf  = IOBuffer()
+    product_buf = IOBuffer()
+    write_allele_and_product_files(allele_buf, product_buf, variations, annotation, "LmjF.01", 100, sample_id_map)
+
+    lines = filter(!isempty, split(String(take!(allele_buf)), "\n"))
+    @test length(lines) == 2   # one row per distinct allele
+
+    a_row = findfirst(l -> split(l, "\t")[3] == "A", lines)
+    g_row = findfirst(l -> split(l, "\t")[3] == "G", lines)
+    @test !isnothing(a_row)
+    @test !isnothing(g_row)
+
+    a_fields = split(lines[a_row], "\t")
+    g_fields = split(lines[g_row], "\t")
+
+    @test a_fields[8] == "{1}"
+    @test g_fields[8] == "{2,3}"   # sorted
+end
+
 @testset "collect_cann_entries_for_annotation returns entry keyed by alt allele" begin
     ann    = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                               pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
