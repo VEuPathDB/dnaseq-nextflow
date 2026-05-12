@@ -1554,6 +1554,151 @@ end
 
 
 # ---------------------------------------------------------------------------
+# Core record handler — extracted helpers
+# ---------------------------------------------------------------------------
+
+"""
+    pick_snp_record(records) -> VCFRecord
+
+Returns the first SNP record from a group of records sharing the same position.
+Falls back to records[1] when no SNP record exists (all-indel group).
+"""
+function pick_snp_record(records::Vector{VCFRecord})::VCFRecord
+    snp_records = filter(is_snp_record, records)
+    isempty(snp_records) ? records[1] : snp_records[1]
+end
+
+"""
+    build_ref_cann_entries(annotations) -> (Vector{String}, Vector{String})
+
+Builds the r-keyed CANN strings for the reference allele.
+Returns (ref_keys, ref_cann_entries). Non-coding and dot entries are skipped.
+"""
+function build_ref_cann_entries(annotations::Vector{PositionAnnotation})::Tuple{Vector{String}, Vector{String}}
+    ref_keys         = String[]
+    ref_cann_entries = String[]
+    for annotation in annotations
+        annotation.is_coding == 0 && continue
+        key   = "r$(length(ref_keys))"
+        entry = build_ref_cann_entry(key, annotation)
+        entry == "." && continue
+        push!(ref_keys, key)
+        push!(ref_cann_entries, entry)
+    end
+    (ref_keys, ref_cann_entries)
+end
+
+"""
+    fill_missing_coverage_gt(record, all_strains, chrom_coverage) -> Vector{String}
+
+Returns a copy of record.sample_data with GT=0 and DP filled in for samples
+that have a missing/dot GT but are covered at this position.
+"""
+function fill_missing_coverage_gt(
+    record::VCFRecord,
+    all_strains::Vector{String},
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
+)::Vector{String}
+    gt_idx = findfirst(==("GT"), record.format_keys)
+    dp_idx = findfirst(==("DP"), record.format_keys)
+    modified = copy(record.sample_data)
+    for (i, strain) in enumerate(all_strains)
+        i > length(modified) && continue
+        fmt = parse_format_field(record.format_keys, modified[i])
+        gt = get(fmt, "GT", "")
+        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
+        (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
+        covered || continue
+        fields = fill(".", length(record.format_keys))
+        !isnothing(gt_idx) && (fields[gt_idx] = "0")
+        !isnothing(dp_idx) && (fields[dp_idx] = string(round(Int, dp)))
+        modified[i] = join(fields, ":")
+    end
+    modified
+end
+
+"""
+    assign_cann_keys(alt_strain_entries, all_strains) -> (Dict, Dict)
+
+Deduplicates CANN strings and assigns k0/k1/... keys in canonical strain order.
+Returns (alt_cann_entries, alt_strain_to_ca):
+  - alt_cann_entries:  alt -> ordered unique keyed CANN strings
+  - alt_strain_to_ca:  alt -> strain -> assigned key vector
+"""
+function assign_cann_keys(
+    alt_strain_entries::Dict{String, Dict{String, Vector{String}}},
+    all_strains::Vector{String}
+)::Tuple{Dict{String, Vector{String}}, Dict{String, Dict{String, Vector{String}}}}
+    alt_cann_entries = Dict{String, Vector{String}}()
+    alt_strain_to_ca = Dict{String, Dict{String, Vector{String}}}()
+
+    for (alt, strain_map) in alt_strain_entries
+        entry_to_key  = Dict{String, String}()
+        ordered_keyed = String[]
+
+        for strain in all_strains
+            strain_entries = get(strain_map, strain, nothing)
+            isnothing(strain_entries) && continue
+            for entry in strain_entries
+                entry == "." && continue
+                if !haskey(entry_to_key, entry)
+                    key = "k$(length(entry_to_key))"
+                    entry_to_key[entry] = key
+                    push!(ordered_keyed, replace(entry, r"^k0\|" => "$(key)|", count=1))
+                end
+            end
+        end
+
+        alt_cann_entries[alt] = ordered_keyed
+
+        strain_keys = Dict{String, Vector{String}}()
+        for (strain, strain_entries) in strain_map
+            strain_keys[strain] = [get(entry_to_key, e, ".") for e in strain_entries]
+        end
+        alt_strain_to_ca[alt] = strain_keys
+    end
+
+    (alt_cann_entries, alt_strain_to_ca)
+end
+
+"""
+    collect_cann_entries_for_annotation(variations, annotation, record, reference_strain, all_strains, strain_idx_map)
+        -> Dict{String, Dict{String, Vector{String}}}
+
+Collects per-alt, per-strain CANN entry strings for one annotation (transcript).
+Skips the reference strain and variations that match the reference.
+Returns alt -> strain -> [entry, ...].
+"""
+function collect_cann_entries_for_annotation(
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    record::VCFRecord,
+    reference_strain::String,
+    all_strains::Vector{String},
+    strain_idx_map::Dict{String, Int}
+)::Dict{String, Dict{String, Vector{String}}}
+    result = Dict{String, Dict{String, Vector{String}}}()
+    for v in variations
+        v.strain == reference_strain && continue
+        v.matches_reference == 1 && continue
+        sidx = get(strain_idx_map, v.strain, 0)
+        (sidx == 0 || sidx > length(record.sample_data)) && continue
+        fmt = parse_format_field(record.format_keys, record.sample_data[sidx])
+        gt  = get(fmt, "GT", "")
+        for alt_allele in nonref_alt_alleles(gt, record.alts)
+            if alt_allele == "*"
+                @warn "Unexpected * allele in CANN annotation at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
+                continue
+            end
+            entry = build_cann_string(record.ref, alt_allele, v, annotation)
+            strain_map = get!(result, alt_allele, Dict{String, Vector{String}}())
+            push!(get!(strain_map, v.strain, String[]), entry)
+        end
+    end
+    result
+end
+
+# ---------------------------------------------------------------------------
 # Core record handler
 # ---------------------------------------------------------------------------
 
@@ -1585,8 +1730,7 @@ function handle_variant_record!(
 
     # For CANN annotation and VCF output: use only the first SNP record.
     # Indel records at the same position are included in variation tables but not AA annotation.
-    snp_records = filter(is_snp_record, records)
-    record = isempty(snp_records) ? records[1] : snp_records[1]
+    record = pick_snp_record(records)
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = if !isempty(cache_entries)
@@ -1630,86 +1774,19 @@ function handle_variant_record!(
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
         # iterates record.alts, so we must use the original allele strings as keys here.
-        for v in variations
-            v.strain == ctx.reference_strain && continue
-            v.matches_reference == 1 && continue
-            sidx = get(strain_idx_map, v.strain, 0)
-            (sidx == 0 || sidx > length(record.sample_data)) && continue
-            fmt = parse_format_field(record.format_keys, record.sample_data[sidx])
-            gt  = get(fmt, "GT", "")
-            for alt_allele in nonref_alt_alleles(gt, record.alts)
-                if alt_allele == "*"
-                    @warn "Unexpected * allele in CANN annotation at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
-                    continue
-                end
-                entry = build_cann_string(record.ref, alt_allele, v, annotation)
-                strain_map = get!(alt_strain_entries, alt_allele, Dict{String, Vector{String}}())
-                push!(get!(strain_map, v.strain, String[]), entry)
+        for (alt, smap) in collect_cann_entries_for_annotation(variations, annotation, record, ctx.reference_strain, all_strains, strain_idx_map)
+            for (strain, entries) in smap
+                strain_map = get!(alt_strain_entries, alt, Dict{String, Vector{String}}())
+                append!(get!(strain_map, strain, String[]), entries)
             end
         end
     end
 
     any_output || return false
 
-    # Build r-keyed CANN entries for the reference allele (one per coding transcript).
-    ref_keys         = String[]
-    ref_cann_entries = String[]
-    for (i, annotation) in enumerate(annotations)
-        annotation.is_coding == 0 && continue
-        key   = "r$(length(ref_keys))"
-        entry = build_ref_cann_entry(key, annotation)
-        entry == "." && continue
-        push!(ref_keys, key)
-        push!(ref_cann_entries, entry)
-    end
-
-    # Build modified sample data: fill in GT=0 and DP for samples that are covered
-    # at this position but were left as missing GT by bcftools merge.
-    gt_idx = findfirst(==("GT"), record.format_keys)
-    dp_idx = findfirst(==("DP"), record.format_keys)
-    modified_sample_data = copy(record.sample_data)
-    for (i, strain) in enumerate(all_strains)
-        i > length(modified_sample_data) && continue
-        fmt = parse_format_field(record.format_keys, modified_sample_data[i])
-        gt = get(fmt, "GT", "")
-        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
-        (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
-        covered || continue
-        fields = fill(".", length(record.format_keys))
-        !isnothing(gt_idx) && (fields[gt_idx] = "0")
-        !isnothing(dp_idx) && (fields[dp_idx] = string(round(Int, dp)))
-        modified_sample_data[i] = join(fields, ":")
-    end
-
-    # Build per-alt CANN key assignments and per-strain CA mappings.
-    alt_cann_entries   = Dict{String, Vector{String}}()
-    alt_strain_to_ca   = Dict{String, Dict{String, Vector{String}}}()
-
-    for (alt, strain_map) in alt_strain_entries
-        entry_to_key   = Dict{String, String}()
-        ordered_keyed  = String[]
-
-        for strain in all_strains  # canonical strain order for deterministic key assignment
-            strain_entries = get(strain_map, strain, nothing)
-            isnothing(strain_entries) && continue
-            for entry in strain_entries
-                entry == "." && continue
-                if !haskey(entry_to_key, entry)
-                    key = "k$(length(entry_to_key))"
-                    entry_to_key[entry] = key
-                    push!(ordered_keyed, replace(entry, r"^k0:" => "$(key):", count=1))
-                end
-            end
-        end
-
-        alt_cann_entries[alt] = ordered_keyed
-
-        strain_keys = Dict{String, Vector{String}}()
-        for (strain, strain_entries) in strain_map
-            strain_keys[strain] = [get(entry_to_key, e, ".") for e in strain_entries]
-        end
-        alt_strain_to_ca[alt] = strain_keys
-    end
+    (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
+    modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage)
+    (alt_cann_entries, alt_strain_to_ca) = assign_cann_keys(alt_strain_entries, all_strains)
 
     # Write one VCF output entry per unique alt (for SnpEff downstream).
     n_orig_alts = length(record.alts)
