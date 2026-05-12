@@ -94,6 +94,23 @@ def test_recombine_gt_1_2_and_2_1():
     assert parts[1] == '12'     # DP (Number=1): kept from row0
 
 
+def test_recombine_het_snp_pair():
+    # Real data: LmjF.01:141701 T→{C,G} — two SNP alts split by bcftools norm -a.
+    # Confirms recombination works for SNPs, not just indels.
+    row0 = _make_row('LmjF.01', 141701, 'T', 'C,*', FMT,
+                     '1/2:56:13,26,.:13:863:26,.:1788,.:-138.029,-13.1137,-69.6537,.,.,.')
+    row1 = _make_row('LmjF.01', 141701, 'T', 'G,*', FMT,
+                     '2/1:56:13,17,.:13:863:17,.:1185,.:-138.029,-64.4548,-123.685,.,.,.')
+    result = _recombine([row0, row1])
+    assert result is not None
+    assert result[4] == 'C,G'
+    parts = result[9].split(':')
+    assert parts[0] == '1/2'
+    assert parts[2] == '13,26,17'  # AD (Number=R): REF + C + G
+    assert parts[5] == '26,17'    # AO (Number=A): C + G
+    assert parts[1] == '56'       # DP (Number=1): kept from row0
+
+
 def test_recombine_gt_2_2_fallback_positional():
     # Real data: LmjF.01:66728 A→{AGT,T} where both rows have GT=2/2.
     # Allele 2 in each row points to * — neither row's GT references the real alt.
