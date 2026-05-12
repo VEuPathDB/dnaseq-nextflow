@@ -44,15 +44,17 @@ def main():
                 continue
 
             for entry in ann_value.split(","):
-                parts = entry.split("|")
+                parts = [p.strip() for p in entry.split("|")]
                 if len(parts) < 7:
                     continue
                 allele        = parts[0]
                 effect        = parts[1]
                 impact        = parts[2]
                 transcript_id = parts[6]
-                if not transcript_id or not impact or not effect:
+                if not allele or not transcript_id or not impact or not effect:
                     continue
+                # One row per (location, seq_id, allele, transcript_id). When SnpEff emits
+                # multiple effects for the same transcript+allele, first one wins.
                 key = (location, seq_id, allele, transcript_id)
                 if key in seen:
                     continue
