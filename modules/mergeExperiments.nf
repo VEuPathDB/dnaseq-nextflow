@@ -148,6 +148,7 @@ process processSeqVars {
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'sample.dat'
 
   input:
     path vcfFile
@@ -166,6 +167,7 @@ process processSeqVars {
     path 'variationFeature.dat', emit: variationFile
     path 'allele.dat', emit: alleleFile
     path 'product.dat', emit: productFile
+    path 'sample.dat', emit: sampleFile
 
   script:
     """
@@ -196,6 +198,7 @@ process processSeqVars {
     touch variationFeature.dat
     touch allele.dat
     touch product.dat
+    touch sample.dat
     """
 }
 
@@ -230,5 +233,27 @@ process snpEff {
   stub:
     """
     touch merged.ann.vcf.gz merged.ann.vcf.gz.tbi
+    """
+}
+
+
+process parseSnpEffAnnotations {
+  container 'veupathdb/shortreadaligner:1.0.0'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'snpeff.dat'
+
+  input:
+    path annVcf
+
+  output:
+    path 'snpeff.dat', emit: snpeffFile
+
+  script:
+    """
+    parseSnpEffAnnotations.py --vcf $annVcf --output snpeff.dat
+    """
+
+  stub:
+    """
+    touch snpeff.dat
     """
 }
