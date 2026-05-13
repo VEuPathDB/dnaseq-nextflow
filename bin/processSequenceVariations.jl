@@ -1079,7 +1079,7 @@ function open_output_writers(output_vcf, output_cache)
     allele_fh = open("allele.dat", "w")
     write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
     product_fh = open("product.dat", "w")
-    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tmatches_ref_codon\tis_synonymous\n")
+    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\n")
 
     OutputWriters(vcf_fh, cache_fh, snp_fh, allele_fh, product_fh)
 end
@@ -1450,7 +1450,7 @@ function write_product_file(
         product = translate_codon(ec)
         count   = get(all_product_counts, product, 0)
         matches_ref_codon = ec == annotation.ref_codon ? 1 : 0
-        is_synonymous     = product == annotation.ref_product ? 1 : 0
+        matches_ref_product = product == annotation.ref_product ? 1 : 0
         write(product_fh, join([
             string(location),
             seq_id,
@@ -1460,7 +1460,7 @@ function write_product_file(
             string(count),
             product,
             string(matches_ref_codon),
-            string(is_synonymous)
+            string(matches_ref_product)
         ], "\t"), "\n")
     end
 end

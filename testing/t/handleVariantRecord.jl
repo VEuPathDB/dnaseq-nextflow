@@ -452,10 +452,10 @@ end
     @test length(lines) == 1
     fields = split(lines[1], "\t")
     @test fields[8] == "1"   # matches_ref_codon
-    @test fields[9] == "1"   # is_synonymous (same product)
+    @test fields[9] == "1"   # matches_ref_product (same product)
 end
 
-@testset "write_product_file matches_ref_codon=0, is_synonymous=0 for missense codon" begin
+@testset "write_product_file matches_ref_codon=0, matches_ref_product=0 for missense codon" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=2, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
@@ -466,10 +466,10 @@ end
 
     fields = split(lines[1], "\t")
     @test fields[8] == "0"   # matches_ref_codon: ATT != ATG
-    @test fields[9] == "0"   # is_synonymous: I != M
+    @test fields[9] == "0"   # matches_ref_product: I != M
 end
 
-@testset "write_product_file matches_ref_codon=0, is_synonymous=1 for synonymous codon" begin
+@testset "write_product_file matches_ref_codon=0, matches_ref_product=1 for synonymous codon" begin
     # ref_codon=TTT (Phe), alt codon=TTC (also Phe) — synonymous substitution
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=3, ref_codon="TTT", ref_product="F")
@@ -481,7 +481,7 @@ end
 
     fields = split(lines[1], "\t")
     @test fields[8] == "0"   # matches_ref_codon: TTC != TTT
-    @test fields[9] == "1"   # is_synonymous: both encode F
+    @test fields[9] == "1"   # matches_ref_product: both encode F
 end
 
 @testset "write_product_file has 9 columns per row" begin
