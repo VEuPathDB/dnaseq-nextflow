@@ -1380,6 +1380,8 @@ function write_allele_file(
         init = 0
     )
 
+    ref_allele = variations[1].reference
+
     for (allele, entries) in allele_entries
         distinct_strains = Set{String}()
         strain_ids       = Set{Int}()
@@ -1402,7 +1404,6 @@ function write_allele_file(
 
         n       = length(entries)
         ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
-        ref_allele = isempty(variations) ? "" : variations[1].reference
         matches_ref = allele == ref_allele ? 1 : 0
         write(allele_fh, join([
             string(location),
