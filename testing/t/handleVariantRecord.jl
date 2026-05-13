@@ -346,6 +346,46 @@ end
     @test split(lines[g_row], "\t")[5] == "0.5000"
 end
 
+@testset "write_allele_file matches_reference=1 for ref allele, 0 for alt" begin
+    sample_id_map = Dict{String,Int}("s1" => 1, "s2" => 2)
+    v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"
+    v2 = Variation(); v2.strain = "s2"; v2.base = "G"; v2.reference = "A"; v2.coverage = "30"; v2.percent = "100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v1, v2], "LmjF.01", 100, sample_id_map)
+    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+
+    a_row = findfirst(l -> split(l, "\t")[3] == "A", lines)
+    g_row = findfirst(l -> split(l, "\t")[3] == "G", lines)
+    @test split(lines[a_row], "\t")[9] == "1"   # ref allele
+    @test split(lines[g_row], "\t")[9] == "0"   # alt allele
+end
+
+@testset "write_allele_file het: ref component matches_reference=1, alt component=0" begin
+    sample_id_map = Dict{String,Int}("s1" => 1)
+    v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.alt_allele = "G"
+    v1.coverage = "30"; v1.percent = "40"; v1.ploidy = 2
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v1], "LmjF.01", 100, sample_id_map)
+    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+
+    a_row = findfirst(l -> split(l, "\t")[3] == "A", lines)
+    g_row = findfirst(l -> split(l, "\t")[3] == "G", lines)
+    @test split(lines[a_row], "\t")[9] == "1"
+    @test split(lines[g_row], "\t")[9] == "0"
+end
+
+@testset "write_allele_file has 9 columns per row" begin
+    sample_id_map = Dict{String,Int}("s1" => 1)
+    v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v1], "LmjF.01", 100, sample_id_map)
+    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+    @test length(split(lines[1], "\t")) == 9
+end
+
 @testset "collect_cann_entries_for_annotation returns entry keyed by alt allele" begin
     ann    = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                               pos_in_codon_val=1, ref_codon="ATG", ref_product="M")

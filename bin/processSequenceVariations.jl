@@ -1077,7 +1077,7 @@ function open_output_writers(output_vcf, output_cache)
     snp_fh    = open("snpFeature.dat", "w")
     write(snp_fh,     "location\ttranscript_id\tseq_id\treference_strain\tref_allele\thas_nonsynonymous_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_product\tminor_product\tdistinct_strain_count\tdistinct_allele_count\tis_coding\ttotal_ploidy_count\thas_stop_codon\tref_codon\tdownstream_of_frameshift_strain_ids\tpos_in_cds\tmajor_allele_frequency\tminor_allele_frequency\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\n")
+    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
     product_fh = open("product.dat", "w")
     write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\n")
 
@@ -1402,6 +1402,8 @@ function write_allele_file(
 
         n       = length(entries)
         ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
+        ref_allele = isempty(variations) ? "" : variations[1].reference
+        matches_ref = allele == ref_allele ? 1 : 0
         write(allele_fh, join([
             string(location),
             seq_id,
@@ -1410,7 +1412,8 @@ function write_allele_file(
             @sprintf("%.4f", allele_count / total_allele_count),
             @sprintf("%.2f", sum_coverage / n),
             @sprintf("%.2f", sum_percent  / n),
-            ids_str
+            ids_str,
+            string(matches_ref)
         ], "\t"), "\n")
     end
 
