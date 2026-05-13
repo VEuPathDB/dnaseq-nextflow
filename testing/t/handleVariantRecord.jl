@@ -265,7 +265,8 @@ end
     @test ctx.sample_id_map["strainA"] == 1
     @test ctx.sample_id_map["strainB"] == 2
     @test ctx.sample_id_map["strainC"] == 3
-    @test length(ctx.sample_id_map) == 3
+    @test ctx.sample_id_map["refStrain"] == 4
+    @test length(ctx.sample_id_map) == 4
 end
 
 @testset "write_sample_dat writes strain_id/sample_name TSV" begin
@@ -279,23 +280,20 @@ end
     @test length(lines) == 4
 end
 
-@testset "write_allele_and_product_files emits strain_ids array in allele.dat" begin
+@testset "write_allele_file emits allele_frequency and strain_ids" begin
     sample_id_map = Dict{String,Int}("s1" => 1, "s2" => 2, "s3" => 3)
 
-    # Three hom variations: s1→A, s2→G, s3→G
+    # Three haploid hom variations: s1->A, s2->G, s3->G
+    # total = 3; freq(A) = 1/3, freq(G) = 2/3
     v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"
     v2 = Variation(); v2.strain = "s2"; v2.base = "G"; v2.reference = "A"; v2.coverage = "30"; v2.percent = "100"
     v3 = Variation(); v3.strain = "s3"; v3.base = "G"; v3.reference = "A"; v3.coverage = "30"; v3.percent = "100"
-    variations = [v1, v2, v3]
 
-    annotation = PositionAnnotation(0, "", 0, 0, 0, "", "")
-
-    allele_buf  = IOBuffer()
-    product_buf = IOBuffer()
-    write_allele_and_product_files(allele_buf, product_buf, variations, annotation, "LmjF.01", 100, sample_id_map)
+    allele_buf = IOBuffer()
+    write_allele_file(allele_buf, [v1, v2, v3], "LmjF.01", 100, sample_id_map)
 
     lines = filter(!isempty, split(String(take!(allele_buf)), "\n"))
-    @test length(lines) == 2   # one row per distinct allele
+    @test length(lines) == 2
 
     a_row = findfirst(l -> split(l, "\t")[3] == "A", lines)
     g_row = findfirst(l -> split(l, "\t")[3] == "G", lines)
@@ -305,8 +303,47 @@ end
     a_fields = split(lines[a_row], "\t")
     g_fields = split(lines[g_row], "\t")
 
+    @test a_fields[4] == "1"         # distinct_strain_count
+    @test a_fields[5] == "0.3333"    # allele_frequency: 1/3
     @test a_fields[8] == "{1}"
-    @test g_fields[8] == "{2,3}"   # sorted
+    @test g_fields[4] == "2"
+    @test g_fields[5] == "0.6667"    # allele_frequency: 2/3
+    @test g_fields[8] == "{2,3}"
+end
+
+@testset "write_allele_file allele_frequency reflects ploidy for diploid hom calls" begin
+    sample_id_map = Dict{String,Int}("s1" => 1, "s2" => 2, "s3" => 3)
+
+    # Diploid hom: s1=AA, s2=GG, s3=GG; total = 6; freq(A) = 2/6, freq(G) = 4/6
+    v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"; v1.ploidy = 2
+    v2 = Variation(); v2.strain = "s2"; v2.base = "G"; v2.reference = "A"; v2.coverage = "30"; v2.percent = "100"; v2.ploidy = 2
+    v3 = Variation(); v3.strain = "s3"; v3.base = "G"; v3.reference = "A"; v3.coverage = "30"; v3.percent = "100"; v3.ploidy = 2
+
+    allele_buf = IOBuffer()
+    write_allele_file(allele_buf, [v1, v2, v3], "LmjF.01", 100, sample_id_map)
+
+    lines = filter(!isempty, split(String(take!(allele_buf)), "\n"))
+    a_row = findfirst(l -> split(l, "\t")[3] == "A", lines)
+    g_row = findfirst(l -> split(l, "\t")[3] == "G", lines)
+    @test split(lines[a_row], "\t")[5] == "0.3333"   # 2/6
+    @test split(lines[g_row], "\t")[5] == "0.6667"   # 4/6
+end
+
+@testset "write_allele_file het components each have frequency 0.5" begin
+    sample_id_map = Dict{String,Int}("s1" => 1)
+
+    # Diploid het: s1 is A/G; each component weight=1, total=2, each freq=0.5
+    v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.alt_allele = "G"
+    v1.coverage = "30"; v1.percent = "40"; v1.ploidy = 2
+
+    allele_buf = IOBuffer()
+    write_allele_file(allele_buf, [v1], "LmjF.01", 100, sample_id_map)
+
+    lines = filter(!isempty, split(String(take!(allele_buf)), "\n"))
+    a_row = findfirst(l -> split(l, "\t")[3] == "A", lines)
+    g_row = findfirst(l -> split(l, "\t")[3] == "G", lines)
+    @test split(lines[a_row], "\t")[5] == "0.5000"
+    @test split(lines[g_row], "\t")[5] == "0.5000"
 end
 
 @testset "collect_cann_entries_for_annotation returns entry keyed by alt allele" begin
@@ -322,4 +359,42 @@ end
     @test haskey(result["T"], "s1")
     @test length(result["T"]["s1"]) == 1
     @test contains(result["T"]["s1"][1], "T1")
+end
+
+# ---------------------------------------------------------------------------
+# write_product_file
+# ---------------------------------------------------------------------------
+
+@testset "write_product_file skips DFS strains so their undefined codon does not expand to 64 rows" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=2, ref_codon="ATG", ref_product="M")
+    # v1: valid strain, non-DFS, codon ATT -> Ile
+    v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
+    # v2: DFS strain, codon "." (undefined) — must not contribute any codon rows
+    v2 = make_variation(strain="s2", codon=".", product=String[], downstream_of_frameshift=1)
+
+    buf = IOBuffer()
+    write_product_file(buf, [v1, v2], ann, "chr1", 100)
+    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+
+    @test length(lines) == 1
+    fields = split(lines[1], "\t")
+    @test length(fields) == 7
+    @test fields[3] == "ATT"
+end
+
+@testset "write_product_file deduplicates identical codons from multiple non-DFS strains" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=2, ref_codon="ATG", ref_product="M")
+    v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
+    v2 = make_variation(strain="s2", codon="ATT", product=["I"], downstream_of_frameshift=0)
+
+    buf = IOBuffer()
+    write_product_file(buf, [v1, v2], ann, "chr1", 100)
+    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+
+    @test length(lines) == 1
+    fields = split(lines[1], "\t")
+    @test fields[3] == "ATT"
+    @test fields[6] == "2"   # count = 2 strains with Ile product
 end

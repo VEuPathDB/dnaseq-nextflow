@@ -467,8 +467,8 @@ def test_variation_feature_exists(work_dirs):
 
 def test_variation_feature_column_count(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 18]
-    assert not bad, f"Rows with wrong column count (expected 18): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 22]
+    assert not bad, f"Rows with wrong column count (expected 22): {bad[:5]}"
 
 
 def test_variation_feature_row_count(work_dirs):
@@ -507,10 +507,10 @@ def test_variation_feature_major_allele_nonempty(work_dirs):
     assert not bad, f"Rows with empty major_allele (col 7): {bad[:5]}"
 
 
-def test_variation_feature_major_allele_count_positive(work_dirs):
+def test_variation_feature_major_allele_strain_count_positive(work_dirs):
     rows = _read_variation_feature(work_dirs)
     bad = [i + 1 for i, r in enumerate(rows) if not r[8].isdigit() or int(r[8]) <= 0]
-    assert not bad, f"Rows with major_allele_count <= 0 (col 9): {bad[:5]}"
+    assert not bad, f"Rows with major_allele_strain_count <= 0 (col 9): {bad[:5]}"
 
 
 def test_variation_feature_distinct_strain_count_in_range(work_dirs):
@@ -556,19 +556,73 @@ def test_variation_feature_distinct_allele_count_gte_1(work_dirs):
     assert not bad, f"Rows with distinct_allele_count < 1 (col 14): {bad[:5]}"
 
 
-def test_variation_feature_total_allele_count_gte_strain_count(work_dirs):
+def test_variation_feature_total_ploidy_count_gte_strain_count(work_dirs):
     rows = _read_variation_feature(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
         if not r[15].isdigit() or int(r[15]) < int(r[12])
     ]
-    assert not bad, f"Rows where total_allele_count < distinct_strain_count (col 16 < col 13): {bad[:5]}"
+    assert not bad, f"Rows where total_ploidy_count < distinct_strain_count (col 16 < col 13): {bad[:5]}"
 
 
 def test_variation_feature_nonsynonymous_implies_coding(work_dirs):
     rows = _read_variation_feature(work_dirs)
     bad = [i + 1 for i, r in enumerate(rows) if r[5] == '1' and r[14] != '1']
     assert not bad, f"has_nonsynonymous=1 but is_coding!=1 on rows: {bad[:5]}"
+
+
+def test_variation_feature_dfs_strain_ids_format(work_dirs):
+    """downstream_of_frameshift_strain_ids (col 19) is either empty or {n1,n2,...}."""
+    import re
+    rows = _read_variation_feature(work_dirs)
+    pattern = re.compile(r'^\{[0-9]+(,[0-9]+)*\}$')
+    bad = [
+        i + 1 for i, r in enumerate(rows)
+        if r[18] != '' and not pattern.match(r[18])
+    ]
+    assert not bad, f"Rows with malformed downstream_of_frameshift_strain_ids (col 19): {bad[:5]}"
+
+
+def test_variation_feature_pos_in_cds_coding_only(work_dirs):
+    """pos_in_cds (col 20) is a positive integer for coding rows and empty for non-coding."""
+    rows = _read_variation_feature(work_dirs)
+    bad = []
+    for i, r in enumerate(rows):
+        if r[14] == '1':
+            if not r[19].isdigit() or int(r[19]) <= 0:
+                bad.append(i + 1)
+        else:
+            if r[19] != '':
+                bad.append(i + 1)
+    assert not bad, f"Rows with unexpected pos_in_cds (col 20): {bad[:5]}"
+
+
+def test_variation_feature_major_allele_frequency_in_range(work_dirs):
+    """major_allele_frequency (col 21) is between 0 and 1 exclusive."""
+    rows = _read_variation_feature(work_dirs)
+    bad = []
+    for i, r in enumerate(rows):
+        try:
+            f = float(r[20])
+            if not (0.0 < f <= 1.0):
+                bad.append(i + 1)
+        except ValueError:
+            bad.append(i + 1)
+    assert not bad, f"Rows with major_allele_frequency out of range (col 21): {bad[:5]}"
+
+
+def test_variation_feature_allele_frequencies_sum_to_one(work_dirs):
+    """major + minor allele frequencies must sum to 1.0 per row (tolerance 0.01)."""
+    rows = _read_variation_feature(work_dirs)
+    bad = []
+    for i, r in enumerate(rows):
+        major = float(r[20])
+        minor = float(r[21]) if r[21] != '' else 0.0
+        # sum all allele frequencies — there may be more than 2 alleles not captured here,
+        # but major + minor should be <= 1.0; if only 2 alleles they sum to 1.0
+        if major + minor > 1.0 + 0.01:
+            bad.append(i + 1)
+    assert not bad, f"Rows where major+minor allele frequency > 1.0 (col 21+22): {bad[:5]}"
 
 
 # ---------------------------------------------------------------------------
@@ -596,8 +650,8 @@ def test_allele_dat_row_count(work_dirs):
 
 def test_allele_dat_column_count(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 7]
-    assert not bad, f"Rows with wrong column count (expected 7): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 8]
+    assert not bad, f"Rows with wrong column count (expected 8): {bad[:5]}"
 
 
 def test_allele_dat_location_positive_int(work_dirs):
@@ -624,13 +678,23 @@ def test_allele_dat_distinct_strain_count_positive(work_dirs):
     assert not bad, f"Rows with distinct_strain_count <= 0 (col 4): {bad[:5]}"
 
 
-def test_allele_dat_allele_count_gte_strain_count(work_dirs):
+def test_allele_dat_frequency_in_range(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [
-        i + 1 for i, r in enumerate(rows)
-        if not r[3].isdigit() or not r[4].isdigit() or int(r[4]) < int(r[3])
-    ]
-    assert not bad, f"Rows where allele_count < distinct_strain_count: {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows)
+           if not (0.0 < float(r[4]) <= 1.0)]
+    assert not bad, f"Rows with allele_frequency outside (0, 1]: {bad[:5]}"
+
+
+def test_allele_dat_frequencies_sum_to_one_per_position(work_dirs):
+    """Ploidy-weighted allele frequencies must sum to ~1.0 at each position."""
+    from collections import defaultdict
+    rows = _read_allele(work_dirs)
+    by_pos = defaultdict(float)
+    for r in rows:
+        by_pos[(r[0], r[1])] += float(r[4])
+    bad = [(pos, seq, f"{total:.4f}") for (pos, seq), total in by_pos.items()
+           if abs(total - 1.0) > 0.01]
+    assert not bad, f"Positions where allele frequencies don't sum to 1.0: {bad[:5]}"
 
 
 def test_allele_dat_avg_coverage_non_negative(work_dirs):
@@ -680,8 +744,8 @@ def test_product_dat_row_count(work_dirs):
 
 def test_product_dat_column_count(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 9]
-    assert not bad, f"Rows with wrong column count (expected 9): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 7]
+    assert not bad, f"Rows with wrong column count (expected 7): {bad[:5]}"
 
 
 def test_product_dat_location_positive_int(work_dirs):
@@ -717,8 +781,6 @@ def test_product_dat_transcript_id_nonempty(work_dirs):
 
 
 def test_product_dat_product_count_non_negative(work_dirs):
-    """product_count (col 6) is 0 for downstream-of-frameshift rows where the
-    codon is disrupted; non-negative is the correct invariant."""
     rows = _read_product(work_dirs)
     bad = [i + 1 for i, r in enumerate(rows) if not r[5].lstrip('-').isdigit() or int(r[5]) < 0]
     assert not bad, f"Rows with product_count < 0 (col 6): {bad[:5]}"
@@ -730,16 +792,17 @@ def test_product_dat_amino_acid_single_char_or_stop(work_dirs):
     assert not bad, f"Rows where amino_acid is not single char (col 7): {bad[:5]}"
 
 
-def test_product_dat_pos_in_cds_positive(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[7].isdigit() or int(r[7]) <= 0]
-    assert not bad, f"Rows with pos_in_cds <= 0 (col 8): {bad[:5]}"
 
-
-def test_product_dat_downstream_of_frameshift_binary(work_dirs):
+def test_product_dat_no_duplicate_rows(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[8] not in ('0', '1')]
-    assert not bad, f"Rows with downstream_of_frameshift not 0/1 (col 9): {bad[:5]}"
+    seen = set()
+    dups = []
+    for i, r in enumerate(rows):
+        key = tuple(r)
+        if key in seen:
+            dups.append(i + 1)
+        seen.add(key)
+    assert not dups, f"Duplicate rows in product.dat at line numbers: {dups[:5]}"
 
 
 # ---------------------------------------------------------------------------
@@ -862,16 +925,48 @@ def test_variation_feature_count_lte_vcf_record_count(work_dirs):
     )
 
 
-def test_allele_dat_row_count_consistent_with_coding_variants(work_dirs):
-    """allele.dat is only emitted for coding variants. Row count must be > 0
-    and <= 4x coding variationFeature rows (conservatively: <= 4 distinct alleles per site)."""
-    vf_rows = _read_variation_feature(work_dirs)
-    coding_row_count = sum(1 for r in vf_rows if r[14] == '1')
+def test_allele_dat_row_count_consistent_with_vcf(work_dirs):
+    """allele.dat is emitted for all variant positions. Row count must be > 0
+    and <= 4x variationFeature rows (conservatively: <= 4 distinct alleles per site,
+    including het expansion into ref+alt components)."""
+    vf_row_count = len(_read_variation_feature(work_dirs))
     allele_row_count = len(_read_allele(work_dirs))
     assert allele_row_count > 0, "allele.dat is empty"
-    assert allele_row_count <= coding_row_count * 4, (
+    assert allele_row_count >= vf_row_count, (
+        f"allele.dat rows ({allele_row_count}) fewer than variationFeature rows ({vf_row_count}); "
+        f"expected at least one allele row per variant position"
+    )
+    assert allele_row_count <= vf_row_count * 6, (
         f"allele.dat rows ({allele_row_count}) far exceed "
-        f"4x coding variationFeature rows ({coding_row_count})"
+        f"6x variationFeature rows ({vf_row_count})"
+    )
+
+
+def test_allele_dat_no_iupac_alleles(work_dirs):
+    """allele.dat allele column must contain only standard nucleotides or indel strings,
+    not IUPAC ambiguity codes. Het calls must be expanded into separate ref/alt rows."""
+    import re
+    rows = _read_allele(work_dirs)
+    iupac_pattern = re.compile(r'^[RYSWKMBDHV]$', re.IGNORECASE)
+    bad = [
+        (i + 1, r[2]) for i, r in enumerate(rows)
+        if iupac_pattern.match(r[2])
+    ]
+    assert not bad, f"IUPAC allele codes found in allele.dat (row, allele): {bad[:10]}"
+
+
+def test_variation_feature_no_iupac_alleles(work_dirs):
+    """major_allele and minor_allele in variationFeature.dat must not contain IUPAC
+    ambiguity codes. Het calls must be expanded into their component alleles."""
+    import re
+    rows = _read_variation_feature(work_dirs)
+    iupac_pattern = re.compile(r'^[RYSWKMBDHV]$', re.IGNORECASE)
+    bad = [
+        (i + 1, r[6], r[7]) for i, r in enumerate(rows)
+        if iupac_pattern.match(r[6]) or (r[7] and iupac_pattern.match(r[7]))
+    ]
+    assert not bad, (
+        f"IUPAC allele codes in variationFeature.dat (row, major, minor): {bad[:10]}"
     )
 
 

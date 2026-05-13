@@ -395,11 +395,12 @@ mutable struct Variation
     has_nonsynonomous::Int
     cds_number::Int
     matches_reference::Int
+    ploidy::Int
 end
 
 function Variation()
     Variation("", 0, "", "", "", "", "", "", "", "", "",
-              0, 0, 0, 0, "", String[], "", "", 0, 0, 0)
+              0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 1)
 end
 
 # ---------------------------------------------------------------------------
@@ -961,6 +962,7 @@ function build_variations_from_record(
                 v.pvalue             = "."
                 v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
                 v.matches_reference  = 1
+                v.ploidy             = 1   # no GT available; use conservative default
                 push!(variations, v)
             end
             continue
@@ -982,6 +984,7 @@ function build_variations_from_record(
         sep_idx  = findfirst(c -> c == '/' || c == '|', gt)
         is_het   = !isnothing(sep_idx) && gt[1:sep_idx-1] != gt[sep_idx+1:end]
         alt_alts = is_het ? nonref_alt_alleles(gt, record.alts) : String[]
+        gt_ploidy = 1 + count(c -> c == '/' || c == '|', gt)
 
         v = Variation()
         v.sequence_source_id = record.chrom
@@ -996,6 +999,7 @@ function build_variations_from_record(
         v.pvalue             = "."
         v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
         v.matches_reference  = (base == record.ref) ? 1 : 0
+        v.ploidy             = gt_ploidy
 
         push!(variations, v)
     end
@@ -1059,7 +1063,7 @@ function initialize_processing_context(args, all_strains::Vector{String})
         indel_db,
         fs_info,
         all_strains,
-        Dict{String,Int}(name => i for (i, name) in enumerate(all_strains))
+        Dict{String,Int}(name => i for (i, name) in enumerate([all_strains..., args["reference_strain"]]))
     )
 end
 
@@ -1071,11 +1075,11 @@ function open_output_writers(output_vcf, output_cache)
     cache_fh  = open(output_cache, "w")
     write(cache_fh, "#chrom\tpos\ttranscript_id\tpos_in_cds\n")
     snp_fh    = open("snpFeature.dat", "w")
-    write(snp_fh,     "location\ttranscript_id\tseq_id\treference_strain\tref_allele\thas_nonsynonymous_allele\tmajor_allele\tminor_allele\tmajor_allele_count\tminor_allele_count\tmajor_product\tminor_product\tdistinct_strain_count\tdistinct_allele_count\tis_coding\ttotal_allele_count\thas_stop_codon\tref_codon\n")
+    write(snp_fh,     "location\ttranscript_id\tseq_id\treference_strain\tref_allele\thas_nonsynonymous_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_product\tminor_product\tdistinct_strain_count\tdistinct_allele_count\tis_coding\ttotal_ploidy_count\thas_stop_codon\tref_codon\tdownstream_of_frameshift_strain_ids\tpos_in_cds\tmajor_allele_frequency\tminor_allele_frequency\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_count\tavg_coverage\tavg_percent\tstrain_ids\n")
+    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\n")
     product_fh = open("product.dat", "w")
-    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tpos_in_cds\tdownstream_of_frameshift\n")
+    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\n")
 
     OutputWriters(vcf_fh, cache_fh, snp_fh, allele_fh, product_fh)
 end
@@ -1248,7 +1252,8 @@ function build_reference_variation(
         annotation.ref_codon,
         adjacent_snp_causes_product_difference,
         annotation.cds_number,
-        1
+        1,   # matches_reference
+        1    # ploidy: reference genome is a single representative
     )
 end
 
@@ -1262,25 +1267,31 @@ function write_snp_feature(
     annotation::PositionAnnotation,
     seq_id::String,
     location::Int,
-    reference_strain::String
+    reference_strain::String,
+    sample_id_map::Dict{String,Int}
 )
     ref_allele = variations[1].reference
     isempty(ref_allele) && (ref_allele = variations[1].base)
 
-    allele_counts   = Dict{String,Int}()
-    product_counts  = Dict{String,Int}()
-    strain_set      = Set{String}()
-    has_stop_codon  = 0
-    total_allele_count = length(variations)  # +1 per het call below
+    allele_counts         = Dict{String,Int}()   # strain counts (one per strain)
+    allele_ploidy_counts  = Dict{String,Int}()   # ploidy-weighted counts
+    product_counts        = Dict{String,Int}()
+    strain_set            = Set{String}()
+    has_stop_codon        = 0
+    total_ploidy_count    = 0
 
     for v in variations
         if !isempty(v.alt_allele)
-            # Het call: contributes one ref-allele and one alt-allele observation
+            # Het call: one strain-observation each; one chromosomal copy each
             allele_counts[v.reference]  = get(allele_counts, v.reference,  0) + 1
             allele_counts[v.alt_allele] = get(allele_counts, v.alt_allele, 0) + 1
-            total_allele_count += 1
+            allele_ploidy_counts[v.reference]  = get(allele_ploidy_counts, v.reference,  0) + 1
+            allele_ploidy_counts[v.alt_allele] = get(allele_ploidy_counts, v.alt_allele, 0) + 1
+            total_ploidy_count += 2
         else
-            allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+            allele_counts[v.base]        = get(allele_counts, v.base, 0) + 1
+            allele_ploidy_counts[v.base] = get(allele_ploidy_counts, v.base, 0) + v.ploidy
+            total_ploidy_count += v.ploidy
         end
         push!(strain_set, v.strain)
         for p in v.product
@@ -1298,13 +1309,18 @@ function write_snp_feature(
                           by = a -> (n_alt_alleles >= 2 && a == ref_allele ? 1 : 0, -allele_counts[a], a))
     sorted_products = sort(collect(keys(product_counts)); by = p -> (-product_counts[p], p))
 
-    major_allele       = sorted_alleles[1]
-    minor_allele       = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
-    major_allele_count = allele_counts[major_allele]
-    minor_allele_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
+    major_allele              = sorted_alleles[1]
+    minor_allele              = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
+    major_allele_strain_count = allele_counts[major_allele]
+    minor_allele_strain_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
+    major_allele_frequency    = @sprintf("%.4f", allele_ploidy_counts[major_allele] / total_ploidy_count)
+    minor_allele_frequency    = length(sorted_alleles) > 1 ? @sprintf("%.4f", allele_ploidy_counts[minor_allele] / total_ploidy_count) : ""
 
     major_product = length(sorted_products) > 0 ? sorted_products[1] : ""
     minor_product = length(sorted_products) > 1 ? sorted_products[2] : ""
+
+    dfs_ids = sort([sample_id_map[v.strain] for v in variations if v.downstream_of_frameshift == 1 && haskey(sample_id_map, v.strain)])
+    dfs_strain_ids = isempty(dfs_ids) ? "" : "{" * join(dfs_ids, ",") * "}"
 
     write(snp_fh, join([
         string(location),
@@ -1315,31 +1331,35 @@ function write_snp_feature(
         string(has_nonsynonymous_allele),
         major_allele,
         minor_allele,
-        string(major_allele_count),
-        string(minor_allele_count),
+        string(major_allele_strain_count),
+        string(minor_allele_strain_count),
         major_product,
         minor_product,
         string(distinct_strain_count),
         string(distinct_allele_count),
         string(annotation.is_coding),
-        string(total_allele_count),
+        string(total_ploidy_count),
         string(has_stop_codon),
-        annotation.ref_codon
+        annotation.ref_codon,
+        dfs_strain_ids,
+        annotation.is_coding == 1 ? string(annotation.pos_in_cds) : "",
+        major_allele_frequency,
+        minor_allele_frequency
     ], "\t"), "\n")
 end
 
-function write_allele_and_product_files(
+function write_allele_file(
     allele_fh::IO,
-    product_fh::IO,
     variations::Vector{Variation},
-    annotation::PositionAnnotation,
     seq_id::String,
     location::Int,
     sample_id_map::Dict{String,Int}
 )
-    # Expand het calls into ref and alt component entries; hom calls contribute one entry.
-    # Each entry: (allele, strain, coverage, percent)
-    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64}}}()
+    # Expand het calls into ref and alt component entries; hom calls contribute ploidy entries.
+    # Each entry: (strain, coverage, percent, allele_weight)
+    # Het components each count as 1 (one copy of each allele in the het call).
+    # Hom calls count as v.ploidy (all copies carry the same allele).
+    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64, Int}}}()
 
     for v in variations
         cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
@@ -1347,20 +1367,27 @@ function write_allele_and_product_files(
 
         if !isempty(v.alt_allele)
             # Het call: emit ref component (100-pct) and alt component (pct) separately
-            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct))
-            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct))
+            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct, 1))
+            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct, 1))
         else
-            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct))
+            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct, v.ploidy))
         end
     end
+
+    total_allele_count = sum(
+        sum(w for (_, _, _, w) in entries)
+        for entries in values(allele_entries);
+        init = 0
+    )
 
     for (allele, entries) in allele_entries
         distinct_strains = Set{String}()
         strain_ids       = Set{Int}()
-        sum_coverage = 0.0
-        sum_percent  = 0.0
+        sum_coverage     = 0.0
+        sum_percent      = 0.0
+        allele_count     = 0
 
-        for (strain, cov, pct) in entries
+        for (strain, cov, pct, weight) in entries
             push!(distinct_strains, strain)
             sid = get(sample_id_map, strain, 0)
             if sid > 0
@@ -1370,22 +1397,32 @@ function write_allele_and_product_files(
             end
             sum_coverage += cov
             sum_percent  += pct
+            allele_count += weight
         end
 
-        n        = length(entries)
-        ids_str  = "{" * join(sort(collect(strain_ids)), ",") * "}"
+        n       = length(entries)
+        ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
         write(allele_fh, join([
             string(location),
             seq_id,
             allele,
             string(length(distinct_strains)),
-            string(n),
+            @sprintf("%.4f", allele_count / total_allele_count),
             @sprintf("%.2f", sum_coverage / n),
             @sprintf("%.2f", sum_percent  / n),
             ids_str
         ], "\t"), "\n")
     end
 
+end
+
+function write_product_file(
+    product_fh::IO,
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    seq_id::String,
+    location::Int
+)
     annotation.is_coding != 1 && return
 
     all_product_counts = Dict{String,Int}()
@@ -1395,24 +1432,28 @@ function write_allele_and_product_files(
         end
     end
 
+    # One row per unique expanded codon. Skip DFS strains — their codon is "." (undefined).
+    seen_codons = Set{String}()
     for v in variations
         isempty(v.codon) && continue
-        expanded_codons = expand_codon(v.codon)
-        for ec in expanded_codons
-            product = translate_codon(ec)
-            count   = get(all_product_counts, product, 0)
-            write(product_fh, join([
-                string(location),
-                seq_id,
-                ec,
-                string(annotation.pos_in_codon_val),
-                annotation.transcript_id,
-                string(count),
-                product,
-                string(annotation.pos_in_cds),
-                string(v.downstream_of_frameshift)
-            ], "\t"), "\n")
+        v.downstream_of_frameshift == 1 && continue
+        for ec in expand_codon(v.codon)
+            push!(seen_codons, ec)
         end
+    end
+
+    for ec in seen_codons
+        product = translate_codon(ec)
+        count   = get(all_product_counts, product, 0)
+        write(product_fh, join([
+            string(location),
+            seq_id,
+            ec,
+            string(annotation.pos_in_codon_val),
+            annotation.transcript_id,
+            string(count),
+            product
+        ], "\t"), "\n")
     end
 end
 
@@ -1792,6 +1833,9 @@ function handle_variant_record!(
     # Map strain name -> sample index for GT lookup when keying CANN entries by original alt allele
     strain_idx_map = Dict{String, Int}(s => i for (i, s) in enumerate(all_strains))
 
+    # allele.dat is per-position (not per-transcript): written once after the first annotation pass
+    allele_written = false
+
     for annotation in annotations
         annotate_variations!(variations, annotation, ctx, transcript_cache)
 
@@ -1808,8 +1852,12 @@ function handle_variant_record!(
         has_variation(all_vars) || continue
         any_output = true
 
-        write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
-        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation, seq_id, location, ctx.sample_id_map)
+        write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain, ctx.sample_id_map)
+        if !allele_written
+            write_allele_file(writers.allele_fh, all_vars, seq_id, location, ctx.sample_id_map)
+            allele_written = true
+        end
+        write_product_file(writers.product_fh, all_vars, annotation, seq_id, location)
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
@@ -1868,7 +1916,7 @@ function main()
     debug_log("Opening VCF: ", args["vcf_file"])
     (vcf_pf, all_strains, chrom_rank, info_headers) = open_vcf_peeked(args["vcf_file"])
     debug_log("VCF: ", length(all_strains), " strains")
-    write_sample_dat(all_strains)
+    write_sample_dat([all_strains..., args["reference_strain"]])
 
     # Open VCF cache (may be absent/empty on first run)
     debug_log("Opening cache: ", args["cache_file"])
