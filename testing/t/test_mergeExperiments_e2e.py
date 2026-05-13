@@ -650,8 +650,8 @@ def test_allele_dat_row_count(work_dirs):
 
 def test_allele_dat_column_count(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 8]
-    assert not bad, f"Rows with wrong column count (expected 8): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 9]
+    assert not bad, f"Rows with wrong column count (expected 9): {bad[:5]}"
 
 
 def test_allele_dat_location_positive_int(work_dirs):
@@ -744,8 +744,8 @@ def test_product_dat_row_count(work_dirs):
 
 def test_product_dat_column_count(work_dirs):
     rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 7]
-    assert not bad, f"Rows with wrong column count (expected 7): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 9]
+    assert not bad, f"Rows with wrong column count (expected 9): {bad[:5]}"
 
 
 def test_product_dat_location_positive_int(work_dirs):
