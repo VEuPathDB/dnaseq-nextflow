@@ -402,10 +402,10 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# write_product_file
+# write_transcript_product
 # ---------------------------------------------------------------------------
 
-@testset "write_product_file skips DFS strains so their undefined codon does not expand to 64 rows" begin
+@testset "write_transcript_product skips DFS strains so their undefined codon does not expand to 64 rows" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=2, ref_codon="ATG", ref_product="M")
     # v1: valid strain, non-DFS, codon ATT -> Ile
@@ -414,85 +414,130 @@ end
     v2 = make_variation(strain="s2", codon=".", product=String[], downstream_of_frameshift=1)
 
     buf = IOBuffer()
-    write_product_file(buf, [v1, v2], ann, "chr1", 100)
+    write_transcript_product(buf, [v1, v2], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 9
-    @test fields[3] == "ATT"
+    @test length(fields) == 12
+    @test fields[6] == "ATT"
 end
 
-@testset "write_product_file deduplicates identical codons from multiple non-DFS strains" begin
+@testset "write_transcript_product deduplicates identical codons from multiple non-DFS strains" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=2, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
     v2 = make_variation(strain="s2", codon="ATT", product=["I"], downstream_of_frameshift=0)
 
     buf = IOBuffer()
-    write_product_file(buf, [v1, v2], ann, "chr1", 100)
+    write_transcript_product(buf, [v1, v2], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 9
-    @test fields[3] == "ATT"
-    @test fields[6] == "2"   # count = 2 strains with Ile product
+    @test length(fields) == 12
+    @test fields[6] == "ATT"
+    @test fields[8] == "2"   # count = 2 strains with Ile product
 end
 
-@testset "write_product_file matches_ref_codon=1 when codon equals ref_codon" begin
+@testset "write_transcript_product matches_ref_codon=1 when codon equals ref_codon" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATG", product=["M"], downstream_of_frameshift=0)
 
     buf = IOBuffer()
-    write_product_file(buf, [v1], ann, "chr1", 100)
+    write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test fields[8] == "1"   # matches_ref_codon
-    @test fields[9] == "1"   # matches_ref_product (same product)
+    @test fields[10] == "1"   # matches_ref_codon
+    @test fields[11] == "1"   # matches_ref_product (same product)
 end
 
-@testset "write_product_file matches_ref_codon=0, matches_ref_product=0 for missense codon" begin
+@testset "write_transcript_product matches_ref_codon=0, matches_ref_product=0 for missense codon" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=2, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
 
     buf = IOBuffer()
-    write_product_file(buf, [v1], ann, "chr1", 100)
+    write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
 
     fields = split(lines[1], "\t")
-    @test fields[8] == "0"   # matches_ref_codon: ATT != ATG
-    @test fields[9] == "0"   # matches_ref_product: I != M
+    @test fields[10] == "0"   # matches_ref_codon: ATT != ATG
+    @test fields[11] == "0"   # matches_ref_product: I != M
 end
 
-@testset "write_product_file matches_ref_codon=0, matches_ref_product=1 for synonymous codon" begin
+@testset "write_transcript_product matches_ref_codon=0, matches_ref_product=1 for synonymous codon" begin
     # ref_codon=TTT (Phe), alt codon=TTC (also Phe) — synonymous substitution
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=3, ref_codon="TTT", ref_product="F")
     v1 = make_variation(strain="s1", codon="TTC", product=["F"], downstream_of_frameshift=0)
 
     buf = IOBuffer()
-    write_product_file(buf, [v1], ann, "chr1", 100)
+    write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
 
     fields = split(lines[1], "\t")
-    @test fields[8] == "0"   # matches_ref_codon: TTC != TTT
-    @test fields[9] == "1"   # matches_ref_product: both encode F
+    @test fields[10] == "0"   # matches_ref_codon: TTC != TTT
+    @test fields[11] == "1"   # matches_ref_product: both encode F
 end
 
-@testset "write_product_file has 9 columns per row" begin
+@testset "write_transcript_product has 12 columns per row" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
 
     buf = IOBuffer()
-    write_product_file(buf, [v1], ann, "chr1", 100)
+    write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
-    @test length(split(lines[1], "\t")) == 9
+    @test length(split(lines[1], "\t")) == 12
+end
+
+@testset "write_transcript_product includes pos_in_cds and pos_in_protein" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
+
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1], ann, "LmjF.01", 200, Dict{String,Int}())
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+
+    @test fields[1] == "LmjF.01"   # seq_id
+    @test fields[2] == "200"        # location
+    @test fields[3] == "T1"         # transcript_id
+    @test fields[4] == "10"         # pos_in_cds
+    @test fields[5] == "4"          # pos_in_protein: div(10-1,3)+1 = 4
+end
+
+@testset "write_transcript_product downstream_of_frameshift_strain_ids populated" begin
+    sample_id_map = Dict{String,Int}("s1" => 1, "s2" => 2)
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=7,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
+    v2 = make_variation(strain="s2", codon=".",   product=String[], downstream_of_frameshift=1)
+
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1, v2], ann, "chr1", 100, sample_id_map)
+    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+
+    # v2 has codon "." and is DFS — no rows for its codon, but DFS ID appears in every row
+    @test length(lines) == 1
+    fields = split(lines[1], "\t")
+    @test fields[12] == "{2}"   # downstream_of_frameshift_strain_ids
+end
+
+@testset "write_transcript_product pos_in_protein boundary values" begin
+    for (pic, expected_pip) in [(1, 1), (3, 1), (4, 2), (6, 2), (7, 3)]
+        ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=pic,
+                              pos_in_codon_val=((pic-1)%3)+1, ref_codon="ATG", ref_product="M")
+        v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
+        buf = IOBuffer()
+        write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
+        fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+        @test fields[5] == string(expected_pip)
+    end
 end
 
 # ---------------------------------------------------------------------------

@@ -420,11 +420,10 @@ struct ProcessingContext
 end
 
 struct OutputWriters
-    vcf_fh::IO    # CANN-annotated VCF output for SnpEff
-    cache_fh::IO  # TSV position cache for subsequent runs
+    vcf_fh::IO
     snp_fh::IO
     allele_fh::IO
-    product_fh::IO
+    transcript_product_fh::IO
 end
 
 function write_sample_dat(all_strains::Vector{String}, path::String="sample.dat")
@@ -711,17 +710,6 @@ function parse_cache_tsv_record(line::AbstractString)
     (chrom, pos, tid, pic)
 end
 
-"""
-    write_cache_entries(fh, chrom, pos, annotations)
-
-Writes one TSV row per coding transcript annotation.
-"""
-function write_cache_entries(fh::IO, chrom::String, pos::Int, annotations::Vector{PositionAnnotation})
-    for ann in annotations
-        ann.is_coding == 1 || continue
-        write(fh, join([chrom, string(pos), ann.transcript_id, string(ann.pos_in_cds)], '\t'), "\n")
-    end
-end
 
 """
     build_annotations_from_cache(entries, reference_strain, transcript_db, transcript_cache)
@@ -1068,20 +1056,17 @@ function initialize_processing_context(args, all_strains::Vector{String})
 end
 
 """
-    open_output_writers(output_vcf, output_cache) -> OutputWriters
+    open_output_writers(output_vcf) -> OutputWriters
 """
-function open_output_writers(output_vcf, output_cache)
-    vcf_fh    = open(output_vcf, "w")
-    cache_fh  = open(output_cache, "w")
-    write(cache_fh, "#chrom\tpos\ttranscript_id\tpos_in_cds\n")
-    snp_fh    = open("snpFeature.dat", "w")
-    write(snp_fh,     "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\n")
+function open_output_writers(output_vcf::String)
+    vcf_fh = open(output_vcf, "w")
+    snp_fh = open("snpFeature.dat", "w")
+    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
-    product_fh = open("product.dat", "w")
-    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\n")
-
-    OutputWriters(vcf_fh, cache_fh, snp_fh, allele_fh, product_fh)
+    write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
+    tp_fh = open("transcript_product.dat", "w")
+    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\n")
+    OutputWriters(vcf_fh, snp_fh, allele_fh, tp_fh)
 end
 
 function close_processing_context(ctx::ProcessingContext)
@@ -1091,10 +1076,9 @@ end
 
 function close_output_writers(writers::OutputWriters)
     close(writers.vcf_fh)
-    close(writers.cache_fh)
     close(writers.snp_fh)
     close(writers.allele_fh)
-    close(writers.product_fh)
+    close(writers.transcript_product_fh)
 end
 
 # ---------------------------------------------------------------------------
@@ -1398,14 +1382,21 @@ function write_allele_file(
 
 end
 
-function write_product_file(
-    product_fh::IO,
+function write_transcript_product(
+    fh::IO,
     variations::Vector{Variation},
     annotation::PositionAnnotation,
     seq_id::String,
-    location::Int
+    location::Int,
+    sample_id_map::Dict{String,Int}
 )
     annotation.is_coding != 1 && return
+
+    pos_in_protein = div(annotation.pos_in_cds - 1, 3) + 1
+
+    dfs_ids = sort([sample_id_map[v.strain] for v in variations
+                    if v.downstream_of_frameshift == 1 && haskey(sample_id_map, v.strain)])
+    dfs_str = isempty(dfs_ids) ? "" : "{" * join(dfs_ids, ",") * "}"
 
     all_product_counts = Dict{String,Int}()
     for v in variations
@@ -1414,7 +1405,6 @@ function write_product_file(
         end
     end
 
-    # One row per unique expanded codon. Skip DFS strains — their codon is "." (undefined).
     seen_codons = Set{String}()
     for v in variations
         isempty(v.codon) && continue
@@ -1425,20 +1415,23 @@ function write_product_file(
     end
 
     for ec in seen_codons
-        product = translate_codon(ec)
-        count   = get(all_product_counts, product, 0)
-        matches_ref_codon = ec == annotation.ref_codon ? 1 : 0
+        product             = translate_codon(ec)
+        count               = get(all_product_counts, product, 0)
+        matches_ref_codon   = ec == annotation.ref_codon ? 1 : 0
         matches_ref_product = product == annotation.ref_product ? 1 : 0
-        write(product_fh, join([
-            string(location),
+        write(fh, join([
             seq_id,
+            string(location),
+            annotation.transcript_id,
+            string(annotation.pos_in_cds),
+            string(pos_in_protein),
             ec,
             string(annotation.pos_in_codon_val),
-            annotation.transcript_id,
             string(count),
             product,
             string(matches_ref_codon),
-            string(matches_ref_product)
+            string(matches_ref_product),
+            dfs_str
         ], "\t"), "\n")
     end
 end
@@ -1807,9 +1800,6 @@ function handle_variant_record!(
         annotate_position_all(seq_id, location, ctx, transcript_cache)
     end
 
-    # Write TSV cache entries for this position (one row per coding transcript)
-    write_cache_entries(writers.cache_fh, seq_id, location, annotations)
-
     # Accumulate per-sample CANN entries across all annotations (transcripts).
     # alt_strain_entries: alt -> strain -> [entry per transcript, in annotation order]
     alt_strain_entries = Dict{String, Dict{String, Vector{String}}}()
@@ -1847,7 +1837,7 @@ function handle_variant_record!(
             write_allele_file(writers.allele_fh, all_vars, seq_id, location, ctx.sample_id_map)
             allele_written = true
         end
-        write_product_file(writers.product_fh, all_vars, annotation, seq_id, location)
+        write_transcript_product(writers.transcript_product_fh, all_vars, annotation, seq_id, location, ctx.sample_id_map)
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
@@ -1926,7 +1916,7 @@ function main()
               length(ctx.cds_intervals), " CDS intervals")
 
     # Open output writers and write VCF header
-    writers = open_output_writers(args["output_vcf"], args["output_cache"])
+    writers = open_output_writers(args["output_vcf"])
     write_vcf_cache_header(writers.vcf_fh, ctx.all_strains, info_headers)
 
     transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
