@@ -87,6 +87,81 @@ const IUPAC_COMPRESS = Dict{Set{Char},Char}(
     Set(['A','C'])=>'M', Set(['G','C'])=>'S', Set(['A','T'])=>'W',
 )
 
+# ---------------------------------------------------------------------------
+# HSSS (HighSpeedSnpSearch) binary strain file support
+# ---------------------------------------------------------------------------
+
+const HSSS_CUTOFFS = [20, 40, 60, 80]
+
+const HSSS_ALLELE_CODE = Dict{Char,Int8}(
+    'A'=>Int8(1), 'a'=>Int8(1),
+    'C'=>Int8(2), 'c'=>Int8(2),
+    'G'=>Int8(3), 'g'=>Int8(3),
+    'T'=>Int8(4), 't'=>Int8(4),
+)
+
+mutable struct HsssState
+    ref_fhs::Vector{IO}               # one referenceGenome.dat handle per cutoff
+    contig_fhs::Vector{IO}            # one contigIdToSourceId.dat handle per cutoff
+    strain_fhs::Vector{Dict{Int,IO}}  # per cutoff: strain_index -> file handle (non-ref only)
+    strain_index::Dict{String,Int}    # strain_name -> integer index (ref=1, others 2..N)
+    seq_index::Int
+    current_seq_id::String
+end
+
+function open_hsss_writers(reference_strain::String, all_strains::Vector{String},
+                            base_dir::String=".")::HsssState
+    non_ref = filter(s -> s != reference_strain, all_strains)
+    strain_index = Dict{String,Int}(reference_strain => 1)
+    for (i, s) in enumerate(non_ref)
+        strain_index[s] = i + 1
+    end
+
+    ref_fhs    = IO[]
+    contig_fhs = IO[]
+    strain_fhs = Dict{Int,IO}[]
+
+    for cutoff in HSSS_CUTOFFS
+        dir = joinpath(base_dir, "hsss_readFreq$(cutoff)")
+        mkpath(dir)
+
+        open(joinpath(dir, "strainIdToName.dat"), "w") do f
+            write(f, "1\t$(reference_strain)\n")
+            for (i, s) in enumerate(non_ref)
+                write(f, "$(i+1)\t$(s)\n")
+            end
+        end
+
+        push!(ref_fhs,    open(joinpath(dir, "referenceGenome.dat"), "w"))
+        push!(contig_fhs, open(joinpath(dir, "contigIdToSourceId.dat"), "w"))
+
+        sfhs = Dict{Int,IO}()
+        for (i, s) in enumerate(non_ref)
+            sfhs[i + 1] = open(joinpath(dir, string(i + 1)), "w")
+        end
+        push!(strain_fhs, sfhs)
+    end
+
+    HsssState(ref_fhs, contig_fhs, strain_fhs, strain_index, 0, "")
+end
+
+function close_hsss_writers(state::HsssState)
+    for fh in state.ref_fhs;    close(fh); end
+    for fh in state.contig_fhs; close(fh); end
+    for sfhs in state.strain_fhs
+        for (_, fh) in sfhs; close(fh); end
+    end
+end
+
+function write_hsss_record(fh::IO, seq_idx::Int, location::Int, allele_c::Int8, product_c::Int8)
+    write(fh, htol(Int16(seq_idx)))
+    write(fh, htol(Int32(location)))
+    write(fh, allele_c)
+    write(fh, product_c)
+end
+
+# write_hsss_position! is defined after the Variation struct (see below)
+
 """
     expand_codon(codon::String) -> Vector{String}
 
@@ -401,6 +476,92 @@ end
 function Variation()
     Variation("", 0, "", "", "", "", "", "", "", "", "",
               0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 1)
+end
+
+# ---------------------------------------------------------------------------
+# HSSS write_hsss_position! — defined here because it references Variation
+# ---------------------------------------------------------------------------
+
+function write_hsss_position!(
+    state::HsssState,
+    variations::Vector{Variation},
+    reference_strain::String,
+    seq_id::String,
+    location::Int,
+    all_strains::Vector{String},
+    product_code::Int8
+)
+    # Update sequence index when chromosome changes
+    if seq_id != state.current_seq_id
+        state.seq_index     += 1
+        state.current_seq_id = seq_id
+        for fh in state.contig_fhs
+            write(fh, "$(state.seq_index)\t$(seq_id)\n")
+        end
+    end
+    seq_idx = state.seq_index
+
+    # Index variations by strain
+    found = Dict{String, Vector{Variation}}()
+    for v in variations
+        push!(get!(found, v.strain, Variation[]), v)
+    end
+
+    ref_vars     = get(found, reference_strain, Variation[])
+    ref_base     = isempty(ref_vars) ? "" : ref_vars[1].base
+    ref_allele_c = get(HSSS_ALLELE_CODE, isempty(ref_base) ? ' ' : ref_base[1], Int8(0))
+
+    for (ci, cutoff) in enumerate(HSSS_CUTOFFS)
+        # Determine which non-ref strains pass the cutoff
+        passing = Set{String}()
+        for (strain, svars) in found
+            strain == reference_strain && continue
+            if any(v -> !isempty(v.percent) && parse(Float64, v.percent) >= cutoff, svars)
+                push!(passing, strain)
+            end
+        end
+
+        # Skip position for this cutoff if no passing strain differs from reference
+        has_notable = any(passing) do strain
+            any(v -> v.matches_reference != 1, get(found, strain, Variation[]))
+        end
+        has_notable || continue
+
+        # Write reference genome record
+        write_hsss_record(state.ref_fhs[ci], seq_idx, location, ref_allele_c, product_code)
+
+        # Write per-strain records
+        for strain in all_strains
+            strain == reference_strain && continue
+            sidx = get(state.strain_index, strain, 0)
+            sidx == 0 && continue
+            sfh = get(state.strain_fhs[ci], sidx, nothing)
+            isnothing(sfh) && continue
+
+            svars = get(found, strain, nothing)
+
+            if isnothing(svars)
+                # Strain absent from this position
+                write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
+                continue
+            end
+
+            passes = any(v -> !isempty(v.percent) && parse(Float64, v.percent) >= cutoff, svars)
+            if !passes
+                # Present but below cutoff: treat as unknown
+                write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
+                continue
+            end
+
+            is_het = length(svars) > 1
+            for sv in svars
+                # Skip non-het, reference-matching variations
+                !is_het && sv.matches_reference == 1 && continue
+                allele_c = get(HSSS_ALLELE_CODE, isempty(sv.base) ? ' ' : sv.base[1], Int8(0))
+                write_hsss_record(sfh, seq_idx, location, allele_c, product_code)
+            end
+        end
+    end
 end
 
 # ---------------------------------------------------------------------------

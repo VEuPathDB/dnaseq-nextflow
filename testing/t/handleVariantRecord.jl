@@ -573,3 +573,113 @@ end
     fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
     @test fields[14] == "0"
 end
+
+# ---------------------------------------------------------------------------
+# HSSS binary strain files
+# ---------------------------------------------------------------------------
+
+@testset "open_hsss_writers creates directories and strainIdToName.dat" begin
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1", "s2"], base)
+    close_hsss_writers(state)
+
+    for cutoff in [20, 40, 60, 80]
+        dir = joinpath(base, "hsss_readFreq$(cutoff)")
+        @test isdir(dir)
+        lines = readlines(joinpath(dir, "strainIdToName.dat"))
+        @test lines[1] == "1\tref"
+        @test lines[2] == "2\ts1"
+        @test lines[3] == "3\ts2"
+    end
+end
+
+@testset "write_hsss_position writes binary record and contigIdToSourceId" begin
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1"], base)
+
+    # ref: A, s1: T (passes all cutoffs)
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
+    v_ref.percent = "100"; v_ref.matches_reference = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"
+    v_s1.percent = "75"; v_s1.matches_reference = 0
+
+    write_hsss_position!(state, [v_ref, v_s1], "ref", "LmjF.01", 200, ["s1"], Int8(77))
+    close_hsss_writers(state)
+
+    # Verify contig map written to all 4 dirs
+    for cutoff in [20, 40, 60, 80]
+        dir = joinpath(base, "hsss_readFreq$(cutoff)")
+        contig_lines = readlines(joinpath(dir, "contigIdToSourceId.dat"))
+        @test contig_lines[1] == "1\tLmjF.01"
+    end
+
+    # Verify binary record in readFreq20/referenceGenome.dat
+    ref_bytes = read(joinpath(base, "hsss_readFreq20", "referenceGenome.dat"))
+    @test length(ref_bytes) == 8
+    @test ltoh(reinterpret(Int16, ref_bytes[1:2])[1]) == Int16(1)   # seq_index
+    @test ltoh(reinterpret(Int32, ref_bytes[3:6])[1]) == Int32(200) # location
+    @test reinterpret(Int8, ref_bytes[7:7])[1] == Int8(1)           # A = 1
+    @test reinterpret(Int8, ref_bytes[8:8])[1] == Int8(77)          # product_code
+
+    # Verify binary record for s1 (index 2)
+    s1_bytes = read(joinpath(base, "hsss_readFreq20", "2"))
+    @test length(s1_bytes) == 8
+    @test reinterpret(Int8, s1_bytes[7:7])[1] == Int8(4)   # T = 4
+    @test reinterpret(Int8, s1_bytes[8:8])[1] == Int8(77)
+end
+
+@testset "write_hsss_position skips position if only ref-matching strains at cutoff" begin
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1"], base)
+
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
+    v_ref.percent = "100"; v_ref.matches_reference = 1
+    # s1 matches reference
+    v_s1 = Variation(); v_s1.strain = "s1"; v_s1.base = "A"; v_s1.reference = "A"
+    v_s1.percent = "100"; v_s1.matches_reference = 1
+
+    write_hsss_position!(state, [v_ref, v_s1], "ref", "chr1", 100, ["s1"], Int8(77))
+    close_hsss_writers(state)
+
+    # No records written anywhere
+    @test filesize(joinpath(base, "hsss_readFreq20", "referenceGenome.dat")) == 0
+    @test filesize(joinpath(base, "hsss_readFreq20", "2")) == 0
+end
+
+@testset "write_hsss_position writes unknown record for absent strain" begin
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1", "s2"], base)
+
+    # Only ref and s1 present; s2 is absent
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
+    v_ref.percent = "100"; v_ref.matches_reference = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"
+    v_s1.percent = "60"; v_s1.matches_reference = 0
+
+    write_hsss_position!(state, [v_ref, v_s1], "ref", "chr1", 50, ["s1", "s2"], Int8(0))
+    close_hsss_writers(state)
+
+    # s2 (index 3) gets unknown record
+    s2_bytes = read(joinpath(base, "hsss_readFreq20", "3"))
+    @test length(s2_bytes) == 8
+    @test reinterpret(Int8, s2_bytes[7:7])[1] == Int8(0)  # unknown allele
+    @test reinterpret(Int8, s2_bytes[8:8])[1] == Int8(0)  # unknown product
+end
+
+@testset "write_hsss_position filters by cutoff: s1 at 35% skips readFreq40" begin
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1"], base)
+
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
+    v_ref.percent = "100"; v_ref.matches_reference = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"
+    v_s1.percent = "35"; v_s1.matches_reference = 0   # passes 20, fails 40
+
+    write_hsss_position!(state, [v_ref, v_s1], "ref", "chr1", 100, ["s1"], Int8(0))
+    close_hsss_writers(state)
+
+    # readFreq20: s1 passes → record written
+    @test filesize(joinpath(base, "hsss_readFreq20", "2")) == 8
+    # readFreq40: s1 fails → position skipped (no record, not even unknown)
+    @test filesize(joinpath(base, "hsss_readFreq40", "2")) == 0
+end
