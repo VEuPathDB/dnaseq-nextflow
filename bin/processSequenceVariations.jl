@@ -1218,7 +1218,7 @@ function initialize_processing_context(args, all_strains::Vector{String})
 end
 
 """
-    open_output_writers(output_vcf) -> OutputWriters
+    open_output_writers(output_vcf, reference_strain, all_strains) -> OutputWriters
 """
 function open_output_writers(output_vcf::String, reference_strain::String,
                               all_strains::Vector{String})
@@ -1971,6 +1971,9 @@ function handle_variant_record!(
     first_annotation   = annotations[1]
     any_output         = false
     first_all_vars        = nothing
+    # Collect products from non-ref strain variations across all transcript annotations.
+    # Reference strain product (annotation.ref_product) is intentionally excluded —
+    # product_code reflects what the non-ref variants encode.
     all_annotation_products = String[]
 
     # Map strain name -> sample index for GT lookup when keying CANN entries by original alt allele
@@ -2030,7 +2033,7 @@ function handle_variant_record!(
     hsss_prod_code = length(unique_prods) == 1 ?
         Int8(codepoint(only(unique_prods)[1])) : Int8(0)
     write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
-                         seq_id, location, ctx.all_strains, hsss_prod_code)
+                         seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
     modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage)
