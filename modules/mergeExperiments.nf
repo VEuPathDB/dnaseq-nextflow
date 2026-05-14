@@ -151,7 +151,7 @@ process processSeqVars {
 
   input:
     path vcfFile
-    path cacheFile
+    path cacheFile  // previous run's transcript_product.dat (was cache.tsv)
     path undoneStrainsFile
     val  reference_strain
     path transcriptDb
