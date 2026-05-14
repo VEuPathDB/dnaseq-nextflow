@@ -585,6 +585,7 @@ struct OutputWriters
     snp_fh::IO
     allele_fh::IO
     transcript_product_fh::IO
+    hsss::HsssState
 end
 
 function write_sample_dat(all_strains::Vector{String}, path::String="sample.dat")
@@ -1219,7 +1220,8 @@ end
 """
     open_output_writers(output_vcf) -> OutputWriters
 """
-function open_output_writers(output_vcf::String)
+function open_output_writers(output_vcf::String, reference_strain::String,
+                              all_strains::Vector{String})
     vcf_fh = open(output_vcf, "w")
     snp_fh = open("snpFeature.dat", "w")
     write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\n")
@@ -1227,7 +1229,8 @@ function open_output_writers(output_vcf::String)
     write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
     tp_fh = open("transcript_product.dat", "w")
     write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\n")
-    OutputWriters(vcf_fh, snp_fh, allele_fh, tp_fh)
+    hsss = open_hsss_writers(reference_strain, all_strains)
+    OutputWriters(vcf_fh, snp_fh, allele_fh, tp_fh, hsss)
 end
 
 function close_processing_context(ctx::ProcessingContext)
@@ -1240,6 +1243,7 @@ function close_output_writers(writers::OutputWriters)
     close(writers.snp_fh)
     close(writers.allele_fh)
     close(writers.transcript_product_fh)
+    close_hsss_writers(writers.hsss)
 end
 
 # ---------------------------------------------------------------------------
@@ -1966,7 +1970,8 @@ function handle_variant_record!(
     alt_strain_entries = Dict{String, Dict{String, Vector{String}}}()
     first_annotation   = annotations[1]
     any_output         = false
-    first_all_vars     = nothing
+    first_all_vars        = nothing
+    all_annotation_products = String[]
 
     # Map strain name -> sample index for GT lookup when keying CANN entries by original alt allele
     strain_idx_map = Dict{String, Int}(s => i for (i, s) in enumerate(all_strains))
@@ -1994,6 +1999,10 @@ function handle_variant_record!(
             first_all_vars = all_vars
         end
 
+        for v in variations
+            append!(all_annotation_products, v.product)
+        end
+
         if !allele_written
             write_allele_file(writers.allele_fh, all_vars, seq_id, location, ctx.sample_id_map)
             allele_written = true
@@ -2016,6 +2025,12 @@ function handle_variant_record!(
     is_coding = any(a.is_coding == 1 for a in annotations) ? 1 : 0
     write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
                       ctx.reference_strain)
+
+    unique_prods   = unique(all_annotation_products)
+    hsss_prod_code = length(unique_prods) == 1 ?
+        Int8(codepoint(only(unique_prods)[1])) : Int8(0)
+    write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
+                         seq_id, location, ctx.all_strains, hsss_prod_code)
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
     modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage)
@@ -2077,7 +2092,9 @@ function main()
               length(ctx.cds_intervals), " CDS intervals")
 
     # Open output writers and write VCF header
-    writers = open_output_writers(args["output_vcf"])
+    # Build full ordered strain list: reference first, then VCF non-ref strains in order
+    all_strains_with_ref = [args["reference_strain"], all_strains...]
+    writers = open_output_writers(args["output_vcf"], args["reference_strain"], all_strains_with_ref)
     write_vcf_cache_header(writers.vcf_fh, ctx.all_strains, info_headers)
 
     transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())

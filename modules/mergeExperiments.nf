@@ -148,6 +148,10 @@ process processSeqVars {
   publishDir "$params.outputDir", mode: "copy", pattern: 'transcript_product.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'sample.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq20'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq40'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq60'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq80'
 
   input:
     path vcfFile
@@ -166,6 +170,10 @@ process processSeqVars {
     path 'variationFeature.dat', emit: variationFile
     path 'allele.dat', emit: alleleFile
     path 'sample.dat', emit: sampleFile
+    path 'hsss_readFreq20', emit: hsssReadFreq20
+    path 'hsss_readFreq40', emit: hsssReadFreq40
+    path 'hsss_readFreq60', emit: hsssReadFreq60
+    path 'hsss_readFreq80', emit: hsssReadFreq80
 
   script:
     """
@@ -195,6 +203,10 @@ process processSeqVars {
     touch variationFeature.dat
     touch allele.dat
     touch sample.dat
+    mkdir hsss_readFreq20
+    mkdir hsss_readFreq40
+    mkdir hsss_readFreq60
+    mkdir hsss_readFreq80
     """
 }
 
