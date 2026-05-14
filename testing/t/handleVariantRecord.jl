@@ -494,3 +494,40 @@ end
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
     @test length(split(lines[1], "\t")) == 9
 end
+
+# ---------------------------------------------------------------------------
+# write_snp_feature — 14 genomic columns, called once per position
+# ---------------------------------------------------------------------------
+
+@testset "write_snp_feature emits 14 columns, no CDS fields" begin
+    sample_id_map = Dict{String,Int}("ref" => 1, "s1" => 2, "s2" => 3)
+
+    # ref strain: A; s1: T; s2: A (matches ref)
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "A"; v_s2.reference  = "A"; v_s2.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 1, "LmjF.01", 500, "ref", sample_id_map)
+    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+
+    @test length(lines) == 1
+    fields = split(lines[1], "\t")
+    @test length(fields) == 14
+    @test fields[1]  == "500"       # location
+    @test fields[2]  == "LmjF.01"  # seq_id
+    @test fields[3]  == "ref"       # reference_strain
+    @test fields[4]  == "A"         # ref_allele
+    @test fields[14] == "1"         # is_coding
+end
+
+@testset "write_snp_feature is_coding=0 for non-coding position" begin
+    sample_id_map = Dict{String,Int}("ref" => 1, "s1" => 2)
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 200, "ref", sample_id_map)
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test fields[14] == "0"
+end
