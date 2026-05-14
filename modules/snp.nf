@@ -52,7 +52,7 @@ process runFreebayes {
 process filterAndSplitVcf {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy", pattern: "${sampleName}.vcf.gz*"
+  publishDir "$params.outputDir/${sampleName}", mode: "copy", pattern: "${sampleName}.vcf.gz*"
 
   input:
     tuple val(sampleName), path(rawVcfGz), path(rawVcfGzTbi)
@@ -141,7 +141,7 @@ process makeIndelTSV {
 process makeCoverageBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy"
+  publishDir "$params.outputDir/${sampleName}", mode: "copy"
 
   input:
     tuple val(sampleName), path(bamFile), path(bamIndex)
@@ -168,7 +168,7 @@ process makeCoverageBed {
 process makeConsensusFromVcfAndBed {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy"
+  publishDir "$params.outputDir/${sampleName}", mode: "copy"
 
   input:
     tuple val(sampleName), path(vcfGz), path(vcfGzTbi), path(coverageBed)

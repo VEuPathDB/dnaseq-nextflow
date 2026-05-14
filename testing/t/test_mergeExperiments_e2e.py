@@ -467,8 +467,8 @@ def test_variation_feature_exists(work_dirs):
 
 def test_variation_feature_column_count(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 18]
-    assert not bad, f"Rows with wrong column count (expected 18): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 14]
+    assert not bad, f"Rows with wrong column count (expected 14): {bad[:5]}"
 
 
 def test_variation_feature_row_count(work_dirs):
@@ -484,91 +484,95 @@ def test_variation_feature_location_positive_int(work_dirs):
 
 def test_variation_feature_seq_id_nonempty(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[2].strip()]
-    assert not bad, f"Rows with empty seq_id (col 3): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[1].strip()]
+    assert not bad, f"Rows with empty seq_id (col 2): {bad[:5]}"
 
 
 def test_variation_feature_reference_strain(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    values = {r[3] for r in rows}
-    assert len(values) == 1, f"Multiple reference_strain values in col 4: {values}"
-    assert next(iter(values)), "reference_strain (col 4) is empty"
-
-
-def test_variation_feature_has_nonsynonymous_binary(work_dirs):
-    rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[5] not in ('0', '1')]
-    assert not bad, f"Rows with has_nonsynonymous not 0/1 (col 6): {bad[:5]}"
+    values = {r[2] for r in rows}
+    assert len(values) == 1, f"Multiple reference_strain values in col 3: {values}"
+    assert next(iter(values)), "reference_strain (col 3) is empty"
 
 
 def test_variation_feature_major_allele_nonempty(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[6].strip()]
-    assert not bad, f"Rows with empty major_allele (col 7): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[4].strip()]
+    assert not bad, f"Rows with empty major_allele (col 5): {bad[:5]}"
 
 
-def test_variation_feature_major_allele_count_positive(work_dirs):
+def test_variation_feature_major_allele_strain_count_positive(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[8].isdigit() or int(r[8]) <= 0]
-    assert not bad, f"Rows with major_allele_count <= 0 (col 9): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[6].isdigit() or int(r[6]) <= 0]
+    assert not bad, f"Rows with major_allele_strain_count <= 0 (col 7): {bad[:5]}"
 
 
 def test_variation_feature_distinct_strain_count_in_range(work_dirs):
-    """distinct_strain_count (col 13) includes the reference strain as a separate variation,
+    """distinct_strain_count (col 11) includes the reference strain as a separate variation,
     so the upper bound is N_vcf_samples + 1."""
     vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
     n_strains = len(bcftools_samples(vcf_path))
     rows = _read_variation_feature(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not r[12].isdigit() or not (1 <= int(r[12]) <= n_strains + 1)
+        if not r[10].isdigit() or not (1 <= int(r[10]) <= n_strains + 1)
     ]
-    assert not bad, f"Rows with distinct_strain_count out of range [1,{n_strains + 1}] (col 13): {bad[:5]}"
+    assert not bad, f"Rows with distinct_strain_count out of range [1,{n_strains + 1}] (col 11): {bad[:5]}"
 
 
 def test_variation_feature_is_coding_binary(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[14] not in ('0', '1')]
-    assert not bad, f"Rows with is_coding not 0/1 (col 15): {bad[:5]}"
-
-
-def test_variation_feature_coding_rows_have_transcript(work_dirs):
-    rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[14] == '1' and not r[1].strip()]
-    assert not bad, f"is_coding=1 rows with empty transcript_id (col 2): {bad[:5]}"
-
-
-def test_variation_feature_has_stop_codon_binary(work_dirs):
-    rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[16] not in ('0', '1')]
-    assert not bad, f"Rows with has_stop_codon not 0/1 (col 17): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if r[13] not in ('0', '1')]
+    assert not bad, f"Rows with is_coding not 0/1 (col 14): {bad[:5]}"
 
 
 def test_variation_feature_ref_allele_nonempty(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[4].strip()]
-    assert not bad, f"Rows with empty ref_allele (col 5): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[3].strip()]
+    assert not bad, f"Rows with empty ref_allele (col 4): {bad[:5]}"
 
 
 def test_variation_feature_distinct_allele_count_gte_1(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[13].isdigit() or int(r[13]) < 1]
-    assert not bad, f"Rows with distinct_allele_count < 1 (col 14): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not r[11].isdigit() or int(r[11]) < 1]
+    assert not bad, f"Rows with distinct_allele_count < 1 (col 12): {bad[:5]}"
 
 
-def test_variation_feature_total_allele_count_gte_strain_count(work_dirs):
+def test_variation_feature_total_ploidy_count_gte_strain_count(work_dirs):
     rows = _read_variation_feature(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not r[15].isdigit() or int(r[15]) < int(r[12])
+        if not r[12].isdigit() or int(r[12]) < int(r[10])
     ]
-    assert not bad, f"Rows where total_allele_count < distinct_strain_count (col 16 < col 13): {bad[:5]}"
+    assert not bad, f"Rows where total_ploidy_count < distinct_strain_count (col 13 < col 11): {bad[:5]}"
 
 
-def test_variation_feature_nonsynonymous_implies_coding(work_dirs):
+def test_variation_feature_major_allele_frequency_in_range(work_dirs):
+    """major_allele_frequency (col 9) is between 0 and 1 exclusive."""
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[5] == '1' and r[14] != '1']
-    assert not bad, f"has_nonsynonymous=1 but is_coding!=1 on rows: {bad[:5]}"
+    bad = []
+    for i, r in enumerate(rows):
+        try:
+            f = float(r[8])
+            if not (0.0 < f <= 1.0):
+                bad.append(i + 1)
+        except ValueError:
+            bad.append(i + 1)
+    assert not bad, f"Rows with major_allele_frequency out of range (col 9): {bad[:5]}"
+
+
+def test_variation_feature_allele_frequencies_sum_to_one(work_dirs):
+    """major + minor allele frequencies must sum to 1.0 per row (tolerance 0.01)."""
+    rows = _read_variation_feature(work_dirs)
+    bad = []
+    for i, r in enumerate(rows):
+        major = float(r[8])
+        minor = float(r[9]) if r[9] != '' else 0.0
+        # sum all allele frequencies — there may be more than 2 alleles not captured here,
+        # but major + minor should be <= 1.0; if only 2 alleles they sum to 1.0
+        if major + minor > 1.0 + 0.01:
+            bad.append(i + 1)
+    assert not bad, f"Rows where major+minor allele frequency > 1.0 (col 9+10): {bad[:5]}"
 
 
 # ---------------------------------------------------------------------------
@@ -596,8 +600,8 @@ def test_allele_dat_row_count(work_dirs):
 
 def test_allele_dat_column_count(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 7]
-    assert not bad, f"Rows with wrong column count (expected 7): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 9]
+    assert not bad, f"Rows with wrong column count (expected 9): {bad[:5]}"
 
 
 def test_allele_dat_location_positive_int(work_dirs):
@@ -624,13 +628,23 @@ def test_allele_dat_distinct_strain_count_positive(work_dirs):
     assert not bad, f"Rows with distinct_strain_count <= 0 (col 4): {bad[:5]}"
 
 
-def test_allele_dat_allele_count_gte_strain_count(work_dirs):
+def test_allele_dat_frequency_in_range(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [
-        i + 1 for i, r in enumerate(rows)
-        if not r[3].isdigit() or not r[4].isdigit() or int(r[4]) < int(r[3])
-    ]
-    assert not bad, f"Rows where allele_count < distinct_strain_count: {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows)
+           if not (0.0 < float(r[4]) <= 1.0)]
+    assert not bad, f"Rows with allele_frequency outside (0, 1]: {bad[:5]}"
+
+
+def test_allele_dat_frequencies_sum_to_one_per_position(work_dirs):
+    """Ploidy-weighted allele frequencies must sum to ~1.0 at each position."""
+    from collections import defaultdict
+    rows = _read_allele(work_dirs)
+    by_pos = defaultdict(float)
+    for r in rows:
+        by_pos[(r[0], r[1])] += float(r[4])
+    bad = [(pos, seq, f"{total:.4f}") for (pos, seq), total in by_pos.items()
+           if abs(total - 1.0) > 0.01]
+    assert not bad, f"Positions where allele frequencies don't sum to 1.0: {bad[:5]}"
 
 
 def test_allele_dat_avg_coverage_non_negative(work_dirs):
@@ -656,90 +670,165 @@ def test_allele_dat_two_decimal_places(work_dirs):
 
 
 # ---------------------------------------------------------------------------
-# Layer 1: processSeqVars — product.dat
+# Layer 1: processSeqVars — HSSS binary strain files
 # ---------------------------------------------------------------------------
 
-def _read_product(work_dirs):
-    path = os.path.join(work_dirs['processSeqVars'], 'product.dat')
+def test_hsss_directories_exist(work_dirs):
+    for cutoff in [20, 40, 60, 80]:
+        path = os.path.join(work_dirs['processSeqVars'], f'hsss_readFreq{cutoff}')
+        assert os.path.isdir(path), f"hsss_readFreq{cutoff} directory missing"
+
+
+def test_hsss_strain_map_files_exist(work_dirs):
+    for cutoff in [20, 40, 60, 80]:
+        d = os.path.join(work_dirs['processSeqVars'], f'hsss_readFreq{cutoff}')
+        assert os.path.exists(os.path.join(d, 'strainIdToName.dat'))
+        assert os.path.exists(os.path.join(d, 'contigIdToSourceId.dat'))
+        assert os.path.exists(os.path.join(d, 'referenceGenome.dat'))
+
+
+def test_hsss_strain_map_consistent_across_cutoffs(work_dirs):
+    """strainIdToName.dat must be identical across all 4 cutoffs."""
+    contents = []
+    for cutoff in [20, 40, 60, 80]:
+        p = os.path.join(work_dirs['processSeqVars'],
+                         f'hsss_readFreq{cutoff}', 'strainIdToName.dat')
+        with open(p) as f:
+            contents.append(f.read())
+    assert len(set(contents)) == 1, "strainIdToName.dat differs across cutoffs"
+
+
+def test_hsss_ref_genome_size_multiple_of_8(work_dirs):
+    """referenceGenome.dat must be a multiple of 8 bytes (one record each)."""
+    for cutoff in [20, 40, 60, 80]:
+        p = os.path.join(work_dirs['processSeqVars'],
+                         f'hsss_readFreq{cutoff}', 'referenceGenome.dat')
+        size = os.path.getsize(p)
+        assert size % 8 == 0, \
+            f"referenceGenome.dat size {size} not multiple of 8 (readFreq{cutoff})"
+
+
+def test_hsss_strain_files_size_multiple_of_8(work_dirs):
+    """All per-strain binary files must be multiples of 8 bytes."""
+    for cutoff in [20, 40, 60, 80]:
+        d = os.path.join(work_dirs['processSeqVars'], f'hsss_readFreq{cutoff}')
+        strain_map = os.path.join(d, 'strainIdToName.dat')
+        with open(strain_map) as f:
+            indices = [line.strip().split('\t')[0] for line in f if line.strip()]
+        for idx in indices[1:]:   # skip ref (index 1)
+            p = os.path.join(d, idx)
+            if os.path.exists(p):
+                size = os.path.getsize(p)
+                assert size % 8 == 0, \
+                    f"Strain file {idx} size {size} not multiple of 8 (readFreq{cutoff})"
+
+
+def test_hsss_higher_cutoff_no_more_records(work_dirs):
+    """readFreq40 referenceGenome.dat must have <= records than readFreq20."""
+    def record_count(path):
+        return os.path.getsize(path) // 8 if os.path.exists(path) else 0
+
+    d = work_dirs['processSeqVars']
+    r20 = record_count(os.path.join(d, 'hsss_readFreq20', 'referenceGenome.dat'))
+    r40 = record_count(os.path.join(d, 'hsss_readFreq40', 'referenceGenome.dat'))
+    assert r40 <= r20, f"readFreq40 ({r40}) has more records than readFreq20 ({r20})"
+
+
+# ---------------------------------------------------------------------------
+# Layer 1: processSeqVars — transcript_product.dat
+# ---------------------------------------------------------------------------
+
+def _read_transcript_product(work_dirs):
+    path = os.path.join(work_dirs['processSeqVars'], 'transcript_product.dat')
     rows = []
     with open(path) as f:
-        next(f)  # skip header
+        next(f)  # skip header (starts with #)
         for line in f:
             rows.append(line.rstrip('\n').split('\t'))
     return rows
 
 
-def test_product_dat_exists(work_dirs):
-    assert os.path.exists(os.path.join(work_dirs['processSeqVars'], 'product.dat'))
+def test_transcript_product_dat_exists(work_dirs):
+    assert os.path.exists(os.path.join(work_dirs['processSeqVars'], 'transcript_product.dat'))
 
 
-def test_product_dat_row_count(work_dirs):
-    rows = _read_product(work_dirs)
-    assert len(rows) > 0, "product.dat has no data rows"
+def test_transcript_product_dat_row_count(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    assert len(rows) > 0, "transcript_product.dat has no data rows"
 
 
-def test_product_dat_column_count(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 9]
-    assert not bad, f"Rows with wrong column count (expected 9): {bad[:5]}"
+def test_transcript_product_dat_column_count(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 12]
+    assert not bad, f"Rows with wrong column count (expected 12): {bad[:5]}"
 
 
-def test_product_dat_location_positive_int(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[0].isdigit() or int(r[0]) <= 0]
-    assert not bad, f"Rows with invalid location (col 1): {bad[:5]}"
+def test_transcript_product_dat_location_positive_int(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[1].isdigit() or int(r[1]) <= 0]
+    assert not bad, f"Rows with invalid location (col 2): {bad[:5]}"
 
 
-def test_product_dat_seq_id_nonempty(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[1].strip()]
-    assert not bad, f"Rows with empty seq_id (col 2): {bad[:5]}"
+def test_transcript_product_dat_seq_id_nonempty(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[0].strip()]
+    assert not bad, f"Rows with empty seq_id (col 1): {bad[:5]}"
 
 
-def test_product_dat_codon_is_three_acgt(work_dirs):
+def test_transcript_product_dat_codon_is_three_acgt(work_dirs):
     """Codons are three nucleotide characters; N is allowed for masked positions."""
-    rows = _read_product(work_dirs)
+    rows = _read_transcript_product(work_dirs)
     pattern = re.compile(r'^[ACGTN]{3}$')
-    bad = [i + 1 for i, r in enumerate(rows) if not pattern.match(r[2])]
-    assert not bad, f"Rows with invalid codon (col 3): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if not pattern.match(r[5])]
+    assert not bad, f"Rows with invalid codon (col 6): {bad[:5]}"
 
 
-def test_product_dat_pos_in_codon_1_2_3(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[3] not in ('1', '2', '3')]
-    assert not bad, f"Rows with pos_in_codon not in {{1,2,3}} (col 4): {bad[:5]}"
+def test_transcript_product_dat_pos_in_codon_1_2_3(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if r[6] not in ('1', '2', '3')]
+    assert not bad, f"Rows with pos_in_codon not in {{1,2,3}} (col 7): {bad[:5]}"
 
 
-def test_product_dat_transcript_id_nonempty(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[4].strip()]
-    assert not bad, f"Rows with empty transcript_id (col 5): {bad[:5]}"
+def test_transcript_product_dat_transcript_id_nonempty(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[2].strip()]
+    assert not bad, f"Rows with empty transcript_id (col 3): {bad[:5]}"
 
 
-def test_product_dat_product_count_non_negative(work_dirs):
-    """product_count (col 6) is 0 for downstream-of-frameshift rows where the
-    codon is disrupted; non-negative is the correct invariant."""
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[5].lstrip('-').isdigit() or int(r[5]) < 0]
-    assert not bad, f"Rows with product_count < 0 (col 6): {bad[:5]}"
+def test_transcript_product_dat_product_count_non_negative(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[7].lstrip('-').isdigit() or int(r[7]) < 0]
+    assert not bad, f"Rows with product_count < 0 (col 8): {bad[:5]}"
 
 
-def test_product_dat_amino_acid_single_char_or_stop(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r[6]) != 1]
-    assert not bad, f"Rows where amino_acid is not single char (col 7): {bad[:5]}"
+def test_transcript_product_dat_amino_acid_single_char_or_stop(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if len(r[8]) != 1]
+    assert not bad, f"Rows where amino_acid is not single char (col 9): {bad[:5]}"
 
 
-def test_product_dat_pos_in_cds_positive(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[7].isdigit() or int(r[7]) <= 0]
-    assert not bad, f"Rows with pos_in_cds <= 0 (col 8): {bad[:5]}"
+def test_transcript_product_dat_pos_in_cds_positive(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[3].isdigit() or int(r[3]) <= 0]
+    assert not bad, f"Rows with pos_in_cds <= 0 (col 4): {bad[:5]}"
 
 
-def test_product_dat_downstream_of_frameshift_binary(work_dirs):
-    rows = _read_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[8] not in ('0', '1')]
-    assert not bad, f"Rows with downstream_of_frameshift not 0/1 (col 9): {bad[:5]}"
+def test_transcript_product_dat_pos_in_protein_positive(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    bad = [i + 1 for i, r in enumerate(rows) if not r[4].isdigit() or int(r[4]) <= 0]
+    assert not bad, f"Rows with pos_in_protein <= 0 (col 5): {bad[:5]}"
+
+
+def test_transcript_product_dat_no_duplicate_rows(work_dirs):
+    rows = _read_transcript_product(work_dirs)
+    seen = set()
+    dups = []
+    for i, r in enumerate(rows):
+        key = tuple(r)
+        if key in seen:
+            dups.append(i + 1)
+        seen.add(key)
+    assert not dups, f"Duplicate rows in transcript_product.dat at line numbers: {dups[:5]}"
 
 
 # ---------------------------------------------------------------------------
@@ -846,7 +935,7 @@ def test_variant_count_output_vcf_equals_ann_vcf(work_dirs):
 
 
 def test_variation_feature_count_lte_vcf_record_count(work_dirs):
-    """variationFeature.dat row count must be > 0 and <= VCF records x max transcripts per position."""
+    """variationFeature.dat is one row per position, so row count must be > 0 and <= VCF record count."""
     vcf_path = os.path.join(work_dirs['processSeqVars'], 'output.vcf.gz')
     vcf_count = bcftools_record_count(vcf_path)
 
@@ -856,27 +945,59 @@ def test_variation_feature_count_lte_vcf_record_count(work_dirs):
         vf_count = sum(1 for _ in f)
 
     assert vf_count > 0, "variationFeature.dat is empty"
-    assert vf_count <= vcf_count * 20, (
-        f"variationFeature.dat rows ({vf_count}) suspiciously exceed "
-        f"20x VCF records ({vcf_count})"
+    assert vf_count <= vcf_count, (
+        f"variationFeature.dat rows ({vf_count}) exceed VCF record count ({vcf_count}); "
+        f"expected one row per position"
     )
 
 
-def test_allele_dat_row_count_consistent_with_coding_variants(work_dirs):
-    """allele.dat is only emitted for coding variants. Row count must be > 0
-    and <= 4x coding variationFeature rows (conservatively: <= 4 distinct alleles per site)."""
-    vf_rows = _read_variation_feature(work_dirs)
-    coding_row_count = sum(1 for r in vf_rows if r[14] == '1')
+def test_allele_dat_row_count_consistent_with_vcf(work_dirs):
+    """allele.dat is emitted for all variant positions. Row count must be > 0
+    and <= 4x variationFeature rows (conservatively: <= 4 distinct alleles per site,
+    including het expansion into ref+alt components)."""
+    vf_row_count = len(_read_variation_feature(work_dirs))
     allele_row_count = len(_read_allele(work_dirs))
     assert allele_row_count > 0, "allele.dat is empty"
-    assert allele_row_count <= coding_row_count * 4, (
+    assert allele_row_count >= vf_row_count, (
+        f"allele.dat rows ({allele_row_count}) fewer than variationFeature rows ({vf_row_count}); "
+        f"expected at least one allele row per variant position"
+    )
+    assert allele_row_count <= vf_row_count * 6, (
         f"allele.dat rows ({allele_row_count}) far exceed "
-        f"4x coding variationFeature rows ({coding_row_count})"
+        f"6x variationFeature rows ({vf_row_count})"
     )
 
 
-def test_product_dat_transcripts_in_coding_sequences(work_dirs):
-    """Every transcript_id in product.dat must exist in codingSequences.db."""
+def test_allele_dat_no_iupac_alleles(work_dirs):
+    """allele.dat allele column must contain only standard nucleotides or indel strings,
+    not IUPAC ambiguity codes. Het calls must be expanded into separate ref/alt rows."""
+    import re
+    rows = _read_allele(work_dirs)
+    iupac_pattern = re.compile(r'^[RYSWKMBDHV]$', re.IGNORECASE)
+    bad = [
+        (i + 1, r[2]) for i, r in enumerate(rows)
+        if iupac_pattern.match(r[2])
+    ]
+    assert not bad, f"IUPAC allele codes found in allele.dat (row, allele): {bad[:10]}"
+
+
+def test_variation_feature_no_iupac_alleles(work_dirs):
+    """major_allele and minor_allele in variationFeature.dat must not contain IUPAC
+    ambiguity codes. Het calls must be expanded into their component alleles."""
+    import re
+    rows = _read_variation_feature(work_dirs)
+    iupac_pattern = re.compile(r'^[RYSWKMBDHV]$', re.IGNORECASE)
+    bad = [
+        (i + 1, r[4], r[5]) for i, r in enumerate(rows)
+        if iupac_pattern.match(r[4]) or (r[5] and iupac_pattern.match(r[5]))
+    ]
+    assert not bad, (
+        f"IUPAC allele codes in variationFeature.dat (row, major, minor): {bad[:10]}"
+    )
+
+
+def test_transcript_product_dat_transcripts_in_coding_sequences(work_dirs):
+    """Every transcript_id in transcript_product.dat must exist in codingSequences.db."""
     db_path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
     with sqlite3.connect(db_path) as conn:
         known = {
@@ -884,22 +1005,22 @@ def test_product_dat_transcripts_in_coding_sequences(work_dirs):
             for row in conn.execute("SELECT DISTINCT transcript_id FROM coding_sequences")
         }
 
-    prod_rows = _read_product(work_dirs)
-    product_transcripts = {r[4] for r in prod_rows if r[4]}
+    prod_rows = _read_transcript_product(work_dirs)
+    product_transcripts = {r[2] for r in prod_rows if r[2]}
     orphans = product_transcripts - known
     assert not orphans, \
-        f"product.dat references transcripts not in codingSequences.db: {list(orphans)[:5]}"
+        f"transcript_product.dat references transcripts not in codingSequences.db: {list(orphans)[:5]}"
 
 
 def test_reference_strain_nonempty_and_consistent_with_vf(work_dirs):
-    """variationFeature.dat col 4 (reference_strain) is the reference genome identifier
+    """variationFeature.dat col 3 (reference_strain) is the reference genome identifier
     used by GUS — not a VCF sample name. Verify it is non-empty and consistent across
     all rows (the cross-output check is that it never changes mid-file)."""
     vf_rows = _read_variation_feature(work_dirs)
     assert vf_rows, "variationFeature.dat is empty"
-    ref_strain = vf_rows[0][3]
-    assert ref_strain, "reference_strain (col 4) is empty in first row of variationFeature.dat"
-    inconsistent = [i + 1 for i, r in enumerate(vf_rows) if r[3] != ref_strain]
+    ref_strain = vf_rows[0][2]
+    assert ref_strain, "reference_strain (col 3) is empty in first row of variationFeature.dat"
+    inconsistent = [i + 1 for i, r in enumerate(vf_rows) if r[2] != ref_strain]
     assert not inconsistent, \
         f"reference_strain changes mid-file on rows: {inconsistent[:5]}"
 

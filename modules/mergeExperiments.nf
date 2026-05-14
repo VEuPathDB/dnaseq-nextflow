@@ -144,14 +144,18 @@ SQL
 process processSeqVars {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir", mode: "copy", pattern: 'output_cache.tsv', saveAs: { 'cache.tsv' }
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
-  publishDir "$params.outputDir", mode: "copy", pattern: 'product.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'transcript_product.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'variationFeature.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'sample.dat'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq20'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq40'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq60'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'hsss_readFreq80'
 
   input:
     path vcfFile
-    path cacheFile
+    path cacheFile  // previous run's transcript_product.dat (was cache.tsv)
     path undoneStrainsFile
     val  reference_strain
     path transcriptDb
@@ -162,10 +166,14 @@ process processSeqVars {
   output:
     path 'output.vcf.gz', emit: outputVcf
     path 'output.vcf.gz.tbi', emit: outputVcfIndex
-    path 'output_cache.tsv', emit: outputCache
+    path 'transcript_product.dat', emit: transcriptProductFile
     path 'variationFeature.dat', emit: variationFile
     path 'allele.dat', emit: alleleFile
-    path 'product.dat', emit: productFile
+    path 'sample.dat', emit: sampleFile
+    path 'hsss_readFreq20', emit: hsssReadFreq20
+    path 'hsss_readFreq40', emit: hsssReadFreq40
+    path 'hsss_readFreq60', emit: hsssReadFreq60
+    path 'hsss_readFreq80', emit: hsssReadFreq80
 
   script:
     """
@@ -180,8 +188,7 @@ process processSeqVars {
       --indel_db $indelDb \\
       --gtf_file $gtfFile \\
       --coverage_file $coverageFile \\
-      --output_vcf output.vcf \\
-      --output_cache output_cache.tsv
+      --output_vcf output.vcf
 
     mv snpFeature.dat variationFeature.dat
     bgzip output.vcf
@@ -192,10 +199,14 @@ process processSeqVars {
     """
     touch output.vcf.gz
     touch output.vcf.gz.tbi
-    touch output_cache.tsv
+    touch transcript_product.dat
     touch variationFeature.dat
     touch allele.dat
-    touch product.dat
+    touch sample.dat
+    mkdir hsss_readFreq20
+    mkdir hsss_readFreq40
+    mkdir hsss_readFreq60
+    mkdir hsss_readFreq80
     """
 }
 
@@ -210,8 +221,8 @@ process snpEff {
     path sequencesFa
 
   output:
-    path 'merged.ann.vcf.gz'
-    path 'merged.ann.vcf.gz.tbi'
+    path 'merged.ann.vcf.gz',     emit: annotatedVcf
+    path 'merged.ann.vcf.gz.tbi', emit: annotatedVcfIndex
 
   script:
     """
@@ -230,5 +241,28 @@ process snpEff {
   stub:
     """
     touch merged.ann.vcf.gz merged.ann.vcf.gz.tbi
+    """
+}
+
+
+process parseSnpEffAnnotations {
+  container 'veupathdb/shortreadaligner:1.0.0'
+  publishDir "$params.outputDir", mode: "copy", pattern: 'snpeff.dat'
+
+  input:
+    path annVcf
+
+  output:
+    path 'snpeff.dat', emit: snpeffFile
+
+  script:
+    """
+    set -euo pipefail
+    parseSnpEffAnnotations.py --vcf $annVcf --output snpeff.dat
+    """
+
+  stub:
+    """
+    touch snpeff.dat
     """
 }

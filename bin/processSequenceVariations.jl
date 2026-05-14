@@ -87,6 +87,81 @@ const IUPAC_COMPRESS = Dict{Set{Char},Char}(
     Set(['A','C'])=>'M', Set(['G','C'])=>'S', Set(['A','T'])=>'W',
 )
 
+# ---------------------------------------------------------------------------
+# HSSS (HighSpeedSnpSearch) binary strain file support
+# ---------------------------------------------------------------------------
+
+const HSSS_CUTOFFS = (20, 40, 60, 80)
+
+const HSSS_ALLELE_CODE = Dict{Char,Int8}(
+    'A'=>Int8(1), 'a'=>Int8(1),
+    'C'=>Int8(2), 'c'=>Int8(2),
+    'G'=>Int8(3), 'g'=>Int8(3),
+    'T'=>Int8(4), 't'=>Int8(4),
+)
+
+mutable struct HsssState
+    ref_fhs::Vector{IO}               # one referenceGenome.dat handle per cutoff
+    contig_fhs::Vector{IO}            # one contigIdToSourceId.dat handle per cutoff
+    strain_fhs::Vector{Dict{Int,IO}}  # per cutoff: strain_index -> file handle (non-ref only)
+    strain_index::Dict{String,Int}    # strain_name -> integer index (ref=1, others 2..N)
+    seq_index::Int
+    current_seq_id::String
+end
+
+function open_hsss_writers(reference_strain::String, all_strains::Vector{String},
+                            base_dir::String=".")::HsssState
+    non_ref = filter(s -> s != reference_strain, all_strains)
+    strain_index = Dict{String,Int}(reference_strain => 1)
+    for (i, s) in enumerate(non_ref)
+        strain_index[s] = i + 1
+    end
+
+    ref_fhs    = IO[]
+    contig_fhs = IO[]
+    strain_fhs = Dict{Int,IO}[]
+
+    for cutoff in HSSS_CUTOFFS
+        dir = joinpath(base_dir, "hsss_readFreq$(cutoff)")
+        mkpath(dir)
+
+        open(joinpath(dir, "strainIdToName.dat"), "w") do f
+            write(f, "1\t$(reference_strain)\n")
+            for (i, s) in enumerate(non_ref)
+                write(f, "$(i+1)\t$(s)\n")
+            end
+        end
+
+        push!(ref_fhs,    open(joinpath(dir, "referenceGenome.dat"), "w"))
+        push!(contig_fhs, open(joinpath(dir, "contigIdToSourceId.dat"), "w"))
+
+        sfhs = Dict{Int,IO}()
+        for (i, s) in enumerate(non_ref)
+            sfhs[i + 1] = open(joinpath(dir, string(i + 1)), "w")
+        end
+        push!(strain_fhs, sfhs)
+    end
+
+    HsssState(ref_fhs, contig_fhs, strain_fhs, strain_index, 0, "")
+end
+
+function close_hsss_writers(state::HsssState)
+    for fh in state.ref_fhs;    close(fh); end
+    for fh in state.contig_fhs; close(fh); end
+    for sfhs in state.strain_fhs
+        for (_, fh) in sfhs; close(fh); end
+    end
+end
+
+function write_hsss_record(fh::IO, seq_idx::Int, location::Int, allele_c::Int8, product_c::Int8)
+    write(fh, htol(Int16(seq_idx)))
+    write(fh, htol(Int32(location)))
+    write(fh, allele_c)
+    write(fh, product_c)
+end
+
+# write_hsss_position! is defined after the Variation struct (see below)
+
 """
     expand_codon(codon::String) -> Vector{String}
 
@@ -378,8 +453,9 @@ mutable struct Variation
     strain::String
     reference::String
     base::String
+    alt_allele::String   # actual VCF alt base for het calls; empty otherwise
     coverage::String
-    percent::String
+    percent::String      # alt_fraction = AO/(RO+AO)*100; for het, ref_fraction = 100 - percent
     quality::String
     pvalue::String
     snp_source_id::String
@@ -394,11 +470,98 @@ mutable struct Variation
     has_nonsynonomous::Int
     cds_number::Int
     matches_reference::Int
+    ploidy::Int
 end
 
 function Variation()
-    Variation("", 0, "", "", "", "", "", "", "", "",
-              0, 0, 0, 0, "", String[], "", "", 0, 0, 0)
+    Variation("", 0, "", "", "", "", "", "", "", "", "",
+              0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 1)
+end
+
+# ---------------------------------------------------------------------------
+# HSSS write_hsss_position! — defined here because it references Variation
+# ---------------------------------------------------------------------------
+
+function write_hsss_position!(
+    state::HsssState,
+    variations::Vector{Variation},
+    reference_strain::String,
+    seq_id::String,
+    location::Int,
+    all_strains::Vector{String},
+    product_code::Int8
+)
+    # Update sequence index when chromosome changes
+    if seq_id != state.current_seq_id
+        state.seq_index     += 1
+        state.current_seq_id = seq_id
+        for fh in state.contig_fhs
+            write(fh, "$(state.seq_index)\t$(seq_id)\n")
+        end
+    end
+    seq_idx = state.seq_index
+
+    # Index variations by strain
+    found = Dict{String, Vector{Variation}}()
+    for v in variations
+        push!(get!(found, v.strain, Variation[]), v)
+    end
+
+    ref_vars     = get(found, reference_strain, Variation[])
+    ref_base     = isempty(ref_vars) ? "" : ref_vars[1].base
+    ref_allele_c = get(HSSS_ALLELE_CODE, isempty(ref_base) ? ' ' : ref_base[1], Int8(0))
+
+    for (ci, cutoff) in enumerate(HSSS_CUTOFFS)
+        # Determine which non-ref strains pass the cutoff
+        passing = Set{String}()
+        for (strain, svars) in found
+            strain == reference_strain && continue
+            if any(v -> !isempty(v.percent) && parse(Float64, v.percent) >= cutoff, svars)
+                push!(passing, strain)
+            end
+        end
+
+        # Skip position for this cutoff if no passing strain differs from reference
+        has_notable = any(passing) do strain
+            any(v -> v.matches_reference != 1, get(found, strain, Variation[]))
+        end
+        has_notable || continue
+
+        # Write reference genome record
+        write_hsss_record(state.ref_fhs[ci], seq_idx, location, ref_allele_c, product_code)
+
+        # Write per-strain records
+        for strain in all_strains
+            strain == reference_strain && continue
+            sidx = get(state.strain_index, strain, 0)
+            sidx == 0 && continue
+            sfh = get(state.strain_fhs[ci], sidx, nothing)
+            isnothing(sfh) && continue
+
+            svars = get(found, strain, nothing)
+
+            if isnothing(svars)
+                # Strain absent from this position
+                write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
+                continue
+            end
+
+            if strain ∉ passing
+                # Present but below cutoff: treat as unknown
+                write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
+                continue
+            end
+
+            # Het strains write one record per allele (including ref-matching); matches Perl hsssCreateStrainFiles behavior
+            is_het = length(svars) > 1
+            for sv in svars
+                # Skip non-het, reference-matching variations
+                !is_het && sv.matches_reference == 1 && continue
+                allele_c = get(HSSS_ALLELE_CODE, isempty(sv.base) ? ' ' : sv.base[1], Int8(0))
+                write_hsss_record(sfh, seq_idx, location, allele_c, product_code)
+            end
+        end
+    end
 end
 
 # ---------------------------------------------------------------------------
@@ -414,14 +577,24 @@ struct ProcessingContext
     indel_db::SQLite.DB
     fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}
     all_strains::Vector{String}
+    sample_id_map::Dict{String,Int}
 end
 
 struct OutputWriters
-    vcf_fh::IO    # CANN-annotated VCF output for SnpEff
-    cache_fh::IO  # TSV position cache for subsequent runs
+    vcf_fh::IO
     snp_fh::IO
     allele_fh::IO
-    product_fh::IO
+    transcript_product_fh::IO
+    hsss::HsssState
+end
+
+function write_sample_dat(all_strains::Vector{String}, path::String="sample.dat")
+    open(path, "w") do fh
+        write(fh, "strain_id\tsample_name\n")
+        for (i, name) in enumerate(all_strains)
+            write(fh, "$(i)\t$(name)\n")
+        end
+    end
 end
 
 struct PositionAnnotation
@@ -699,17 +872,6 @@ function parse_cache_tsv_record(line::AbstractString)
     (chrom, pos, tid, pic)
 end
 
-"""
-    write_cache_entries(fh, chrom, pos, annotations)
-
-Writes one TSV row per coding transcript annotation.
-"""
-function write_cache_entries(fh::IO, chrom::String, pos::Int, annotations::Vector{PositionAnnotation})
-    for ann in annotations
-        ann.is_coding == 1 || continue
-        write(fh, join([chrom, string(pos), ann.transcript_id, string(ann.pos_in_cds)], '\t'), "\n")
-    end
-end
 
 """
     build_annotations_from_cache(entries, reference_strain, transcript_db, transcript_cache)
@@ -851,17 +1013,6 @@ function gt_to_base(gt::String, ref::String, alts::Vector{String})::String
 end
 
 """
-    gt_allele_idx(gt) -> Int
-
-Returns the primary alt allele index from GT (0 = ref). Used for percent computation.
-"""
-function gt_allele_idx(gt::String)::Int
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-    isnothing(sep_idx) && return parse(Int, gt)
-    parse(Int, gt[1:sep_idx-1])
-end
-
-"""
     nonref_alt_alleles(gt, alts) -> Vector{String}
 
 Returns the unique non-ref allele strings carried by this sample, in index order.
@@ -890,21 +1041,32 @@ function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
 end
 
 """
-    compute_percent(fmt, allele_idx) -> String
+    compute_percent(fmt, gt) -> String
 
-Computes AO/(RO+AO)*100 for alt allele. Returns "0.0" for ref or missing.
+Computes AO/(RO+AO)*100 for the alt allele. For het calls (0/1), picks the non-ref allele
+index so percent stores the alt fraction; ref fraction = 100 - percent.
+Returns "0.0" for ref-only or missing data.
 """
-function compute_percent(fmt::Dict{String,String}, allele_idx::Int)::String
-    allele_idx == 0 && return "0.0"
-
+function compute_percent(fmt::Dict{String,String}, gt::String)::String
     ao_str = get(fmt, "AO", "")
     ro_str = get(fmt, "RO", "0")
     isempty(ao_str) && return "0.0"
 
-    ao_values = split(ao_str, ',')
-    allele_idx > length(ao_values) && return "0.0"
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    if isnothing(sep_idx)
+        aidx = parse(Int, gt)
+        aidx == 0 && return "0.0"
+    else
+        a1 = parse(Int, gt[1:sep_idx-1])
+        a2 = parse(Int, gt[sep_idx+1:end])
+        aidx = a1 != 0 ? a1 : a2
+        aidx == 0 && return "0.0"
+    end
 
-    ao = parse(Float64, ao_values[allele_idx])
+    ao_values = split(ao_str, ',')
+    aidx > length(ao_values) && return "0.0"
+
+    ao = parse(Float64, ao_values[aidx])
     ro = parse(Float64, isempty(ro_str) ? "0" : ro_str)
     total = ro + ao
     total <= 0 && return "0.0"
@@ -950,6 +1112,7 @@ function build_variations_from_record(
                 v.pvalue             = "."
                 v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
                 v.matches_reference  = 1
+                v.ploidy             = 1   # no GT available; use conservative default
                 push!(variations, v)
             end
             continue
@@ -964,9 +1127,14 @@ function build_variations_from_record(
             continue
         end
 
-        aidx = gt_allele_idx(gt)
-        pct  = compute_percent(fmt, aidx)
+        pct  = compute_percent(fmt, gt)
         gq   = get(fmt, "GQ", "0")
+
+        # Detect het call: GT has separator and both alleles differ (e.g. 0/1)
+        sep_idx  = findfirst(c -> c == '/' || c == '|', gt)
+        is_het   = !isnothing(sep_idx) && gt[1:sep_idx-1] != gt[sep_idx+1:end]
+        alt_alts = is_het ? nonref_alt_alleles(gt, record.alts) : String[]
+        gt_ploidy = 1 + count(c -> c == '/' || c == '|', gt)
 
         v = Variation()
         v.sequence_source_id = record.chrom
@@ -974,12 +1142,14 @@ function build_variations_from_record(
         v.strain             = strain
         v.reference          = record.ref
         v.base               = base
+        v.alt_allele         = isempty(alt_alts) ? "" : alt_alts[1]
         v.coverage           = string(dp)
         v.percent            = pct
         v.quality            = gq
         v.pvalue             = "."
         v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
         v.matches_reference  = (base == record.ref) ? 1 : 0
+        v.ploidy             = gt_ploidy
 
         push!(variations, v)
     end
@@ -1042,25 +1212,25 @@ function initialize_processing_context(args, all_strains::Vector{String})
         transcript_db,
         indel_db,
         fs_info,
-        all_strains
+        all_strains,
+        Dict{String,Int}(name => i for (i, name) in enumerate([all_strains..., args["reference_strain"]]))
     )
 end
 
 """
-    open_output_writers(output_vcf, output_cache) -> OutputWriters
+    open_output_writers(output_vcf, reference_strain, all_strains) -> OutputWriters
 """
-function open_output_writers(output_vcf, output_cache)
-    vcf_fh    = open(output_vcf, "w")
-    cache_fh  = open(output_cache, "w")
-    write(cache_fh, "#chrom\tpos\ttranscript_id\tpos_in_cds\n")
-    snp_fh    = open("snpFeature.dat", "w")
-    write(snp_fh,     "location\ttranscript_id\tseq_id\treference_strain\tref_allele\thas_nonsynonymous_allele\tmajor_allele\tminor_allele\tmajor_allele_count\tminor_allele_count\tmajor_product\tminor_product\tdistinct_strain_count\tdistinct_allele_count\tis_coding\ttotal_allele_count\thas_stop_codon\tref_codon\n")
+function open_output_writers(output_vcf::String, reference_strain::String,
+                              all_strains::Vector{String})
+    vcf_fh = open(output_vcf, "w")
+    snp_fh = open("snpFeature.dat", "w")
+    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh,  "location\tseq_id\tallele\tdistinct_strain_count\tallele_count\tavg_coverage\tavg_percent\n")
-    product_fh = open("product.dat", "w")
-    write(product_fh, "location\tseq_id\tcodon\tpos_in_codon\ttranscript_id\tcount\tproduct\tpos_in_cds\tdownstream_of_frameshift\n")
-
-    OutputWriters(vcf_fh, cache_fh, snp_fh, allele_fh, product_fh)
+    write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
+    tp_fh = open("transcript_product.dat", "w")
+    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\n")
+    hsss = open_hsss_writers(reference_strain, all_strains)
+    OutputWriters(vcf_fh, snp_fh, allele_fh, tp_fh, hsss)
 end
 
 function close_processing_context(ctx::ProcessingContext)
@@ -1070,10 +1240,10 @@ end
 
 function close_output_writers(writers::OutputWriters)
     close(writers.vcf_fh)
-    close(writers.cache_fh)
     close(writers.snp_fh)
     close(writers.allele_fh)
-    close(writers.product_fh)
+    close(writers.transcript_product_fh)
+    close_hsss_writers(writers.hsss)
 end
 
 # ---------------------------------------------------------------------------
@@ -1217,6 +1387,7 @@ function build_reference_variation(
     Variation(
         seq_id, location, reference_strain,
         ref_allele, ref_allele,
+        "",      # alt_allele: empty — reference variation is never a het call
         "", "",
         "", "",
         "",
@@ -1230,7 +1401,8 @@ function build_reference_variation(
         annotation.ref_codon,
         adjacent_snp_causes_product_difference,
         annotation.cds_number,
-        1
+        1,   # matches_reference
+        1    # ploidy: reference genome is a single representative
     )
 end
 
@@ -1241,7 +1413,7 @@ end
 function write_snp_feature(
     snp_fh::IO,
     variations::Vector{Variation},
-    annotation::PositionAnnotation,
+    is_coding::Int,
     seq_id::String,
     location::Int,
     reference_strain::String
@@ -1249,104 +1421,147 @@ function write_snp_feature(
     ref_allele = variations[1].reference
     isempty(ref_allele) && (ref_allele = variations[1].base)
 
-    allele_counts   = Dict{String,Int}()
-    product_counts  = Dict{String,Int}()
-    strain_set      = Set{String}()
-    has_stop_codon  = 0
-    total_allele_count = length(variations)
+    allele_counts        = Dict{String,Int}()
+    allele_ploidy_counts = Dict{String,Int}()
+    strain_set           = Set{String}()
+    total_ploidy_count   = 0
 
     for v in variations
-        allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
-        push!(strain_set, v.strain)
-        for p in v.product
-            product_counts[p] = get(product_counts, p, 0) + 1
-            p == "*" && (has_stop_codon = 1)
+        if !isempty(v.alt_allele)
+            allele_counts[v.reference]  = get(allele_counts, v.reference,  0) + 1
+            allele_counts[v.alt_allele] = get(allele_counts, v.alt_allele, 0) + 1
+            allele_ploidy_counts[v.reference]  = get(allele_ploidy_counts, v.reference,  0) + 1
+            allele_ploidy_counts[v.alt_allele] = get(allele_ploidy_counts, v.alt_allele, 0) + 1
+            total_ploidy_count += 2
+        else
+            allele_counts[v.base]        = get(allele_counts, v.base, 0) + 1
+            allele_ploidy_counts[v.base] = get(allele_ploidy_counts, v.base, 0) + v.ploidy
+            total_ploidy_count += v.ploidy
         end
+        push!(strain_set, v.strain)
     end
 
-    distinct_strain_count  = length(strain_set)
-    distinct_allele_count  = length(allele_counts)
-    has_nonsynonymous_allele = length(product_counts) > 1 ? 1 : 0
+    distinct_strain_count = length(strain_set)
+    distinct_allele_count = length(allele_counts)
 
-    n_alt_alleles   = count(a -> a != ref_allele, keys(allele_counts))
-    sorted_alleles  = sort(collect(keys(allele_counts));
-                          by = a -> (n_alt_alleles >= 2 && a == ref_allele ? 1 : 0, -allele_counts[a], a))
-    sorted_products = sort(collect(keys(product_counts)); by = p -> (-product_counts[p], p))
+    n_alt_alleles  = count(a -> a != ref_allele, keys(allele_counts))
+    sorted_alleles = sort(collect(keys(allele_counts));
+                         by = a -> (n_alt_alleles >= 2 && a == ref_allele ? 1 : 0,
+                                    -allele_counts[a], a))
 
-    major_allele       = sorted_alleles[1]
-    minor_allele       = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
-    major_allele_count = allele_counts[major_allele]
-    minor_allele_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
-
-    major_product = length(sorted_products) > 0 ? sorted_products[1] : ""
-    minor_product = length(sorted_products) > 1 ? sorted_products[2] : ""
+    major_allele              = sorted_alleles[1]
+    minor_allele              = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
+    major_allele_strain_count = allele_counts[major_allele]
+    minor_allele_strain_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
+    major_allele_frequency    = @sprintf("%.4f", allele_ploidy_counts[major_allele] / total_ploidy_count)
+    minor_allele_frequency    = length(sorted_alleles) > 1 ?
+        @sprintf("%.4f", allele_ploidy_counts[minor_allele] / total_ploidy_count) : ""
 
     write(snp_fh, join([
         string(location),
-        annotation.transcript_id,
         seq_id,
         reference_strain,
         ref_allele,
-        string(has_nonsynonymous_allele),
         major_allele,
         minor_allele,
-        string(major_allele_count),
-        string(minor_allele_count),
-        major_product,
-        minor_product,
+        string(major_allele_strain_count),
+        string(minor_allele_strain_count),
+        major_allele_frequency,
+        minor_allele_frequency,
         string(distinct_strain_count),
         string(distinct_allele_count),
-        string(annotation.is_coding),
-        string(total_allele_count),
-        string(has_stop_codon),
-        annotation.ref_codon
+        string(total_ploidy_count),
+        string(is_coding)
     ], "\t"), "\n")
 end
 
-function write_allele_and_product_files(
+function write_allele_file(
     allele_fh::IO,
-    product_fh::IO,
     variations::Vector{Variation},
-    annotation::PositionAnnotation,
     seq_id::String,
-    location::Int
+    location::Int,
+    sample_id_map::Dict{String,Int}
 )
-    annotation.is_coding != 1 && return
+    # Expand het calls into ref and alt component entries; hom calls contribute ploidy entries.
+    # Each entry: (strain, coverage, percent, allele_weight)
+    # Het components each count as 1 (one copy of each allele in the het call).
+    # Hom calls count as v.ploidy (all copies carry the same allele).
+    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64, Int}}}()
 
-    allele_counts = Dict{String,Int}()
     for v in variations
-        allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
+        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
+
+        if !isempty(v.alt_allele)
+            # Het call: emit ref component (100-pct) and alt component (pct) separately
+            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct, 1))
+            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct, 1))
+        else
+            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct, v.ploidy))
+        end
     end
 
-    for allele in keys(allele_counts)
-        distinct_strains = Set{String}()
-        allele_count = 0
-        sum_coverage = 0.0
-        sum_percent  = 0.0
+    total_allele_count = sum(
+        sum(w for (_, _, _, w) in entries)
+        for entries in values(allele_entries);
+        init = 0
+    )
 
-        for v in variations
-            v.base != allele && continue
-            allele_count += 1
-            push!(distinct_strains, v.strain)
-            cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-            pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
+    ref_allele = variations[1].reference
+
+    for (allele, entries) in allele_entries
+        distinct_strains = Set{String}()
+        strain_ids       = Set{Int}()
+        sum_coverage     = 0.0
+        sum_percent      = 0.0
+        allele_count     = 0
+
+        for (strain, cov, pct, weight) in entries
+            push!(distinct_strains, strain)
+            sid = get(sample_id_map, strain, 0)
+            if sid > 0
+                push!(strain_ids, sid)
+            else
+                @warn "strain not found in sample_id_map, omitted from strain_ids" strain
+            end
             sum_coverage += cov
             sum_percent  += pct
+            allele_count += weight
         end
 
-        avg_cov = allele_count > 0 ? sum_coverage / allele_count : 0.0
-        avg_pct = allele_count > 0 ? sum_percent  / allele_count : 0.0
-
+        n       = length(entries)
+        ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
+        matches_ref = allele == ref_allele ? 1 : 0
         write(allele_fh, join([
             string(location),
             seq_id,
             allele,
             string(length(distinct_strains)),
-            string(allele_count),
-            @sprintf("%.2f", avg_cov),
-            @sprintf("%.2f", avg_pct)
+            @sprintf("%.4f", allele_count / total_allele_count),
+            @sprintf("%.2f", sum_coverage / n),
+            @sprintf("%.2f", sum_percent  / n),
+            ids_str,
+            string(matches_ref)
         ], "\t"), "\n")
     end
+
+end
+
+function write_transcript_product(
+    fh::IO,
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    seq_id::String,
+    location::Int,
+    sample_id_map::Dict{String,Int}
+)
+    annotation.is_coding != 1 && return
+
+    pos_in_protein = div(annotation.pos_in_cds - 1, 3) + 1
+
+    dfs_ids = sort([sample_id_map[v.strain] for v in variations
+                    if v.downstream_of_frameshift == 1 && haskey(sample_id_map, v.strain)])
+    dfs_str = isempty(dfs_ids) ? "" : "{" * join(dfs_ids, ",") * "}"
 
     all_product_counts = Dict{String,Int}()
     for v in variations
@@ -1355,24 +1570,34 @@ function write_allele_and_product_files(
         end
     end
 
+    seen_codons = Set{String}()
     for v in variations
         isempty(v.codon) && continue
-        expanded_codons = expand_codon(v.codon)
-        for ec in expanded_codons
-            product = translate_codon(ec)
-            count   = get(all_product_counts, product, 0)
-            write(product_fh, join([
-                string(location),
-                seq_id,
-                ec,
-                string(annotation.pos_in_codon_val),
-                annotation.transcript_id,
-                string(count),
-                product,
-                string(annotation.pos_in_cds),
-                string(v.downstream_of_frameshift)
-            ], "\t"), "\n")
+        v.downstream_of_frameshift == 1 && continue
+        for ec in expand_codon(v.codon)
+            push!(seen_codons, ec)
         end
+    end
+
+    for ec in seen_codons
+        product             = translate_codon(ec)
+        count               = get(all_product_counts, product, 0)
+        matches_ref_codon   = ec == annotation.ref_codon ? 1 : 0
+        matches_ref_product = product == annotation.ref_product ? 1 : 0
+        write(fh, join([
+            seq_id,
+            string(location),
+            annotation.transcript_id,
+            string(annotation.pos_in_cds),
+            string(pos_in_protein),
+            ec,
+            string(annotation.pos_in_codon_val),
+            string(count),
+            product,
+            string(matches_ref_codon),
+            string(matches_ref_product),
+            dfs_str
+        ], "\t"), "\n")
     end
 end
 
@@ -1554,6 +1779,151 @@ end
 
 
 # ---------------------------------------------------------------------------
+# Core record handler — extracted helpers
+# ---------------------------------------------------------------------------
+
+"""
+    pick_snp_record(records) -> VCFRecord
+
+Returns the first SNP record from a group of records sharing the same position.
+Falls back to records[1] when no SNP record exists (all-indel group).
+"""
+function pick_snp_record(records::Vector{VCFRecord})::VCFRecord
+    snp_records = filter(is_snp_record, records)
+    isempty(snp_records) ? records[1] : snp_records[1]
+end
+
+"""
+    build_ref_cann_entries(annotations) -> (Vector{String}, Vector{String})
+
+Builds the r-keyed CANN strings for the reference allele.
+Returns (ref_keys, ref_cann_entries). Non-coding and dot entries are skipped.
+"""
+function build_ref_cann_entries(annotations::Vector{PositionAnnotation})::Tuple{Vector{String}, Vector{String}}
+    ref_keys         = String[]
+    ref_cann_entries = String[]
+    for annotation in annotations
+        annotation.is_coding == 0 && continue
+        key   = "r$(length(ref_keys))"
+        entry = build_ref_cann_entry(key, annotation)
+        entry == "." && continue
+        push!(ref_keys, key)
+        push!(ref_cann_entries, entry)
+    end
+    (ref_keys, ref_cann_entries)
+end
+
+"""
+    fill_missing_coverage_gt(record, all_strains, chrom_coverage) -> Vector{String}
+
+Returns a copy of record.sample_data with GT=0 and DP filled in for samples
+that have a missing/dot GT but are covered at this position.
+"""
+function fill_missing_coverage_gt(
+    record::VCFRecord,
+    all_strains::Vector{String},
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
+)::Vector{String}
+    gt_idx = findfirst(==("GT"), record.format_keys)
+    dp_idx = findfirst(==("DP"), record.format_keys)
+    modified = copy(record.sample_data)
+    for (i, strain) in enumerate(all_strains)
+        i > length(modified) && continue
+        fmt = parse_format_field(record.format_keys, modified[i])
+        gt = get(fmt, "GT", "")
+        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
+        (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
+        covered || continue
+        fields = fill(".", length(record.format_keys))
+        !isnothing(gt_idx) && (fields[gt_idx] = "0")
+        !isnothing(dp_idx) && (fields[dp_idx] = string(round(Int, dp)))
+        modified[i] = join(fields, ":")
+    end
+    modified
+end
+
+"""
+    assign_cann_keys(alt_strain_entries, all_strains) -> (Dict, Dict)
+
+Deduplicates CANN strings and assigns k0/k1/... keys in canonical strain order.
+Returns (alt_cann_entries, alt_strain_to_ca):
+  - alt_cann_entries:  alt -> ordered unique keyed CANN strings
+  - alt_strain_to_ca:  alt -> strain -> assigned key vector
+"""
+function assign_cann_keys(
+    alt_strain_entries::Dict{String, Dict{String, Vector{String}}},
+    all_strains::Vector{String}
+)::Tuple{Dict{String, Vector{String}}, Dict{String, Dict{String, Vector{String}}}}
+    alt_cann_entries = Dict{String, Vector{String}}()
+    alt_strain_to_ca = Dict{String, Dict{String, Vector{String}}}()
+
+    for (alt, strain_map) in alt_strain_entries
+        entry_to_key  = Dict{String, String}()
+        ordered_keyed = String[]
+
+        for strain in all_strains
+            strain_entries = get(strain_map, strain, nothing)
+            isnothing(strain_entries) && continue
+            for entry in strain_entries
+                entry == "." && continue
+                if !haskey(entry_to_key, entry)
+                    key = "k$(length(entry_to_key))"
+                    entry_to_key[entry] = key
+                    push!(ordered_keyed, replace(entry, r"^k0\|" => "$(key)|", count=1))
+                end
+            end
+        end
+
+        alt_cann_entries[alt] = ordered_keyed
+
+        strain_keys = Dict{String, Vector{String}}()
+        for (strain, strain_entries) in strain_map
+            strain_keys[strain] = [get(entry_to_key, e, ".") for e in strain_entries]
+        end
+        alt_strain_to_ca[alt] = strain_keys
+    end
+
+    (alt_cann_entries, alt_strain_to_ca)
+end
+
+"""
+    collect_cann_entries_for_annotation(variations, annotation, record, reference_strain, all_strains, strain_idx_map)
+        -> Dict{String, Dict{String, Vector{String}}}
+
+Collects per-alt, per-strain CANN entry strings for one annotation (transcript).
+Skips the reference strain and variations that match the reference.
+Returns alt -> strain -> [entry, ...].
+"""
+function collect_cann_entries_for_annotation(
+    variations::Vector{Variation},
+    annotation::PositionAnnotation,
+    record::VCFRecord,
+    reference_strain::String,
+    all_strains::Vector{String},
+    strain_idx_map::Dict{String, Int}
+)::Dict{String, Dict{String, Vector{String}}}
+    result = Dict{String, Dict{String, Vector{String}}}()
+    for v in variations
+        v.strain == reference_strain && continue
+        v.matches_reference == 1 && continue
+        sidx = get(strain_idx_map, v.strain, 0)
+        (sidx == 0 || sidx > length(record.sample_data)) && continue
+        fmt = parse_format_field(record.format_keys, record.sample_data[sidx])
+        gt  = get(fmt, "GT", "")
+        for alt_allele in nonref_alt_alleles(gt, record.alts)
+            if alt_allele == "*"
+                @warn "Unexpected * allele in CANN annotation at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
+                continue
+            end
+            entry = build_cann_string(record.ref, alt_allele, v, annotation)
+            strain_map = get!(result, alt_allele, Dict{String, Vector{String}}())
+            push!(get!(strain_map, v.strain, String[]), entry)
+        end
+    end
+    result
+end
+
+# ---------------------------------------------------------------------------
 # Core record handler
 # ---------------------------------------------------------------------------
 
@@ -1585,8 +1955,7 @@ function handle_variant_record!(
 
     # For CANN annotation and VCF output: use only the first SNP record.
     # Indel records at the same position are included in variation tables but not AA annotation.
-    snp_records = filter(is_snp_record, records)
-    record = isempty(snp_records) ? records[1] : snp_records[1]
+    record = pick_snp_record(records)
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = if !isempty(cache_entries)
@@ -1596,17 +1965,22 @@ function handle_variant_record!(
         annotate_position_all(seq_id, location, ctx, transcript_cache)
     end
 
-    # Write TSV cache entries for this position (one row per coding transcript)
-    write_cache_entries(writers.cache_fh, seq_id, location, annotations)
-
     # Accumulate per-sample CANN entries across all annotations (transcripts).
     # alt_strain_entries: alt -> strain -> [entry per transcript, in annotation order]
     alt_strain_entries = Dict{String, Dict{String, Vector{String}}}()
     first_annotation   = annotations[1]
     any_output         = false
+    first_all_vars        = nothing
+    # Collect products from non-ref strain variations across all transcript annotations.
+    # Reference strain product (annotation.ref_product) is intentionally excluded —
+    # product_code reflects what the non-ref variants encode.
+    all_annotation_products = String[]
 
     # Map strain name -> sample index for GT lookup when keying CANN entries by original alt allele
     strain_idx_map = Dict{String, Int}(s => i for (i, s) in enumerate(all_strains))
+
+    # allele.dat is per-position (not per-transcript): written once after the first annotation pass
+    allele_written = false
 
     for annotation in annotations
         annotate_variations!(variations, annotation, ctx, transcript_cache)
@@ -1624,92 +1998,46 @@ function handle_variant_record!(
         has_variation(all_vars) || continue
         any_output = true
 
-        write_snp_feature(writers.snp_fh, all_vars, annotation, seq_id, location, ctx.reference_strain)
-        write_allele_and_product_files(writers.allele_fh, writers.product_fh, all_vars, annotation, seq_id, location)
+        if isnothing(first_all_vars)
+            first_all_vars = all_vars
+        end
+
+        for v in variations
+            append!(all_annotation_products, v.product)
+        end
+
+        if !allele_written
+            write_allele_file(writers.allele_fh, all_vars, seq_id, location, ctx.sample_id_map)
+            allele_written = true
+        end
+        write_transcript_product(writers.transcript_product_fh, all_vars, annotation, seq_id, location, ctx.sample_id_map)
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
         # iterates record.alts, so we must use the original allele strings as keys here.
-        for v in variations
-            v.strain == ctx.reference_strain && continue
-            v.matches_reference == 1 && continue
-            sidx = get(strain_idx_map, v.strain, 0)
-            (sidx == 0 || sidx > length(record.sample_data)) && continue
-            fmt = parse_format_field(record.format_keys, record.sample_data[sidx])
-            gt  = get(fmt, "GT", "")
-            for alt_allele in nonref_alt_alleles(gt, record.alts)
-                if alt_allele == "*"
-                    @warn "Unexpected * allele in CANN annotation at $(record.ref):$(record.pos) — should have been removed by mergeVariantsByLocation.py"
-                    continue
-                end
-                entry = build_cann_string(record.ref, alt_allele, v, annotation)
-                strain_map = get!(alt_strain_entries, alt_allele, Dict{String, Vector{String}}())
-                push!(get!(strain_map, v.strain, String[]), entry)
+        for (alt, smap) in collect_cann_entries_for_annotation(variations, annotation, record, ctx.reference_strain, all_strains, strain_idx_map)
+            for (strain, entries) in smap
+                strain_map = get!(alt_strain_entries, alt, Dict{String, Vector{String}}())
+                append!(get!(strain_map, strain, String[]), entries)
             end
         end
     end
 
     any_output || return false
 
-    # Build r-keyed CANN entries for the reference allele (one per coding transcript).
-    ref_keys         = String[]
-    ref_cann_entries = String[]
-    for (i, annotation) in enumerate(annotations)
-        annotation.is_coding == 0 && continue
-        key   = "r$(length(ref_keys))"
-        entry = build_ref_cann_entry(key, annotation)
-        entry == "." && continue
-        push!(ref_keys, key)
-        push!(ref_cann_entries, entry)
-    end
+    is_coding = any(a.is_coding == 1 for a in annotations) ? 1 : 0
+    write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
+                      ctx.reference_strain)
 
-    # Build modified sample data: fill in GT=0 and DP for samples that are covered
-    # at this position but were left as missing GT by bcftools merge.
-    gt_idx = findfirst(==("GT"), record.format_keys)
-    dp_idx = findfirst(==("DP"), record.format_keys)
-    modified_sample_data = copy(record.sample_data)
-    for (i, strain) in enumerate(all_strains)
-        i > length(modified_sample_data) && continue
-        fmt = parse_format_field(record.format_keys, modified_sample_data[i])
-        gt = get(fmt, "GT", "")
-        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
-        (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
-        covered || continue
-        fields = fill(".", length(record.format_keys))
-        !isnothing(gt_idx) && (fields[gt_idx] = "0")
-        !isnothing(dp_idx) && (fields[dp_idx] = string(round(Int, dp)))
-        modified_sample_data[i] = join(fields, ":")
-    end
+    unique_prods   = unique(all_annotation_products)
+    hsss_prod_code = length(unique_prods) == 1 ?
+        Int8(codepoint(first(only(unique_prods)))) : Int8(0)
+    write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
+                         seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
 
-    # Build per-alt CANN key assignments and per-strain CA mappings.
-    alt_cann_entries   = Dict{String, Vector{String}}()
-    alt_strain_to_ca   = Dict{String, Dict{String, Vector{String}}}()
-
-    for (alt, strain_map) in alt_strain_entries
-        entry_to_key   = Dict{String, String}()
-        ordered_keyed  = String[]
-
-        for strain in all_strains  # canonical strain order for deterministic key assignment
-            strain_entries = get(strain_map, strain, nothing)
-            isnothing(strain_entries) && continue
-            for entry in strain_entries
-                entry == "." && continue
-                if !haskey(entry_to_key, entry)
-                    key = "k$(length(entry_to_key))"
-                    entry_to_key[entry] = key
-                    push!(ordered_keyed, replace(entry, r"^k0:" => "$(key):", count=1))
-                end
-            end
-        end
-
-        alt_cann_entries[alt] = ordered_keyed
-
-        strain_keys = Dict{String, Vector{String}}()
-        for (strain, strain_entries) in strain_map
-            strain_keys[strain] = [get(entry_to_key, e, ".") for e in strain_entries]
-        end
-        alt_strain_to_ca[alt] = strain_keys
-    end
+    (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
+    modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage)
+    (alt_cann_entries, alt_strain_to_ca) = assign_cann_keys(alt_strain_entries, all_strains)
 
     # Write one VCF output entry per unique alt (for SnpEff downstream).
     n_orig_alts = length(record.alts)
@@ -1751,6 +2079,7 @@ function main()
     debug_log("Opening VCF: ", args["vcf_file"])
     (vcf_pf, all_strains, chrom_rank, info_headers) = open_vcf_peeked(args["vcf_file"])
     debug_log("VCF: ", length(all_strains), " strains")
+    write_sample_dat([all_strains..., args["reference_strain"]])
 
     # Open VCF cache (may be absent/empty on first run)
     debug_log("Opening cache: ", args["cache_file"])
@@ -1766,7 +2095,9 @@ function main()
               length(ctx.cds_intervals), " CDS intervals")
 
     # Open output writers and write VCF header
-    writers = open_output_writers(args["output_vcf"], args["output_cache"])
+    # Build full ordered strain list: reference first, then VCF non-ref strains in order
+    all_strains_with_ref = [args["reference_strain"], all_strains...]
+    writers = open_output_writers(args["output_vcf"], args["reference_strain"], all_strains_with_ref)
     write_vcf_cache_header(writers.vcf_fh, ctx.all_strains, info_headers)
 
     transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())

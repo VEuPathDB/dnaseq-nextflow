@@ -6,7 +6,8 @@ include { mergeCoverageBeds }  from '../modules/mergeExperiments.nf'
 include { makeGenomicIndelDb } from '../modules/mergeExperiments.nf'
 include { makeCodingData }     from '../modules/mergeExperiments.nf'
 include { processSeqVars }     from '../modules/mergeExperiments.nf'
-include { snpEff }             from '../modules/mergeExperiments.nf'
+include { snpEff }                 from '../modules/mergeExperiments.nf'
+include { parseSnpEffAnnotations } from '../modules/mergeExperiments.nf'
 
 workflow me {
 
@@ -45,5 +46,7 @@ workflow me {
     )
 
     snpEff(processSeqVarsResults.outputVcf, params.gtfFile, params.genomeFastaFile)
+
+    parseSnpEffAnnotations(snpEff.out.annotatedVcf)
 
 }
