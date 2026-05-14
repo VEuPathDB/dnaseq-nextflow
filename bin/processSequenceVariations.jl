@@ -91,7 +91,7 @@ const IUPAC_COMPRESS = Dict{Set{Char},Char}(
 # HSSS (HighSpeedSnpSearch) binary strain file support
 # ---------------------------------------------------------------------------
 
-const HSSS_CUTOFFS = [20, 40, 60, 80]
+const HSSS_CUTOFFS = (20, 40, 60, 80)
 
 const HSSS_ALLELE_CODE = Dict{Char,Int8}(
     'A'=>Int8(1), 'a'=>Int8(1),
@@ -546,13 +546,13 @@ function write_hsss_position!(
                 continue
             end
 
-            passes = any(v -> !isempty(v.percent) && parse(Float64, v.percent) >= cutoff, svars)
-            if !passes
+            if strain ∉ passing
                 # Present but below cutoff: treat as unknown
                 write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
                 continue
             end
 
+            # Het strains write one record per allele (including ref-matching); matches Perl hsssCreateStrainFiles behavior
             is_het = length(svars) > 1
             for sv in svars
                 # Skip non-het, reference-matching variations

@@ -683,3 +683,26 @@ end
     # readFreq40: s1 fails → position skipped (no record, not even unknown)
     @test filesize(joinpath(base, "hsss_readFreq40", "2")) == 0
 end
+
+@testset "write_hsss_position writes two records for het strain (one per allele)" begin
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1"], base)
+
+    v_ref  = Variation(); v_ref.strain  = "ref"; v_ref.base  = "A"; v_ref.reference = "A"
+    v_ref.percent = "100"; v_ref.matches_reference = 1
+    # s1 is het: has both A and T alleles above threshold
+    v_s1a  = Variation(); v_s1a.strain = "s1"; v_s1a.base = "A"; v_s1a.reference = "A"
+    v_s1a.percent = "50"; v_s1a.matches_reference = 1
+    v_s1t  = Variation(); v_s1t.strain = "s1"; v_s1t.base = "T"; v_s1t.reference = "A"
+    v_s1t.percent = "50"; v_s1t.matches_reference = 0
+
+    write_hsss_position!(state, [v_ref, v_s1a, v_s1t], "ref", "chr1", 100, ["s1"], Int8(0))
+    close_hsss_writers(state)
+
+    s1_bytes = read(joinpath(base, "hsss_readFreq20", "2"))
+    # Two records: one for A allele (ref-matching, included because het), one for T allele
+    @test length(s1_bytes) == 16
+    allele1 = reinterpret(Int8, s1_bytes[7:7])[1]
+    allele2 = reinterpret(Int8, s1_bytes[15:15])[1]
+    @test Set([allele1, allele2]) == Set([Int8(1), Int8(4)])  # A=1, T=4
+end
