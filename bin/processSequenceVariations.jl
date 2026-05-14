@@ -1267,8 +1267,7 @@ function write_snp_feature(
     is_coding::Int,
     seq_id::String,
     location::Int,
-    reference_strain::String,
-    sample_id_map::Dict{String,Int}
+    reference_strain::String
 )
     ref_allele = variations[1].reference
     isempty(ref_allele) && (ref_allele = variations[1].base)
@@ -1865,7 +1864,7 @@ function handle_variant_record!(
 
     is_coding = any(a.is_coding == 1 for a in annotations) ? 1 : 0
     write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
-                      ctx.reference_strain, ctx.sample_id_map)
+                      ctx.reference_strain)
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
     modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage)
