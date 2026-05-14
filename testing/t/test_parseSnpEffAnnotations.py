@@ -31,8 +31,9 @@ def run_script(vcf_content: str, compressed: bool = True) -> list[str]:
 
 MINIMAL_HEADER = "##fileformat=VCFv4.1\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
 
-ANN_MODERATE = "T|missense_variant|MODERATE|geneA|geneA_id|transcript|tx1|protein_coding|1/3|c.100A>T|p.Ser34Cys|100/900|100/900|34/300|.|"
-ANN_HIGH     = "A|stop_gained|HIGH|geneA|geneA_id|transcript|tx1|protein_coding|1/3|c.50G>A|p.Trp17*|50/900|50/900|17/300|.|"
+ANN_MODERATE    = "T|missense_variant|MODERATE|geneA|geneA_id|transcript|tx1|protein_coding|1/3|c.100A>T|p.Ser34Cys|100/900|100/900|34/300|.|"
+ANN_HIGH        = "A|stop_gained|HIGH|geneA|geneA_id|transcript|tx1|protein_coding|1/3|c.50G>A|p.Trp17*|50/900|50/900|17/300|.|"
+ANN_INTERGENIC  = "G|intergenic_region|MODIFIER|CHR_START-LmjF.01.0010|CHR_START-LmjF.01.0010|intergenic_region|CHR_START-LmjF.01.0010|||n.233C>G||||||"
 
 
 def test_parses_single_ann_entry():
@@ -77,6 +78,17 @@ def test_handles_uncompressed_vcf():
     rows = run_script(vcf, compressed=False)
     assert len(rows) == 1
     assert rows[0].split('\t')[4] == "MODERATE"
+
+
+def test_intergenic_written_with_empty_transcript_id():
+    vcf  = MINIMAL_HEADER + f"LmjF.01\t233\t.\tC\tG\t.\t.\tANN={ANN_INTERGENIC}\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 1
+    fields = rows[0].split('\t')
+    assert fields[0] == "233"
+    assert fields[3] == ""                  # transcript_id must be empty
+    assert fields[4] == "MODIFIER"
+    assert fields[5] == "intergenic_region"
 
 
 def test_skips_records_without_ann():

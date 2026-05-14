@@ -50,14 +50,19 @@ def main():
                 allele        = parts[0]
                 effect        = parts[1]
                 impact        = parts[2]
-                transcript_id = parts[6]
-                if not allele or not transcript_id or not impact or not effect:
+                feature_type  = parts[5]
+                # parts[6] is Feature_ID — a real transcript ID only when Feature_Type is
+                # "transcript"; for intergenic_region SnpEff puts a gene-boundary name there.
+                transcript_id = parts[6] if feature_type == "transcript" else ""
+                if not allele or not impact or not effect:
+                    continue
+                if feature_type == "transcript" and not transcript_id:
                     continue
                 # One row per (location, seq_id, allele, transcript_id). When SnpEff emits
                 # multiple effects for the same transcript+allele, first one wins.
                 # SnpEff orders ANN entries by impact severity (HIGH first), so first-wins
                 # preserves the most severe annotation for each transcript.
-                key = (location, seq_id, allele, transcript_id)
+                key = (location, seq_id, allele, transcript_id, effect)
                 if key in seen:
                     continue
                 seen.add(key)
