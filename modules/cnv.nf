@@ -31,7 +31,7 @@ process genomecov {
 process bedGraphToBigWig {
     container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
 
-    publishDir "$params.outputDir", mode: "copy"
+    publishDir "$params.outputDir/${sampleName}", mode: "copy"
 
     input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -56,7 +56,7 @@ process bedGraphToBigWig {
 process normaliseCoverageToBigWig {
     container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
 
-    publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_normalisedCoverage.bw" }
+    publishDir "$params.outputDir/${sampleName}", mode: "copy", saveAs: { filename -> "${sampleName}_normalisedCoverage.bw" }
 
     input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -275,7 +275,7 @@ process makeDensityBigwigs {
 
   container 'quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0'
 
-  publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
+  publishDir "$params.outputDir/${sampleName}", mode: "copy", saveAs: { filename -> "${sampleName}_${filename}" }
 
   input:
     tuple val(sampleName), path(snpDensity), path(indelDensity)
@@ -351,7 +351,7 @@ process makeHeterozygousDensityBed {
 process makeHeterozygousDensityBigwig {
   container 'veupathdb/shortreadaligner:1.0.0'
 
-  publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
+  publishDir "$params.outputDir/${sampleName}", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
 
   input:
     tuple val(sampleName), path(heterozygousDensityBed)
@@ -398,7 +398,7 @@ process convertFreebayesToVarscanFormat {
 process calculatePloidyAndGeneCNV {
   container 'veupathdb/dnaseqanalysis:1.0.0'
 
-  publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> filename.endsWith("_CNVestimations.tsv") ? null : filename }
+  publishDir "$params.outputDir/${sampleName}", mode: "copy", saveAs: { filename -> filename.endsWith("_CNVestimations.tsv") ? null : filename }
 
   input:
     tuple val(sampleName), path(sampleFile)
