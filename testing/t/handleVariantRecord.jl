@@ -706,3 +706,20 @@ end
     allele2 = reinterpret(Int8, s1_bytes[15:15])[1]
     @test Set([allele1, allele2]) == Set([Int8(1), Int8(4)])  # A=1, T=4
 end
+
+# ---------------------------------------------------------------------------
+# Cache reader compatibility with transcript_product.dat format
+# ---------------------------------------------------------------------------
+
+@testset "parse_cache_tsv_record reads first 4 cols of transcript_product.dat line" begin
+    # transcript_product.dat has 12 tab-separated columns:
+    # seq_id, location, transcript_id, pos_in_cds, pos_in_protein, codon,
+    # pos_in_codon, count, product, matches_ref_codon, matches_ref_product,
+    # downstream_of_frameshift_strain_ids
+    line = "LmjF.01\t1234\tLmjF.01.0010\t42\t14\tATG\t1\t2\tM\t1\t1\t"
+    rec = parse_cache_tsv_record(line)
+    @test rec[1] == "LmjF.01"
+    @test rec[2] == 1234
+    @test rec[3] == "LmjF.01.0010"
+    @test rec[4] == 42
+end

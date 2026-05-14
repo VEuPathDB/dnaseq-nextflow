@@ -2031,7 +2031,7 @@ function handle_variant_record!(
 
     unique_prods   = unique(all_annotation_products)
     hsss_prod_code = length(unique_prods) == 1 ?
-        Int8(codepoint(only(unique_prods)[1])) : Int8(0)
+        Int8(codepoint(first(only(unique_prods)))) : Int8(0)
     write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
                          seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
 
