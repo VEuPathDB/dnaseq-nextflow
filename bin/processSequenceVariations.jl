@@ -578,6 +578,7 @@ struct ProcessingContext
     fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}
     all_strains::Vector{String}
     sample_id_map::Dict{String,Int}
+    ploidy::Int
 end
 
 struct OutputWriters
@@ -1085,7 +1086,8 @@ function build_variations_from_record(
     record::VCFRecord,
     all_strains::Vector{String},
     undone_strains::Set{String},
-    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}},
+    ploidy::Int=1
 )::Vector{Variation}
     variations = Variation[]
 
@@ -1112,7 +1114,7 @@ function build_variations_from_record(
                 v.pvalue             = "."
                 v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
                 v.matches_reference  = 1
-                v.ploidy             = 1   # no GT available; use conservative default
+                v.ploidy             = ploidy
                 push!(variations, v)
             end
             continue
@@ -1204,6 +1206,8 @@ function initialize_processing_context(args, all_strains::Vector{String})
 
     fs_info = precompute_frameshifts(indel_db, transcript_info)
 
+    ploidy = haskey(args, "ploidy") ? parse(Int, args["ploidy"]) : 1
+
     ProcessingContext(
         args["reference_strain"],
         undone_strains,
@@ -1213,7 +1217,8 @@ function initialize_processing_context(args, all_strains::Vector{String})
         indel_db,
         fs_info,
         all_strains,
-        Dict{String,Int}(name => i for (i, name) in enumerate([all_strains..., args["reference_strain"]]))
+        Dict{String,Int}(name => i for (i, name) in enumerate([all_strains..., args["reference_strain"]])),
+        ploidy
     )
 end
 
@@ -1410,6 +1415,28 @@ end
 # Output writing
 # ---------------------------------------------------------------------------
 
+"""
+    compute_allele_weight_map(variations) -> (Dict{String,Int}, Int)
+
+Returns (allele_weight_counts, total_weight).  Het calls contribute weight 1
+to each of ref and alt; hom calls contribute v.ploidy to v.base.
+"""
+function compute_allele_weight_map(variations::Vector{Variation})::Tuple{Dict{String,Int}, Int}
+    weights = Dict{String,Int}()
+    total   = 0
+    for v in variations
+        if !isempty(v.alt_allele)
+            weights[v.reference]  = get(weights, v.reference,  0) + 1
+            weights[v.alt_allele] = get(weights, v.alt_allele, 0) + 1
+            total += 2
+        else
+            weights[v.base] = get(weights, v.base, 0) + v.ploidy
+            total += v.ploidy
+        end
+    end
+    (weights, total)
+end
+
 function write_snp_feature(
     snp_fh::IO,
     variations::Vector{Variation},
@@ -1421,22 +1448,17 @@ function write_snp_feature(
     ref_allele = variations[1].reference
     isempty(ref_allele) && (ref_allele = variations[1].base)
 
-    allele_counts        = Dict{String,Int}()
-    allele_ploidy_counts = Dict{String,Int}()
-    strain_set           = Set{String}()
-    total_ploidy_count   = 0
+    (allele_weights, total_ploidy_count) = compute_allele_weight_map(variations)
 
+    # strain count is per-strain, not ploidy-weighted; compute separately
+    allele_counts = Dict{String,Int}()
+    strain_set    = Set{String}()
     for v in variations
         if !isempty(v.alt_allele)
             allele_counts[v.reference]  = get(allele_counts, v.reference,  0) + 1
             allele_counts[v.alt_allele] = get(allele_counts, v.alt_allele, 0) + 1
-            allele_ploidy_counts[v.reference]  = get(allele_ploidy_counts, v.reference,  0) + 1
-            allele_ploidy_counts[v.alt_allele] = get(allele_ploidy_counts, v.alt_allele, 0) + 1
-            total_ploidy_count += 2
         else
-            allele_counts[v.base]        = get(allele_counts, v.base, 0) + 1
-            allele_ploidy_counts[v.base] = get(allele_ploidy_counts, v.base, 0) + v.ploidy
-            total_ploidy_count += v.ploidy
+            allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
         end
         push!(strain_set, v.strain)
     end
@@ -1453,9 +1475,9 @@ function write_snp_feature(
     minor_allele              = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
     major_allele_strain_count = allele_counts[major_allele]
     minor_allele_strain_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
-    major_allele_frequency    = @sprintf("%.4f", allele_ploidy_counts[major_allele] / total_ploidy_count)
+    major_allele_frequency    = @sprintf("%.4f", allele_weights[major_allele] / total_ploidy_count)
     minor_allele_frequency    = length(sorted_alleles) > 1 ?
-        @sprintf("%.4f", allele_ploidy_counts[minor_allele] / total_ploidy_count) : ""
+        @sprintf("%.4f", allele_weights[minor_allele] / total_ploidy_count) : ""
 
     write(snp_fh, join([
         string(location),
@@ -1482,31 +1504,23 @@ function write_allele_file(
     location::Int,
     sample_id_map::Dict{String,Int}
 )
-    # Expand het calls into ref and alt component entries; hom calls contribute ploidy entries.
-    # Each entry: (strain, coverage, percent, allele_weight)
-    # Het components each count as 1 (one copy of each allele in the het call).
-    # Hom calls count as v.ploidy (all copies carry the same allele).
-    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64, Int}}}()
+    # allele_entries: allele -> [(strain, coverage, percent)]
+    # allele_weights comes from compute_allele_weight_map for frequency denominator
+    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64}}}()
 
     for v in variations
         cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
         pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
 
         if !isempty(v.alt_allele)
-            # Het call: emit ref component (100-pct) and alt component (pct) separately
-            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct, 1))
-            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct, 1))
+            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct))
+            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct))
         else
-            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct, v.ploidy))
+            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct))
         end
     end
 
-    total_allele_count = sum(
-        sum(w for (_, _, _, w) in entries)
-        for entries in values(allele_entries);
-        init = 0
-    )
-
+    (allele_weights, total_weight) = compute_allele_weight_map(variations)
     ref_allele = variations[1].reference
 
     for (allele, entries) in allele_entries
@@ -1514,9 +1528,8 @@ function write_allele_file(
         strain_ids       = Set{Int}()
         sum_coverage     = 0.0
         sum_percent      = 0.0
-        allele_count     = 0
 
-        for (strain, cov, pct, weight) in entries
+        for (strain, cov, pct) in entries
             push!(distinct_strains, strain)
             sid = get(sample_id_map, strain, 0)
             if sid > 0
@@ -1526,7 +1539,6 @@ function write_allele_file(
             end
             sum_coverage += cov
             sum_percent  += pct
-            allele_count += weight
         end
 
         n       = length(entries)
@@ -1537,7 +1549,7 @@ function write_allele_file(
             seq_id,
             allele,
             string(length(distinct_strains)),
-            @sprintf("%.4f", allele_count / total_allele_count),
+            @sprintf("%.4f", allele_weights[allele] / total_weight),
             @sprintf("%.2f", sum_coverage / n),
             @sprintf("%.2f", sum_percent  / n),
             ids_str,
@@ -1822,10 +1834,12 @@ that have a missing/dot GT but are covered at this position.
 function fill_missing_coverage_gt(
     record::VCFRecord,
     all_strains::Vector{String},
-    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}}
+    chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}},
+    ploidy::Int=1
 )::Vector{String}
-    gt_idx = findfirst(==("GT"), record.format_keys)
-    dp_idx = findfirst(==("DP"), record.format_keys)
+    gt_idx  = findfirst(==("GT"), record.format_keys)
+    dp_idx  = findfirst(==("DP"), record.format_keys)
+    gt_fill = join(fill("0", ploidy), "/")
     modified = copy(record.sample_data)
     for (i, strain) in enumerate(all_strains)
         i > length(modified) && continue
@@ -1835,7 +1849,7 @@ function fill_missing_coverage_gt(
         (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
         covered || continue
         fields = fill(".", length(record.format_keys))
-        !isnothing(gt_idx) && (fields[gt_idx] = "0")
+        !isnothing(gt_idx) && (fields[gt_idx] = gt_fill)
         !isnothing(dp_idx) && (fields[dp_idx] = string(round(Int, dp)))
         modified[i] = join(fields, ":")
     end
@@ -1949,7 +1963,7 @@ function handle_variant_record!(
     # Build variations from all records at this position (SNPs + indels combined)
     variations = Variation[]
     for r in records
-        append!(variations, build_variations_from_record(r, all_strains, ctx.undone_strains, chrom_coverage))
+        append!(variations, build_variations_from_record(r, all_strains, ctx.undone_strains, chrom_coverage, ctx.ploidy))
     end
     isempty(variations) && return false
 
@@ -2036,7 +2050,7 @@ function handle_variant_record!(
                          seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
-    modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage)
+    modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage, ctx.ploidy)
     (alt_cann_entries, alt_strain_to_ca) = assign_cann_keys(alt_strain_entries, all_strains)
 
     # Write one VCF output entry per unique alt (for SnpEff downstream).

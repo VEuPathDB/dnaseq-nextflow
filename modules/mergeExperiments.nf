@@ -188,6 +188,7 @@ process processSeqVars {
       --indel_db $indelDb \\
       --gtf_file $gtfFile \\
       --coverage_file $coverageFile \\
+      --ploidy $params.ploidy \\
       --output_vcf output.vcf
 
     mv snpFeature.dat variationFeature.dat
