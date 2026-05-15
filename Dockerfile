@@ -19,7 +19,7 @@ RUN wget -q https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VE
 
 ENV BWA_MEM2_VERSION=2.2.1
 RUN wget -q https://github.com/bwa-mem2/bwa-mem2/releases/download/v${BWA_MEM2_VERSION}/bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
-    && tar xjf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
+    && tar -xjf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
     && mv bwa-mem2-${BWA_MEM2_VERSION}_x64-linux/bwa-mem2* /usr/local/bin/ \
     && rm -rf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 bwa-mem2-${BWA_MEM2_VERSION}_x64-linux
 
