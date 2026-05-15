@@ -711,6 +711,130 @@ end
 # Cache reader compatibility with transcript_product.dat format
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# compute_allele_weight_map — shared helper
+# ---------------------------------------------------------------------------
+
+@testset "compute_allele_weight_map returns correct weights for haploid hom variations" begin
+    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.ploidy = 1; v1.alt_allele = ""
+    v2 = Variation(); v2.base = "T"; v2.reference = "A"; v2.ploidy = 1; v2.alt_allele = ""
+    v3 = Variation(); v3.base = "T"; v3.reference = "A"; v3.ploidy = 1; v3.alt_allele = ""
+    (weights, total) = compute_allele_weight_map([v1, v2, v3])
+    @test weights["A"] == 1
+    @test weights["T"] == 2
+    @test total == 3
+end
+
+@testset "compute_allele_weight_map respects ploidy for diploid hom variations" begin
+    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.ploidy = 2; v1.alt_allele = ""
+    v2 = Variation(); v2.base = "T"; v2.reference = "A"; v2.ploidy = 2; v2.alt_allele = ""
+    (weights, total) = compute_allele_weight_map([v1, v2])
+    @test weights["A"] == 2
+    @test weights["T"] == 2
+    @test total == 4
+end
+
+@testset "compute_allele_weight_map splits het call: ref and alt each get weight 1" begin
+    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.alt_allele = "G"; v1.ploidy = 2
+    (weights, total) = compute_allele_weight_map([v1])
+    @test weights["A"] == 1
+    @test weights["G"] == 1
+    @test total == 2
+end
+
+# ---------------------------------------------------------------------------
+# fill_missing_coverage_gt — ploidy-aware GT string
+# ---------------------------------------------------------------------------
+
+@testset "fill_missing_coverage_gt fills GT=0/0 for diploid covered sample" begin
+    record = make_vcf_record(pos=100, format_keys=["GT","DP"], sample_data=["./.:0"])
+    cov    = make_coverage("s1", 99, 200, 42.0)
+    result = fill_missing_coverage_gt(record, ["s1"], cov, 2)
+    fmt = Dict(zip(record.format_keys, split(result[1], ":")))
+    @test fmt["GT"] == "0/0"
+end
+
+@testset "fill_missing_coverage_gt fills GT=0 for haploid covered sample (ploidy=1)" begin
+    record = make_vcf_record(pos=100, format_keys=["GT","DP"], sample_data=["./.:0"])
+    cov    = make_coverage("s1", 99, 200, 42.0)
+    result = fill_missing_coverage_gt(record, ["s1"], cov, 1)
+    fmt = Dict(zip(record.format_keys, split(result[1], ":")))
+    @test fmt["GT"] == "0"
+end
+
+# ---------------------------------------------------------------------------
+# build_variations_from_record — coverage variation ploidy
+# ---------------------------------------------------------------------------
+
+@testset "build_variations_from_record coverage variation uses ploidy=2 for diploid" begin
+    record = make_vcf_record(pos=100, format_keys=["GT","DP"], sample_data=["./.:0"])
+    cov    = make_coverage("s1", 99, 200, 30.0)
+    vars   = build_variations_from_record(record, ["s1"], Set{String}(), cov, 2)
+    @test length(vars) == 1
+    @test vars[1].ploidy == 2
+    @test vars[1].matches_reference == 1
+end
+
+@testset "build_variations_from_record coverage variation defaults to ploidy=1" begin
+    record = make_vcf_record(pos=100, format_keys=["GT","DP"], sample_data=["./.:0"])
+    cov    = make_coverage("s1", 99, 200, 30.0)
+    vars   = build_variations_from_record(record, ["s1"], Set{String}(), cov)
+    @test length(vars) == 1
+    @test vars[1].ploidy == 1
+end
+
+# ---------------------------------------------------------------------------
+# initialize_processing_context — reads ploidy from args
+# ---------------------------------------------------------------------------
+
+@testset "initialize_processing_context reads ploidy from args" begin
+    tmp_dir = mktempdir()
+    transcript_db_path = joinpath(tmp_dir, "transcripts.db")
+    indel_db_path      = joinpath(tmp_dir, "indels.db")
+    SQLite.DB(transcript_db_path) |> close
+    let db = SQLite.DB(indel_db_path)
+        SQLite.execute(db, "CREATE TABLE indels (strain TEXT, transcript_id TEXT, position INTEGER, shift_amount INTEGER)")
+        close(db)
+    end
+    gtf_path = joinpath(tmp_dir, "empty.gtf")
+    write(gtf_path, "")
+
+    args = Dict(
+        "transcript_db"      => transcript_db_path,
+        "indel_db"           => indel_db_path,
+        "gtf_file"           => gtf_path,
+        "reference_strain"   => "refStrain",
+        "undone_strains_file"=> "",
+        "ploidy"             => "2",
+    )
+    ctx = initialize_processing_context(args, ["strainA"])
+    @test ctx.ploidy == 2
+end
+
+@testset "initialize_processing_context defaults ploidy to 1 when not in args" begin
+    tmp_dir = mktempdir()
+    transcript_db_path = joinpath(tmp_dir, "transcripts.db")
+    indel_db_path      = joinpath(tmp_dir, "indels.db")
+    SQLite.DB(transcript_db_path) |> close
+    let db = SQLite.DB(indel_db_path)
+        SQLite.execute(db, "CREATE TABLE indels (strain TEXT, transcript_id TEXT, position INTEGER, shift_amount INTEGER)")
+        close(db)
+    end
+    gtf_path = joinpath(tmp_dir, "empty.gtf")
+    write(gtf_path, "")
+
+    args = Dict(
+        "transcript_db"      => transcript_db_path,
+        "indel_db"           => indel_db_path,
+        "gtf_file"           => gtf_path,
+        "reference_strain"   => "refStrain",
+        "undone_strains_file"=> "",
+    )
+    ctx = initialize_processing_context(args, ["strainA"])
+    @test ctx.ploidy == 1
+end
+
+# ---------------------------------------------------------------------------
 @testset "parse_cache_tsv_record reads first 4 cols of transcript_product.dat line" begin
     # transcript_product.dat has 12 tab-separated columns:
     # seq_id, location, transcript_id, pos_in_cds, pos_in_protein, codon,
