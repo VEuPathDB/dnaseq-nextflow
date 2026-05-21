@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y git ant build-essential wget unzip bcft
 
 ENV SAMTOOLS_VERSION=1.22.1
 RUN wget -q https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 \
-    && tar xjf samtools-${SAMTOOLS_VERSION}.tar.bz2 \
+    && tar --no-same-owner -xjf samtools-${SAMTOOLS_VERSION}.tar.bz2 \
     && cd samtools-${SAMTOOLS_VERSION} \
     && ./configure --prefix=/usr/local \
     && make \
@@ -19,7 +19,7 @@ RUN wget -q https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VE
 
 ENV BWA_MEM2_VERSION=2.2.1
 RUN wget -q https://github.com/bwa-mem2/bwa-mem2/releases/download/v${BWA_MEM2_VERSION}/bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
-    && tar -xjf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
+    && tar --no-same-owner -xjf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 \
     && mv bwa-mem2-${BWA_MEM2_VERSION}_x64-linux/bwa-mem2* /usr/local/bin/ \
     && rm -rf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 bwa-mem2-${BWA_MEM2_VERSION}_x64-linux
 
@@ -27,7 +27,7 @@ RUN pip3 install --break-system-packages cyvcf2
 
 ENV JULIA_VERSION=1.10.10
 RUN wget -q https://julialang-s3.julialang.org/bin/linux/x64/1.10/julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
-    && tar xzf julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
+    && tar --no-same-owner -xzf julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
     && mv julia-${JULIA_VERSION} /opt/julia \
     && rm julia-${JULIA_VERSION}-linux-x86_64.tar.gz
 ENV PATH=/opt/julia/bin:$PATH
