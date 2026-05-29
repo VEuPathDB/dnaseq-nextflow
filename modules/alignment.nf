@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process bwaIndex {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
    path genomeFasta
@@ -26,7 +26,7 @@ process bwaIndex {
 }
 
 process bwaMem {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
     input:
       tuple val(sampleName), path(sampleFile), path('mateAEncoding'), path(sample_1p), path(sample_2p), val(isPaired)
@@ -183,7 +183,7 @@ process gatk {
 // Extracts per-sample alignment metrics from the samtools stats SN (summary numbers) section:
 //   raw total sequences, reads mapped, mapped read percentage, average read length
 process samtoolsStats {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
     
   input:
     tuple val(sampleName), path(bamFile), path(bamIndex)

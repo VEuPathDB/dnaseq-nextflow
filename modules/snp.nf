@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process runFreebayes {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
@@ -50,7 +50,7 @@ process runFreebayes {
 //   - produces ${sampleName}.vcf.gz: atomized+filtered, published for mergeExperiments
 //   - produces freebayes.snps.vcf.gz: SNPs extracted from atomized VCF
 process filterAndSplitVcf {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   publishDir "$params.outputDir/${sampleName}", mode: "copy", pattern: "${sampleName}.vcf.gz*"
 
@@ -113,7 +113,7 @@ process filterAndSplitVcf {
 }
 
 process makeIndelTSV {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     tuple val(sampleName), path(indelsVcfGz)
@@ -139,7 +139,7 @@ process makeIndelTSV {
 
 
 process makeCoverageBed {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   publishDir "$params.outputDir/${sampleName}", mode: "copy"
 
@@ -166,7 +166,7 @@ process makeCoverageBed {
 
 
 process makeConsensusFromVcfAndBed {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   publishDir "$params.outputDir/${sampleName}", mode: "copy"
 

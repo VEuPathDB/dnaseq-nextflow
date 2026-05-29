@@ -374,7 +374,7 @@ process makeHeterozygousDensityBigwig {
 }
 
 process convertFreebayesToVarscanFormat {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     tuple val(sampleName), path(snpsVcfGz), path(snpsVcfGzTbi)
@@ -396,7 +396,7 @@ process convertFreebayesToVarscanFormat {
 }
 
 process calculatePloidyAndGeneCNV {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   publishDir "$params.outputDir/${sampleName}", mode: "copy", saveAs: { filename -> filename.endsWith("_CNVestimations.tsv") ? null : filename }
 

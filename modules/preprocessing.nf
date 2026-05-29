@@ -46,7 +46,7 @@ process fastqc_check {
 }
 
 process trimmomatic {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     tuple val(sampleName), path(sampleFile), path('mateAEncoding'), val(isPaired)

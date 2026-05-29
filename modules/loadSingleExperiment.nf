@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process writeIndelConfigFile {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     tuple val(sampleName), path(indelFile)
@@ -30,7 +30,7 @@ process writeIndelConfigFile {
 }
 
 process writePloidyConfigFile {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     tuple val(sampleName), path(ploidyFile)
@@ -58,7 +58,7 @@ process writePloidyConfigFile {
 }
 
 process writeCNVConfigFile {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     tuple val(sampleName), path(geneCNVFile)

@@ -3,7 +3,7 @@ nextflow.enable.dsl=2
 
 
 process checkUniqueIds {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
   input:
     path 'consensus.fa.gz'
 
@@ -24,7 +24,7 @@ process checkUniqueIds {
 
 
 process mergeVcfs {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     path "*.vcf.gz"
@@ -49,7 +49,7 @@ process mergeVcfs {
 
 
 process mergeCoverageBeds {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     path coverageBeds
@@ -78,7 +78,7 @@ process mergeCoverageBeds {
 
 
 process makeCodingData {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     path fastas
@@ -110,7 +110,7 @@ process makeCodingData {
 
 
 process makeGenomicIndelDb {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   input:
     path 'indels.tsv'
@@ -142,7 +142,7 @@ SQL
 
 
 process processSeqVars {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
 
   publishDir "$params.outputDir", mode: "copy", pattern: 'allele.dat'
   publishDir "$params.outputDir", mode: "copy", pattern: 'transcript_product.dat'
@@ -213,7 +213,7 @@ process processSeqVars {
 
 
 process snpEff {
-  container 'veupathdb/dnaseqanalysis:1.0.0'
+  container 'veupathdb/dnaseqanalysis:1.0.1'
   publishDir "$params.outputDir", mode: "copy"
 
   input:
