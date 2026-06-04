@@ -180,8 +180,34 @@ process gatk {
     """
 }
 
+// Counts raw input fragments before trimming/filtering.
+// For paired-end data, counts R1 only (one count per fragment).
+process rawReadCount {
+  container 'veupathdb/dnaseqanalysis:1.0.1'
+
+  input:
+    tuple val(sampleName), path(reads)
+
+  output:
+    tuple val(sampleName), path("${sampleName}.rawcount.tsv")
+
+  script:
+    def read1 = reads instanceof List ? reads[0] : reads
+    """
+    set -euo pipefail
+    count=\$(( \$(zcat ${read1} | wc -l) / 4 ))
+    printf 'sample\traw_fastq_reads\n' > ${sampleName}.rawcount.tsv
+    printf '%s\t%s\n' "${sampleName}" "\$count" >> ${sampleName}.rawcount.tsv
+    """
+
+  stub:
+    """
+    touch ${sampleName}.rawcount.tsv
+    """
+}
+
 // Extracts per-sample alignment metrics from the samtools stats SN (summary numbers) section:
-//   raw total sequences, reads mapped, mapped read percentage, average read length
+//   trimmed_total_sequences, reads mapped, mapped read percentage, average read length
 process samtoolsStats {
   container 'veupathdb/dnaseqanalysis:1.0.1'
     
@@ -204,7 +230,7 @@ process samtoolsStats {
 
     mapped_pct=\$(echo "\$reads_mapped \$raw_total" | awk '{printf "%.4f", \$1/\$2}')
 
-    printf 'sample\traw_total_sequences\treads_mapped\tmapped_read_pct\taverage_read_length\n' \
+    printf 'sample\ttrimmed_total_sequences\treads_mapped\tmapped_read_pct\taverage_read_length\n' \
       > ${sampleName}.samtools.tsv
     printf '%s\t%s\t%s\t%s\t%s\n' \
       "${sampleName}" "\$raw_total" "\$reads_mapped" "\$mapped_pct" "\$avg_length" \
@@ -254,8 +280,9 @@ process bedtoolsGenomecovStats {
     """
 }
 
-// Joins per-sample samtools and genomecov stats and publishes a single TSV for all samples.
-// Columns: sample, raw_total_sequences, reads_mapped, mapped_read_pct, average_read_length, mean_coverage
+// Joins per-sample samtools, genomecov, and raw read count stats into a single published TSV.
+// Columns: sample, raw_fastq_reads, trimmed_total_sequences, reads_mapped,
+//          trimmed_mapped_pct, raw_mapped_pct, average_read_length, mean_coverage
 process mergeAlignmentStats {
   container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
@@ -264,6 +291,7 @@ process mergeAlignmentStats {
   input:
     path samtoolsFiles
     path genomecovFiles
+    path rawcountFiles
 
   output:
     path 'alignment_stats.tsv'
@@ -272,25 +300,27 @@ process mergeAlignmentStats {
     """
     set -euo pipefail
 
-    # Join the two per-sample TSVs by sample name.
-    # FILENAME matching routes columns into named arrays; END block prints joined rows.
     awk -F'\t' '
-      FNR == 1 { next }   # skip header in each input file
+      FNR == 1 { next }
       FILENAME ~ /samtools/ {
-        raw_total[   \$1] = \$2
-        reads_mapped[\$1] = \$3
-        mapped_pct[  \$1] = \$4
-        avg_length[  \$1] = \$5
+        trimmed_total[\$1] = \$2
+        reads_mapped[ \$1] = \$3
+        trimmed_pct[  \$1] = \$4
+        avg_length[   \$1] = \$5
       }
-      FILENAME ~ /genomecov/ { mean_cov[\$1] = \$2 }
+      FILENAME ~ /genomecov/ { mean_cov[ \$1] = \$2 }
+      FILENAME ~ /rawcount/  { raw_reads[\$1] = \$2 }
       END {
-        for (sample in raw_total)
-          print sample "\t" raw_total[sample] "\t" reads_mapped[sample] "\t" \
-                mapped_pct[sample] "\t" avg_length[sample] "\t" mean_cov[sample]
+        for (sample in trimmed_total) {
+          raw_pct = (raw_reads[sample] > 0) ? reads_mapped[sample] / raw_reads[sample] : 0
+          printf "%s\t%s\t%s\t%s\t%.4f\t%.4f\t%s\t%s\n",
+            sample, raw_reads[sample], trimmed_total[sample], reads_mapped[sample],
+            trimmed_pct[sample], raw_pct, avg_length[sample], mean_cov[sample]
+        }
       }
-    ' *.samtools.tsv *.genomecov.tsv | sort > data.tsv
+    ' *.samtools.tsv *.genomecov.tsv *.rawcount.tsv | sort > data.tsv
 
-    printf 'sample\traw_total_sequences\treads_mapped\tmapped_read_pct\taverage_read_length\tmean_coverage\n' \
+    printf 'sample\traw_fastq_reads\ttrimmed_total_sequences\treads_mapped\ttrimmed_mapped_pct\traw_mapped_pct\taverage_read_length\tmean_coverage\n' \
       > alignment_stats.tsv
     cat data.tsv >> alignment_stats.tsv
     """
