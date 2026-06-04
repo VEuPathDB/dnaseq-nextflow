@@ -104,6 +104,7 @@ process reorderFasta {
 //   4. CollectAlignmentSummaryMetrics - generates QC stats (% mapped reads, mismatch rate, etc.)
 process picard {
   container 'broadinstitute/picard:2.25.0'
+  memory { 5.GB * task.attempt }
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -114,15 +115,16 @@ process picard {
     tuple val(sampleName), path('summaryMetrics.txt'), emit: metrics
 
   script:
+    def jvmMem = (task.memory.toGiga() - 1) as int
     """
     set -euo pipefail
     JARPATH="/usr/picard/picard.jar"
     # GATK requires read group tags to be present in the BAM header
-    java -jar \$JARPATH AddOrReplaceReadGroups I=$resultSortedDsBam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
+    java -Xmx${jvmMem}g -jar \$JARPATH AddOrReplaceReadGroups I=$resultSortedDsBam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
     # GATK requires a sequence dictionary alongside the reference FASTA
-    java -jar \$JARPATH CreateSequenceDictionary R=$genomeReorderedFasta UR=$genomeReorderedFasta
-    java -jar \$JARPATH BuildBamIndex I=picard.bam
-    java -jar \$JARPATH CollectAlignmentSummaryMetrics R=$genomeReorderedFasta I=picard.bam O=summaryMetrics.txt
+    java -Xmx${jvmMem}g -jar \$JARPATH CreateSequenceDictionary R=$genomeReorderedFasta UR=$genomeReorderedFasta
+    java -Xmx${jvmMem}g -jar \$JARPATH BuildBamIndex I=picard.bam
+    java -Xmx${jvmMem}g -jar \$JARPATH CollectAlignmentSummaryMetrics R=$genomeReorderedFasta I=picard.bam O=summaryMetrics.txt
     """
 
   stub:
@@ -142,6 +144,7 @@ process picard {
 //   2. IndelRealigner         - locally realigns reads within those intervals
 process gatk {
   container 'broadinstitute/gatk3:3.8-1'
+  memory { 5.GB * task.attempt }
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -152,18 +155,19 @@ process gatk {
     path("${sampleName}.bam"), emit: bamFiles
 
   script:
+    def jvmMem = (task.memory.toGiga() - 1) as int
     """
     set -euo pipefail
     JARPATH="/usr/GenomeAnalysisTK.jar"
     # Scan the BAM to find genomic intervals where reads show signs of indel misalignment
-    java -jar \$JARPATH \\
+    java -Xmx${jvmMem}g -jar \$JARPATH \\
       -I $picardBam \\
       -R $genomeReorderedFasta \\
       -T RealignerTargetCreator \\
       -allowPotentiallyMisencodedQuals \\
       -o forIndelRealigner.intervals 2>realaligner.err
     # Locally realign reads within the target intervals to produce a cleaner BAM
-    java -jar \$JARPATH \\
+    java -Xmx${jvmMem}g -jar \$JARPATH \\
       -I $picardBam \\
       -R $genomeReorderedFasta \\
       -T IndelRealigner -targetIntervals forIndelRealigner.intervals \\
