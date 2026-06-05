@@ -317,7 +317,7 @@ process mergeAlignmentStats {
       END {
         for (sample in trimmed_total) {
           raw_pct = (raw_reads[sample] > 0) ? reads_mapped[sample] / raw_reads[sample] : 0
-          printf "%s\t%s\t%s\t%s\t%.4f\t%.4f\t%s\t%s\n",
+          printf "%s\\t%s\\t%s\\t%s\\t%.4f\\t%.4f\\t%s\\t%s\\n",
             sample, raw_reads[sample], trimmed_total[sample], reads_mapped[sample],
             trimmed_pct[sample], raw_pct, avg_length[sample], mean_cov[sample]
         }
