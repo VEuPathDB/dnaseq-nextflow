@@ -2,7 +2,7 @@
 nextflow.enable.dsl=2
 
 process fastqc {
-  container 'biocontainers/fastqc:v0.11.9_cv7'
+  container 'quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0'
 
   input:
     tuple val(sampleName), path(sampleFile)
