@@ -104,7 +104,6 @@ process reorderFasta {
 //   4. CollectAlignmentSummaryMetrics - generates QC stats (% mapped reads, mismatch rate, etc.)
 process picard {
   container 'broadinstitute/picard:2.25.0'
-  memory { 5.GB * task.attempt }
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -144,7 +143,6 @@ process picard {
 //   2. IndelRealigner         - locally realigns reads within those intervals
 process gatk {
   container 'broadinstitute/gatk3:3.8-1'
-  memory { 5.GB * task.attempt }
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
