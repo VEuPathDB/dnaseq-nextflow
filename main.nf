@@ -39,8 +39,8 @@ workflow processSingleExperiment {
     .map { row ->
       def sample_id = row.sample
       def fastq_1 = file(row.fastq_1, checkIfExists: true)
-      def fastq_2 = row.fastq_2 ? file(row.fastq_2, checkIfExists: true) : null
-      def is_paired = row.fastq_2 ? true : false
+      def fastq_2 = row.fastq_2?.trim() ? file(row.fastq_2.trim(), checkIfExists: true) : null
+      def is_paired = row.fastq_2?.trim() ? true : false
 
       // Create file list based on pairing
       def files = fastq_2 ? [fastq_1, fastq_2] : [fastq_1]
@@ -136,8 +136,8 @@ workflow {
     .map { row ->
       def sample_id = row.sample
       def fastq_1 = file(row.fastq_1, checkIfExists: true)
-      def fastq_2 = row.fastq_2 ? file(row.fastq_2, checkIfExists: true) : null
-      def is_paired = row.fastq_2 ? true : false
+      def fastq_2 = row.fastq_2?.trim() ? file(row.fastq_2.trim(), checkIfExists: true) : null
+      def is_paired = row.fastq_2?.trim() ? true : false
 
       // Create file list based on pairing
       def files = fastq_2 ? [fastq_1, fastq_2] : [fastq_1]
