@@ -47,9 +47,9 @@ process bwaMem {
               genomeIndex \\
               $sample_1p \\
               $sample_2p \\
-              | samtools collate -o output.bam -
-              samtools fixmate -m output.bam fix.bam
-              samtools sort -o sort.bam fix.bam
+              | samtools collate -o output.bam - && \
+              samtools fixmate -m output.bam fix.bam && \
+              samtools sort -o sort.bam fix.bam && \
               samtools markdup -r sort.bam result_sorted.bam
       else
           bwa-mem2 mem \\
@@ -57,10 +57,7 @@ process bwaMem {
               -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
               genomeIndex \\
               $sample_1p \\
-              | samtools collate -o output.bam -
-              samtools fixmate -m output.bam fix.bam
-              samtools sort -o sort.bam fix.bam
-              samtools markdup -r sort.bam result_sorted.bam
+              | samtools sort -o result_sorted.bam -
       fi
       """
 
@@ -119,7 +116,7 @@ process picard {
     set -euo pipefail
     JARPATH="/usr/picard/picard.jar"
     # GATK requires read group tags to be present in the BAM header
-    java -Xmx${jvmMem}g -jar \$JARPATH AddOrReplaceReadGroups I=$resultSortedDsBam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=NA RGPU=NA
+    java -Xmx${jvmMem}g -jar \$JARPATH AddOrReplaceReadGroups I=$resultSortedDsBam O=picard.bam RGID=$sampleName RGSM=$sampleName RGLB=NA RGPL=ILLUMINA RGPU=NA
     # GATK requires a sequence dictionary alongside the reference FASTA
     java -Xmx${jvmMem}g -jar \$JARPATH CreateSequenceDictionary R=$genomeReorderedFasta UR=$genomeReorderedFasta
     java -Xmx${jvmMem}g -jar \$JARPATH BuildBamIndex I=picard.bam
