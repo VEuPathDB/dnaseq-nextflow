@@ -37,7 +37,7 @@ process mergeVcfs {
     set -euo pipefail
 
     for vcf in *.vcf.gz; do
-      bcftools annotate -x INFO "\$vcf" -Oz | \
+      bcftools annotate -x "INFO,FORMAT/GL,FORMAT/DPR" "\$vcf" -Oz | \
         bcftools norm -m -any -Oz -o "\${vcf%.vcf.gz}.norm.vcf.gz"
       bcftools index --tbi "\${vcf%.vcf.gz}.norm.vcf.gz"
     done
