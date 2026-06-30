@@ -67,7 +67,7 @@ process mergeCoverageBeds {
     files=( $coverageBeds )
     names=()
     for f in "\${files[@]}"; do
-      names+=( "\$(basename "\$f" .coverage.bed.gz)" )
+      names+=( "\$(basename "\$f" _coverage.bed.gz)" )
     done
     header="chrom\tstart\tend\t\$(IFS='\t'; echo "\${names[*]}")"
     echo -e "\$header" > coverage.tsv

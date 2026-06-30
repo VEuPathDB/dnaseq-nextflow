@@ -279,53 +279,45 @@ process bedtoolsGenomecovStats {
     """
 }
 
-// Joins per-sample samtools, genomecov, and raw read count stats into a single published TSV.
+// Joins the three per-sample stat files into a single published TSV for that sample.
 // Columns: sample, raw_fastq_reads, trimmed_total_sequences, reads_mapped,
 //          trimmed_mapped_pct, raw_mapped_pct, average_read_length, mean_coverage
-process mergeAlignmentStats {
+process makeAlignmentStats {
   container 'biocontainers/bedtools:v2.27.1dfsg-4-deb_cv1'
 
-  publishDir "$params.outputDir", mode: "copy"
+  publishDir "${params.outputDir}/${sampleName}", mode: "copy"
 
   input:
-    path samtoolsFiles
-    path genomecovFiles
-    path rawcountFiles
+    tuple val(sampleName), path(samtoolsFile), path(genomecovFile), path(rawcountFile)
 
   output:
-    path 'alignment_stats.tsv'
+    path "${sampleName}_alignment_stats.tsv"
 
   script:
     """
     set -euo pipefail
 
-    awk -F'\t' '
-      FNR == 1 { next }
-      FILENAME ~ /samtools/ {
-        trimmed_total[\$1] = \$2
-        reads_mapped[ \$1] = \$3
-        trimmed_pct[  \$1] = \$4
-        avg_length[   \$1] = \$5
-      }
-      FILENAME ~ /genomecov/ { mean_cov[ \$1] = \$2 }
-      FILENAME ~ /rawcount/  { raw_reads[\$1] = \$2 }
-      END {
-        for (sample in trimmed_total) {
-          raw_pct = (raw_reads[sample] > 0) ? reads_mapped[sample] / raw_reads[sample] : 0
-          printf "%s\\t%s\\t%s\\t%s\\t%.4f\\t%.4f\\t%s\\t%s\\n",
-            sample, raw_reads[sample], trimmed_total[sample], reads_mapped[sample],
-            trimmed_pct[sample], raw_pct, avg_length[sample], mean_cov[sample]
-        }
-      }
-    ' *.samtools.tsv *.genomecov.tsv *.rawcount.tsv | sort > data.tsv
+    # Each input file has a header line followed by exactly one data line.
+    read -r _ trimmed_total reads_mapped trimmed_pct avg_length \
+      < <(tail -n 1 $samtoolsFile)
+    read -r _ mean_cov \
+      < <(tail -n 1 $genomecovFile)
+    read -r _ raw_reads \
+      < <(tail -n 1 $rawcountFile)
+
+    raw_pct=\$(awk -v rm="\$reads_mapped" -v rr="\$raw_reads" \
+      'BEGIN { printf "%.4f", (rr > 0) ? rm / rr : 0 }')
 
     printf 'sample\traw_fastq_reads\ttrimmed_total_sequences\treads_mapped\ttrimmed_mapped_pct\traw_mapped_pct\taverage_read_length\tmean_coverage\n' \
-      > alignment_stats.tsv
-    cat data.tsv >> alignment_stats.tsv
+      > ${sampleName}_alignment_stats.tsv
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${sampleName}" "\$raw_reads" "\$trimmed_total" "\$reads_mapped" \
+      "\$trimmed_pct" "\$raw_pct" "\$avg_length" "\$mean_cov" \
+      >> ${sampleName}_alignment_stats.tsv
     """
 
   stub:
     """
-    touch alignment_stats.tsv
+    touch ${sampleName}_alignment_stats.tsv
     """
 }

@@ -115,11 +115,13 @@ process filterAndSplitVcf {
 process makeIndelTSV {
   container 'veupathdb/dnaseqanalysis:1.0.1'
 
+  publishDir "${params.outputDir}/${sampleName}", mode: "copy"
+
   input:
     tuple val(sampleName), path(indelsVcfGz)
 
   output:
-    path('output.tsv')
+    path("${sampleName}_indels.tsv")
 
   script:
     """
@@ -127,12 +129,12 @@ process makeIndelTSV {
     findValues.pl \\
        -i $indelsVcfGz \\
        -s ${sampleName} \\
-       -o output.tsv
+       -o ${sampleName}_indels.tsv
     """
 
   stub:
     """
-    touch output.tsv
+    touch ${sampleName}_indels.tsv
     """
 
 }
@@ -147,7 +149,7 @@ process makeCoverageBed {
     tuple val(sampleName), path(bamFile), path(bamIndex)
 
   output:
-    tuple val(sampleName), path("${sampleName}.coverage.bed.gz")
+    tuple val(sampleName), path("${sampleName}_coverage.bed.gz")
 
   script:
     """
@@ -155,12 +157,12 @@ process makeCoverageBed {
     bedtools genomecov -ibam $bamFile -bga \\
       | awk -v mc=$params.minCoverage '\$4 >= mc' \\
       | bedtools merge -c 4 -o mean \\
-      | bgzip > ${sampleName}.coverage.bed.gz
+      | bgzip > ${sampleName}_coverage.bed.gz
     """
 
   stub:
     """
-    touch ${sampleName}.coverage.bed.gz
+    touch ${sampleName}_coverage.bed.gz
     """
 }
 

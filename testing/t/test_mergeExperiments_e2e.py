@@ -131,9 +131,9 @@ def test_coverage_tsv_header(work_dirs):
 def test_coverage_tsv_strain_columns_match_inputs(work_dirs):
     work = work_dirs['mergeCoverageBeds']
     bed_strains = sorted(
-        f.replace('.coverage.bed.gz', '')
+        f.replace('_coverage.bed.gz', '')
         for f in os.listdir(work)
-        if f.endswith('.coverage.bed.gz')
+        if f.endswith('_coverage.bed.gz')
     )
     path = os.path.join(work, 'coverage.tsv')
     with open(path) as f:
@@ -209,9 +209,9 @@ def test_merged_vcf_sample_names_match_input_strains(work_dirs):
     # Input VCFs are staged as 1.vcf.gz, 2.vcf.gz... — use coverage BEDs for ground truth strains
     bed_work = work_dirs['mergeCoverageBeds']
     expected = {
-        f.replace('.coverage.bed.gz', '')
+        f.replace('_coverage.bed.gz', '')
         for f in os.listdir(bed_work)
-        if f.endswith('.coverage.bed.gz')
+        if f.endswith('_coverage.bed.gz')
     }
     vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
     actual = set(bcftools_samples(vcf_path))
@@ -268,9 +268,9 @@ def test_coding_sequences_db_schema(work_dirs):
 def test_coding_sequences_all_strains_present(work_dirs):
     bed_work = work_dirs['mergeCoverageBeds']
     expected_strains = {
-        f.replace('.coverage.bed.gz', '')
+        f.replace('_coverage.bed.gz', '')
         for f in os.listdir(bed_work)
-        if f.endswith('.coverage.bed.gz')
+        if f.endswith('_coverage.bed.gz')
     }
     path = os.path.join(work_dirs['makeCodingData'], 'codingSequences.db')
     with sqlite3.connect(path) as conn:

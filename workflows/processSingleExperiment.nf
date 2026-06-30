@@ -15,7 +15,7 @@ include { gatk } from '../modules/alignment.nf'
 include { rawReadCount } from '../modules/alignment.nf'
 include { samtoolsStats } from '../modules/alignment.nf'
 include { bedtoolsGenomecovStats } from '../modules/alignment.nf'
-include { mergeAlignmentStats } from '../modules/alignment.nf'
+include { makeAlignmentStats } from '../modules/alignment.nf'
 
 // SNP
 include { runFreebayes } from '../modules/snp.nf'
@@ -91,7 +91,7 @@ workflow ps {
 
     makeIndelTSV(freebayesResults.vcf_files.map { sampleName, vcfGz, vcfGzTbi, snpsVcfGz, snpsVcfGzTbi, indelsVcfGz, indelsVcfGzTbi, consensusVcfGz, consensusVcfGzTbi ->
         tuple(sampleName, indelsVcfGz)
-    }).collectFile(name: 'indels.tsv', storeDir: params.outputDir)
+    })
 
     coverageBedResults = makeCoverageBed(gatkResults.bamTuple)
 
@@ -155,10 +155,10 @@ workflow ps {
     rawReadCountResults = rawReadCount(files_only_qch)
     samtoolsStatsResults = samtoolsStats(gatkResults.bamTuple)
     bedtoolsGenomecovStatsResults = bedtoolsGenomecovStats(gatkResults.bamTuple, reorderFastaResults)
-    mergeAlignmentStats(
-      samtoolsStatsResults.map { sampleName, tsv -> tsv }.collect(),
-      bedtoolsGenomecovStatsResults.map { sampleName, tsv -> tsv }.collect(),
-      rawReadCountResults.map { sampleName, tsv -> tsv }.collect()
+    makeAlignmentStats(
+      samtoolsStatsResults
+        .join(bedtoolsGenomecovStatsResults)
+        .join(rawReadCountResults)
     )
 
 }
