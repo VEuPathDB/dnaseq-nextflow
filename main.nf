@@ -7,7 +7,6 @@ nextflow.enable.dsl=2
 
 include { ps } from './workflows/processSingleExperiment.nf'
 include { me } from './workflows/mergeExperiments.nf'
-include { ls } from './workflows/loadSingleExperiment.nf'
 include { tests } from './modules/runTests.nf'
 
 //---------------------------------------------------------------
@@ -53,26 +52,6 @@ workflow processSingleExperiment {
 
 }
 
-
-// TODO:  Need to sort out how to load into Postgres
-//---------------------------------------------------------------
-// loadSingleExperiment
-//---------------------------------------------------------------
-
-// workflow loadSingleExperiment {
-
-//   if(params.inputDir) {
-//     indels_qch = Channel.fromPath(params.inputDir + '/*.indel.tsv').map { file -> tuple(file.baseName, [file]) }
-//     ploidy_qch = Channel.fromPath(params.inputDir + '/*_Ploidy.txt').map { file -> tuple(file.baseName, [file]) }
-//     cnv_qch = Channel.fromPath(params.inputDir + '/_geneCNVs.txt').map { file -> tuple(file.baseName, [file]) }
-//   }
-
-//   else {
-//     throw new Exception("Missing parameter params.indelDir")
-//   }
-   
-//   ls(indels_qch,ploidy_qch,cnv_qch)
-// }
 
 //---------------------------------------------------------------
 // mergeExperiments
