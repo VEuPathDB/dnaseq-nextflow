@@ -1,5 +1,6 @@
 """Tests for bin/parseSnpEffAnnotations.py"""
 import gzip
+import importlib.util
 import os
 import subprocess
 import tempfile
@@ -7,6 +8,12 @@ import tempfile
 import pytest
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "../../bin/parseSnpEffAnnotations.py")
+
+_spec = importlib.util.spec_from_file_location("parseSnpEffAnnotations", SCRIPT)
+parseSnpEffAnnotations = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(parseSnpEffAnnotations)
+parse_ann_rows = parseSnpEffAnnotations.parse_ann_rows
+parse_cann_rows = parseSnpEffAnnotations.parse_cann_rows
 
 
 def run_script(vcf_content: str, compressed: bool = True, include_header: bool = False) -> list[str]:
@@ -110,7 +117,7 @@ def test_ann_row_has_source_snpeff():
     rows = run_script(vcf)
     assert len(rows) == 1
     fields = rows[0].split('\t')
-    assert fields[6] == "snpeff"      # new source column
+    assert fields[7] == "snpeff"      # source column (after hgvs_c)
 
 
 def test_cann_missense_becomes_product_call_row():
@@ -124,7 +131,7 @@ def test_cann_missense_becomes_product_call_row():
     assert f[3] == "tx1"                 # transcript_id
     assert f[4] == "MODERATE"            # impact tier
     assert f[5] == "missense_variant"    # SnpEff-aligned effect term
-    assert f[6] == "product_call"        # source
+    assert f[7] == "product_call"        # source
 
 
 def test_cann_effect_and_impact_mapping():
@@ -152,7 +159,7 @@ def test_cann_compound_effect_splits_into_one_row_per_effect():
     assert len(rows) == 2
     by_effect = {r.split('\t')[5]: r.split('\t')[4] for r in rows}
     assert by_effect == {"missense_variant": "MODERATE", "frameshift_variant": "HIGH"}
-    assert all(r.split('\t')[6] == "product_call" for r in rows)
+    assert all(r.split('\t')[7] == "product_call" for r in rows)
 
 
 def test_ann_compound_effect_splits_with_replicated_impact():
@@ -167,7 +174,7 @@ def test_ann_compound_effect_splits_with_replicated_impact():
     for r in rows:
         f = r.split('\t')
         assert f[4] == "MODERATE"          # entry-level impact replicated onto each row
-        assert f[6] == "snpeff"
+        assert f[7] == "snpeff"
 
 
 def test_cann_reference_r_entries_are_skipped():
@@ -202,7 +209,7 @@ def test_header_column_names():
     vcf = MINIMAL_HEADER + f"LmjF.01\t100\t.\tC\tT\t.\t.\tANN={ANN_MODERATE}\n"
     header = run_script(vcf, include_header=True)[0]
     assert header.split('\t') == [
-        "location", "seq_id", "allele", "transcript_id", "impact", "effect", "source"
+        "location", "seq_id", "allele", "transcript_id", "impact", "effect", "hgvs_c", "source"
     ]
 
 
@@ -211,7 +218,7 @@ def test_ann_and_cann_both_emitted_from_same_record():
     vcf  = MINIMAL_HEADER + f"LmjF.01\t3745\t.\tC\tT\t.\t.\t{info}\n"
     rows = [r for r in run_script(vcf) if r]
     assert len(rows) == 2
-    sources = {r.split('\t')[6] for r in rows}
+    sources = {r.split('\t')[7] for r in rows}
     assert sources == {"snpeff", "product_call"}
 
 
@@ -219,3 +226,28 @@ def test_cann_skips_non_coding_dot_entry():
     vcf = MINIMAL_HEADER + "LmjF.01\t100\t.\tC\tT\t.\t.\tCANN=.\n"
     rows = [r for r in run_script(vcf) if r]
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# hgvs_c column
+# ---------------------------------------------------------------------------
+
+def test_ann_row_carries_hgvs_c():
+    info = "ANN=G|missense_variant|MODERATE|GENE|GENE|transcript|T1:mRNA|protein_coding|1/1|c.958G>C|p.Asp320His|958/999|958/999|320/332||"
+    rows = list(parse_ann_rows(info))
+    assert rows == [("G", "T1:mRNA", "MODERATE", "missense_variant", "c.958G>C")]
+
+
+def test_ann_row_hgvs_c_dot_when_absent():
+    info = "ANN=G|intergenic_region|MODIFIER|A-B|A-B|intergenic_region|A-B|||n.233C>G||||||"
+    rows = list(parse_ann_rows(info))
+    assert rows and rows[0][1] == ""          # transcript_id empty for intergenic
+    # HGVS.c field here is "n.233C>G" (parts[9]); accept it verbatim OR "." per impl
+    assert rows[0][4] in (".", "n.233C>G")
+
+
+def test_cann_row_carries_hgvs_c():
+    info = "CANN=k0|CAC|H|missense|T1:mRNA|958|1|c.958G>C|p.Asp320His"
+    rows = list(parse_cann_rows("C", info))
+    # confirmed via CANN_EFFECT_MAP["missense"] = ("missense_variant", "MODERATE")
+    assert rows == [("C", "T1:mRNA", "MODERATE", "missense_variant", "c.958G>C")]

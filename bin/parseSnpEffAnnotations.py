@@ -8,7 +8,7 @@ Two annotation sources are combined into one file, distinguished by the
                   CANN INFO field (see processSequenceVariations.jl)
 
 Output columns:
-  location, seq_id, allele, transcript_id, impact, effect, source
+  location, seq_id, allele, transcript_id, impact, effect, hgvs_c, source
 One row per unique (location, seq_id, allele, transcript_id, effect, source).
 
 Compound effects (SnpEff joins co-occurring consequences with '&', e.g.
@@ -80,7 +80,7 @@ def map_cann_effect(effect, codon):
 
 
 def parse_ann_rows(info):
-    """Yield (allele, transcript_id, impact, effect) tuples from the ANN field.
+    """Yield (allele, transcript_id, impact, effect, hgvs_c) tuples from the ANN field.
 
     Compound effects are split on '&'; each component row inherits the entry's
     single SnpEff impact.
@@ -104,16 +104,17 @@ def parse_ann_rows(info):
         # parts[6] is Feature_ID — a real transcript ID only when Feature_Type is
         # "transcript"; for intergenic_region SnpEff puts a gene-boundary name there.
         transcript_id = parts[6] if feature_type == "transcript" else ""
+        hgvs_c        = parts[9] if len(parts) > 9 and parts[9] else "."
         if not allele or not impact or not effect:
             continue
         if feature_type == "transcript" and not transcript_id:
             continue
         for component in effect.split("&"):
-            yield (allele, transcript_id, impact, component)
+            yield (allele, transcript_id, impact, component, hgvs_c)
 
 
 def parse_cann_rows(alt, info):
-    """Yield (allele, transcript_id, impact, effect) tuples from the CANN field.
+    """Yield (allele, transcript_id, impact, effect, hgvs_c) tuples from the CANN field.
 
     Each output VCF line carries a single ALT, so every k-prefixed CANN entry
     on the line pertains to that ALT. r-prefixed entries describe the reference
@@ -136,12 +137,13 @@ def parse_cann_rows(alt, info):
         codon         = parts[1]
         effect        = parts[3]
         transcript_id = parts[4]
+        hgvs_c        = parts[7] if len(parts) > 7 and parts[7] else "."
         if not key.startswith("k"):   # skip reference (r-prefixed) entries
             continue
         if not transcript_id:
             continue
         for so_effect, impact in map_cann_effect(effect, codon):
-            yield (alt, transcript_id, impact, so_effect)
+            yield (alt, transcript_id, impact, so_effect, hgvs_c)
 
 
 def main():
@@ -149,7 +151,7 @@ def main():
     seen = set()
 
     with open_vcf(args.vcf) as vcf_fh, open(args.output, "w") as out:
-        out.write("location\tseq_id\tallele\ttranscript_id\timpact\teffect\tsource\n")
+        out.write("location\tseq_id\tallele\ttranscript_id\timpact\teffect\thgvs_c\tsource\n")
         for line in vcf_fh:
             if line.startswith("#"):
                 continue
@@ -167,7 +169,7 @@ def main():
                 ("product_call", row) for row in parse_cann_rows(alt, info)
             ]
 
-            for source, (allele, transcript_id, impact, effect) in sourced_rows:
+            for source, (allele, transcript_id, impact, effect, hgvs_c) in sourced_rows:
                 # All distinct effects for a transcript+allele are kept — `effect`
                 # is part of the key. Only an exact-duplicate row (same effect and
                 # source) is collapsed, since it would be byte-identical output.
@@ -175,7 +177,7 @@ def main():
                 if key in seen:
                     continue
                 seen.add(key)
-                out.write(f"{location}\t{seq_id}\t{allele}\t{transcript_id}\t{impact}\t{effect}\t{source}\n")
+                out.write(f"{location}\t{seq_id}\t{allele}\t{transcript_id}\t{impact}\t{effect}\t{hgvs_c}\t{source}\n")
 
 
 if __name__ == "__main__":
