@@ -465,14 +465,43 @@ end
     @test split(lines[g_row], "\t")[9] == "0"
 end
 
-@testset "write_allele_file has 9 columns per row" begin
+@testset "write_allele_file has 10 columns per row" begin
     sample_id_map = Dict{String,Int}("s1" => 1)
     v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"
 
     buf = IOBuffer()
     write_allele_file(buf, [v1], "LmjF.01", 100, sample_id_map)
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
-    @test length(split(lines[1], "\t")) == 9
+    @test length(split(lines[1], "\t")) == 10
+end
+
+@testset "write_allele_file emits genomic_hgvs column for alt alleles" begin
+    v_ref = Variation(); v_ref.strain="ref"; v_ref.base="C"; v_ref.reference="C"; v_ref.ploidy=1; v_ref.coverage="10"; v_ref.percent="100"
+    v_s1  = Variation(); v_s1.strain="s1";  v_s1.base="T"; v_s1.reference="C"; v_s1.ploidy=1; v_s1.coverage="12"; v_s1.percent="100"
+    v_s2  = Variation(); v_s2.strain="s2";  v_s2.base="C"; v_s2.reference="C"; v_s2.ploidy=1; v_s2.coverage="9";  v_s2.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v_ref, v_s1, v_s2], "LmjF.01", 700, Dict("ref"=>5,"s1"=>1,"s2"=>2))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test length(rows["T"]) == 10
+    @test rows["T"][10] == "LmjF.01:g.700C>T"
+    @test rows["C"][10] == "."
+end
+
+@testset "write_allele_file genomic_hgvs for a deletion allele" begin
+    v_ref = Variation(); v_ref.strain="ref"; v_ref.base="CA"; v_ref.reference="CA"; v_ref.ploidy=1; v_ref.coverage="10"; v_ref.percent="100"
+    v_s1  = Variation(); v_s1.strain="s1";  v_s1.base="C";  v_s1.reference="CA"; v_s1.ploidy=1; v_s1.coverage="12"; v_s1.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v_ref, v_s1], "LmjF.01", 2531, Dict("ref"=>5,"s1"=>1))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test rows["C"][10] == "LmjF.01:g.2532delA"
 end
 
 @testset "collect_cann_entries_for_annotation returns entry keyed by alt allele" begin
