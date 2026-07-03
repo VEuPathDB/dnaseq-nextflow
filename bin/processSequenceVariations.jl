@@ -1252,7 +1252,7 @@ function open_output_writers(output_vcf::String, reference_strain::String,
     allele_fh = open("allele.dat", "w")
     write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\tgenomic_hgvs\n")
     tp_fh = open("transcript_product.dat", "w")
-    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\n")
+    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\thgvs_p\n")
     hsss = open_hsss_writers(reference_strain, all_strains)
     OutputWriters(vcf_fh, snp_fh, allele_fh, tp_fh, hsss)
 end
@@ -1664,6 +1664,7 @@ function write_transcript_product(
         count               = get(all_product_counts, product, 0)
         matches_ref_codon   = ec == annotation.ref_codon ? 1 : 0
         matches_ref_product = product == annotation.ref_product ? 1 : 0
+        hgvs_p = protein_hgvs(pos_in_protein, annotation.ref_product, product)
         write(fh, join([
             seq_id,
             string(location),
@@ -1676,7 +1677,8 @@ function write_transcript_product(
             product,
             string(matches_ref_codon),
             string(matches_ref_product),
-            dfs_str
+            dfs_str,
+            hgvs_p
         ], "\t"), "\n")
     end
 end

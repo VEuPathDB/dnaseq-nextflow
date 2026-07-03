@@ -597,7 +597,7 @@ end
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 12
+    @test length(fields) == 13
     @test fields[6] == "ATT"
 end
 
@@ -613,7 +613,7 @@ end
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 12
+    @test length(fields) == 13
     @test fields[6] == "ATT"
     @test fields[8] == "2"   # count = 2 strains with Ile product
 end
@@ -662,7 +662,7 @@ end
     @test fields[11] == "1"   # matches_ref_product: both encode F
 end
 
-@testset "write_transcript_product has 12 columns per row" begin
+@testset "write_transcript_product has 13 columns per row" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
@@ -670,7 +670,7 @@ end
     buf = IOBuffer()
     write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
-    @test length(split(lines[1], "\t")) == 12
+    @test length(split(lines[1], "\t")) == 13
 end
 
 @testset "write_transcript_product includes pos_in_cds and pos_in_protein" begin
@@ -716,6 +716,27 @@ end
         fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
         @test fields[5] == string(expected_pip)
     end
+end
+
+@testset "write_transcript_product emits hgvs_p per codon row" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=958,
+                          pos_in_codon_val=1, ref_codon="GAC", ref_product="D")
+    v1 = make_variation(strain="s1", codon="CAC", product=["H"], downstream_of_frameshift=0)
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1], ann, "LmjF.01", 3745, Dict{String,Int}())
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test length(fields) == 13
+    @test fields[13] == "p.Asp320His"
+end
+
+@testset "write_transcript_product hgvs_p is synonymous form for reference codon" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v1 = make_variation(strain="s1", codon="ATG", product=["M"], downstream_of_frameshift=0)
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test fields[13] == "p.Met4="
 end
 
 # ---------------------------------------------------------------------------
