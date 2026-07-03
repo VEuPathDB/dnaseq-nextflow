@@ -86,6 +86,59 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# substitution_hgvs — Phase 1 HGVS for coding substitutions
+# ---------------------------------------------------------------------------
+
+@testset "substitution_hgvs missense: c. and p. from strand-oriented codons" begin
+    (c, p) = substitution_hgvs(958, "GAC", "CAC", 1, "D", "H")
+    @test c == "c.958G>C"
+    @test p == "p.Asp320His"
+end
+
+@testset "substitution_hgvs synonymous uses '=' protein form" begin
+    (c, p) = substitution_hgvs(402, "ACT", "ACC", 3, "T", "T")
+    @test c == "c.402T>C"
+    @test p == "p.Thr134="
+end
+
+@testset "substitution_hgvs nonsense uses Ter" begin
+    (c, p) = substitution_hgvs(100, "CAA", "TAA", 1, "Q", "*")
+    @test c == "c.100C>T"
+    @test p == "p.Gln34Ter"
+end
+
+@testset "substitution_hgvs start-loss renders p.Met1?" begin
+    (c, p) = substitution_hgvs(1, "ATG", "ACG", 2, "M", "T")
+    @test c == "c.1T>C"
+    @test p == "p.Met1?"
+end
+
+@testset "substitution_hgvs returns dots for ambiguous codon" begin
+    (c, p) = substitution_hgvs(10, "ATG", "ANG", 2, "M", "X")
+    @test c == "."
+    @test p == "."
+end
+
+@testset "substitution_hgvs returns dot p. for unknown amino acid" begin
+    (c, p) = substitution_hgvs(10, "ATG", "ACG", 2, "M", "X")
+    @test c == "c.10T>C"
+    @test p == "."
+end
+
+@testset "substitution_hgvs uppercases soft-masked bases" begin
+    (c, p) = substitution_hgvs(958, "gac", "cac", 1, "D", "H")
+    @test c == "c.958G>C"
+    @test p == "p.Asp320His"
+end
+
+@testset "substitution_hgvs stop-loss emits dot p. (out of Phase 1 scope)" begin
+    # ref stop(*) -> alt Gln(Q); protpos = div(979-1,3)+1 = 327
+    (c, p) = substitution_hgvs(979, "TAA", "CAA", 1, "*", "Q")
+    @test c == "c.979T>C"
+    @test p == "."
+end
+
+# ---------------------------------------------------------------------------
 # fill_missing_coverage_gt
 # ---------------------------------------------------------------------------
 
@@ -399,6 +452,42 @@ end
     @test haskey(result["T"], "s1")
     @test length(result["T"]["s1"]) == 1
     @test contains(result["T"]["s1"][1], "T1")
+end
+
+# ---------------------------------------------------------------------------
+# build_cann_string / build_ref_cann_entry — hgvs_c / hgvs_p fields
+# ---------------------------------------------------------------------------
+
+@testset "build_cann_string appends hgvs_c and hgvs_p for a coding substitution" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=958,
+                          pos_in_codon_val=1, ref_codon="GAC", ref_product="D")
+    v   = make_variation(strain="s1", codon="CAC", product=["H"])
+    entry = build_cann_string("G", "C", v, ann)     # SNP: ref len 1, alt len 1
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "c.958G>C"
+    @test parts[9] == "p.Asp320His"
+end
+
+@testset "build_cann_string emits dot hgvs for a pure indel" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v   = make_variation(strain="s1", codon=".", product=String[])
+    entry = build_cann_string("AT", "A", v, ann)    # deletion
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "."
+    @test parts[9] == "."
+end
+
+@testset "build_ref_cann_entry appends dot hgvs fields" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    entry = build_ref_cann_entry("r0", ann)
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "."
+    @test parts[9] == "."
 end
 
 # ---------------------------------------------------------------------------

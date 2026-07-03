@@ -927,7 +927,7 @@ function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_header
     for h in info_headers
         write(fh, h, "\n")
     end
-    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
+    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon|hgvs_c|hgvs_p. hgvs_c/hgvs_p are populated for coding substitutions only; '.' otherwise. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
     write(fh, "##FORMAT=<ID=CA,Number=1,Type=String,Description=\"CANN key(s) per GT allele. Alleles separated by '/' (unphased) or '|' (phased). Multiple transcript keys for one allele separated by ';'. 'r'=ref allele no CDS annotation, '.'=missing/no-call\">\n")
     write(fh, "##FORMAT=<ID=DFS,Number=1,Type=Integer,Description=\"Downstream of frameshift: 1 if this sample carries an upstream indel that disrupts the reading frame at this position, 0 otherwise.\">\n")
     chrom_line = join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", all_strains...], '\t')
@@ -1734,6 +1734,54 @@ function build_ca_values(
     result
 end
 
+const AA_THREE_LETTER = Dict(
+    "A"=>"Ala","R"=>"Arg","N"=>"Asn","D"=>"Asp","C"=>"Cys",
+    "Q"=>"Gln","E"=>"Glu","G"=>"Gly","H"=>"His","I"=>"Ile",
+    "L"=>"Leu","K"=>"Lys","M"=>"Met","F"=>"Phe","P"=>"Pro",
+    "S"=>"Ser","T"=>"Thr","W"=>"Trp","Y"=>"Tyr","V"=>"Val",
+    "*"=>"Ter",
+)
+
+"""
+    substitution_hgvs(pos_in_cds, ref_codon, alt_codon, pic, ref_aa, alt_aa) -> (String, String)
+
+Builds (HGVS.c, HGVS.p) for a single-base coding substitution. Bases are read
+from the strand-oriented codons at position `pic`, so no separate strand
+handling is required. Returns "." for either string it cannot form (ambiguous
+or non-triplet codon, unknown amino acid, or no base change at `pic`).
+"""
+function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String,
+                           pic::Int, ref_aa::String, alt_aa::String)::Tuple{String,String}
+    hgvs_c = "."
+    if length(ref_codon) == 3 && length(alt_codon) == 3 &&
+       !occursin(r"[^ACGTacgt]", ref_codon) && !occursin(r"[^ACGTacgt]", alt_codon) &&
+       1 <= pic <= 3
+        rb = uppercase(ref_codon[pic])
+        ab = uppercase(alt_codon[pic])
+        if rb != ab
+            hgvs_c = "c.$(pos_in_cds)$(rb)>$(ab)"
+        end
+    end
+
+    hgvs_p = "."
+    ref3 = get(AA_THREE_LETTER, ref_aa, "")
+    alt3 = get(AA_THREE_LETTER, alt_aa, "")
+    if !isempty(ref3) && !isempty(alt3)
+        protpos = div(pos_in_cds - 1, 3) + 1
+        hgvs_p = if ref_aa == alt_aa
+            "p.$(ref3)$(protpos)="
+        elseif ref_aa == "*"
+            "."                       # stop-loss needs extension notation; out of Phase 1 scope
+        elseif protpos == 1 && ref_aa == "M"
+            "p.Met1?"
+        else
+            "p.$(ref3)$(protpos)$(alt3)"
+        end
+    end
+
+    (hgvs_c, hgvs_p)
+end
+
 # ---------------------------------------------------------------------------
 # CANN annotation
 # ---------------------------------------------------------------------------
@@ -1742,13 +1790,14 @@ end
     build_ref_cann_entry(key, annotation) -> String
 
 Builds the r-keyed CANN entry for the reference allele at a coding position.
-Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon
+Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon|hgvs_c|hgvs_p
+(hgvs_c/hgvs_p are always "." for reference entries.)
 """
 function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::String
     annotation.is_coding != 1 && return "."
     codon = isempty(annotation.ref_codon)   ? "." : annotation.ref_codon
     aa    = isempty(annotation.ref_product) ? "." : annotation.ref_product
-    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)"
+    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
 end
 
 """
@@ -1800,7 +1849,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     # SNP or complex variant: compute amino acid effect
@@ -1810,12 +1859,12 @@ function build_cann_string(
 
     # Codon/product suppressed because strain is downstream of a frameshift
     if codon == "." && isempty(unique_prods)
-        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     # Codon contains ambiguous base(s) — skip product and effect
     if occursin(r"[NnXx]", codon)
-        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     has_stop = any(p == "*" for p in unique_prods)
@@ -1828,7 +1877,10 @@ function build_cann_string(
     end
 
     if !is_indel
-        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)"
+        alt_aa = length(unique_prods) == 1 ? unique_prods[1] : ""
+        (hgvs_c, hgvs_p) = substitution_hgvs(pos_in_cds, annotation.ref_codon, codon, pic,
+                                             annotation.ref_product, alt_aa)
+        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)|$(hgvs_c)|$(hgvs_p)"
     else
         # Complex: indel with SNP at anchor position
         len_diff = alt_len - ref_len
@@ -1839,7 +1891,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 end
 

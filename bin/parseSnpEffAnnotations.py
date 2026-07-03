@@ -118,7 +118,7 @@ def parse_cann_rows(alt, info):
     Each output VCF line carries a single ALT, so every k-prefixed CANN entry
     on the line pertains to that ALT. r-prefixed entries describe the reference
     allele and are skipped. Compound effects are split, each with its own tier.
-    CANN entry format: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon
+    CANN entry format: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon|hgvs_c|hgvs_p
     """
     cann_value = None
     for token in info.split(";"):
