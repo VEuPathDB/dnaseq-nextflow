@@ -86,6 +86,46 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# substitution_hgvs — Phase 1 HGVS for coding substitutions
+# ---------------------------------------------------------------------------
+
+@testset "substitution_hgvs missense: c. and p. from strand-oriented codons" begin
+    (c, p) = substitution_hgvs(958, "GAC", "CAC", 1, "D", "H")
+    @test c == "c.958G>C"
+    @test p == "p.Asp320His"
+end
+
+@testset "substitution_hgvs synonymous uses '=' protein form" begin
+    (c, p) = substitution_hgvs(402, "ACT", "ACC", 3, "T", "T")
+    @test c == "c.402T>C"
+    @test p == "p.Thr134="
+end
+
+@testset "substitution_hgvs nonsense uses Ter" begin
+    (c, p) = substitution_hgvs(100, "CAA", "TAA", 1, "Q", "*")
+    @test c == "c.100C>T"
+    @test p == "p.Gln34Ter"
+end
+
+@testset "substitution_hgvs start-loss renders p.Met1?" begin
+    (c, p) = substitution_hgvs(1, "ATG", "ACG", 2, "M", "T")
+    @test c == "c.1T>C"
+    @test p == "p.Met1?"
+end
+
+@testset "substitution_hgvs returns dots for ambiguous codon" begin
+    (c, p) = substitution_hgvs(10, "ATG", "ANG", 2, "M", "X")
+    @test c == "."
+    @test p == "."
+end
+
+@testset "substitution_hgvs returns dot p. for unknown amino acid" begin
+    (c, p) = substitution_hgvs(10, "ATG", "ACG", 2, "M", "X")
+    @test c == "c.10T>C"
+    @test p == "."
+end
+
+# ---------------------------------------------------------------------------
 # fill_missing_coverage_gt
 # ---------------------------------------------------------------------------
 

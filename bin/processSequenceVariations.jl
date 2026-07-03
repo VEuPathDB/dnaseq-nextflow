@@ -1734,6 +1734,54 @@ function build_ca_values(
     result
 end
 
+const AA_THREE_LETTER = Dict(
+    "A"=>"Ala","R"=>"Arg","N"=>"Asn","D"=>"Asp","C"=>"Cys",
+    "Q"=>"Gln","E"=>"Glu","G"=>"Gly","H"=>"His","I"=>"Ile",
+    "L"=>"Leu","K"=>"Lys","M"=>"Met","F"=>"Phe","P"=>"Pro",
+    "S"=>"Ser","T"=>"Thr","W"=>"Trp","Y"=>"Tyr","V"=>"Val",
+    "*"=>"Ter",
+)
+
+"""
+    substitution_hgvs(pos_in_cds, ref_codon, alt_codon, pic, ref_aa, alt_aa) -> (String, String)
+
+Builds (HGVS.c, HGVS.p) for a single-base coding substitution. Bases are read
+from the strand-oriented codons at position `pic`, so no separate strand
+handling is required. Returns "." for either string it cannot form (ambiguous
+or non-triplet codon, unknown amino acid, or no base change at `pic`).
+"""
+function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String,
+                           pic::Int, ref_aa::String, alt_aa::String)::Tuple{String,String}
+    hgvs_c = "."
+    if length(ref_codon) == 3 && length(alt_codon) == 3 &&
+       !occursin(r"[^ACGTacgt]", ref_codon) && !occursin(r"[^ACGTacgt]", alt_codon) &&
+       1 <= pic <= 3
+        rb = ref_codon[pic]
+        ab = alt_codon[pic]
+        if rb != ab
+            hgvs_c = "c.$(pos_in_cds)$(rb)>$(ab)"
+        end
+    end
+
+    hgvs_p = "."
+    ref3 = get(AA_THREE_LETTER, ref_aa, "")
+    alt3 = get(AA_THREE_LETTER, alt_aa, "")
+    if !isempty(ref3) && !isempty(alt3)
+        protpos = div(pos_in_cds - 1, 3) + 1
+        hgvs_p = if ref_aa == alt_aa
+            "p.$(ref3)$(protpos)="
+        elseif protpos == 1 && ref_aa == "M"
+            "p.Met1?"
+        elseif alt_aa == "*"
+            "p.$(ref3)$(protpos)Ter"
+        else
+            "p.$(ref3)$(protpos)$(alt3)"
+        end
+    end
+
+    (hgvs_c, hgvs_p)
+end
+
 # ---------------------------------------------------------------------------
 # CANN annotation
 # ---------------------------------------------------------------------------
