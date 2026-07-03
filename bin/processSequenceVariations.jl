@@ -1790,7 +1790,8 @@ end
     build_ref_cann_entry(key, annotation) -> String
 
 Builds the r-keyed CANN entry for the reference allele at a coding position.
-Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon
+Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon|hgvs_c|hgvs_p
+(hgvs_c/hgvs_p are always "." for reference entries.)
 """
 function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::String
     annotation.is_coding != 1 && return "."
