@@ -49,8 +49,15 @@ CANN_EFFECT_MAP = {
     "missense":              ("missense_variant",      "MODERATE"),
     "nonsense":              ("stop_gained",           "HIGH"),
     "frameshift":            ("frameshift_variant",    "HIGH"),
-    "inframe_insertion":     ("inframe_insertion",     "MODERATE"),
-    "inframe_deletion":      ("inframe_deletion",      "MODERATE"),
+    # SnpEff always classifies these as conservative_/disruptive_ after
+    # renormalizing indels to a canonical position within repeat regions.
+    # Julia doesn't do that renormalization, so its codon-boundary math can't
+    # reliably tell conservative from disruptive apart (confirmed: it disagrees
+    # with SnpEff on most repeat-region indels in test data). Emit a distinct
+    # term rather than mislabel severity or falsely imply parity with SnpEff's
+    # classified calls.
+    "inframe_insertion":     ("inframe_insertion_unnormalized", "MODERATE"),
+    "inframe_deletion":      ("inframe_deletion_unnormalized",  "MODERATE"),
     # Positional consequence flag, not a direct sequence change.
     "downstream_frameshift": ("downstream_frameshift", "MODIFIER"),
 }

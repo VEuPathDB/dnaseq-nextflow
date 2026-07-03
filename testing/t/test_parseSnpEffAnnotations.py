@@ -133,8 +133,8 @@ def test_cann_effect_and_impact_mapping():
         "missense":             ("missense_variant",   "MODERATE"),
         "nonsense":             ("stop_gained",        "HIGH"),
         "frameshift":           ("frameshift_variant", "HIGH"),
-        "inframe_insertion":    ("inframe_insertion",  "MODERATE"),
-        "inframe_deletion":     ("inframe_deletion",   "MODERATE"),
+        "inframe_insertion":    ("inframe_insertion_unnormalized", "MODERATE"),
+        "inframe_deletion":     ("inframe_deletion_unnormalized",  "MODERATE"),
         "downstream_frameshift":("downstream_frameshift", "MODIFIER"),
     }
     for julia_term, (so_term, impact) in cases.items():
