@@ -1248,7 +1248,7 @@ function open_output_writers(output_vcf::String, reference_strain::String,
                               all_strains::Vector{String})
     vcf_fh = open(output_vcf, "w")
     snp_fh = open("snpFeature.dat", "w")
-    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\tvariant_type\tmajor_differs_from_reference\tis_singleton\thet_strain_count\tcalled_strain_count\tno_call_strain_count\tcall_rate\n")
+    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\tvariant_type\tmajor_differs_from_reference\tis_singleton\thet_strain_count\tcalled_strain_count\tno_call_strain_count\tcall_rate\tmajor_genomic_hgvs\tminor_genomic_hgvs\n")
     allele_fh = open("allele.dat", "w")
     write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\tgenomic_hgvs\n")
     tp_fh = open("transcript_product.dat", "w")
@@ -1526,6 +1526,13 @@ function write_snp_feature(
     call_rate = total_sequenced > 0 ?
         @sprintf("%.4f", called_strain_count / total_sequenced) : ""
 
+    # genomic HGVS for the major and minor alleles (same per-allele-ref basis as
+    # allele.dat). A reference allele yields "."; an absent minor allele yields "".
+    allele_refs = build_allele_refs(variations)
+    major_genomic_hgvs = allele_genomic_hgvs(major_allele, allele_refs, seq_id, location)
+    minor_genomic_hgvs = isempty(minor_allele) ? "" :
+        allele_genomic_hgvs(minor_allele, allele_refs, seq_id, location)
+
     write(snp_fh, join([
         string(location),
         seq_id,
@@ -1547,7 +1554,9 @@ function write_snp_feature(
         string(het_strain_count),
         string(called_strain_count),
         string(no_call_strain_count),
-        call_rate
+        call_rate,
+        major_genomic_hgvs,
+        minor_genomic_hgvs
     ], "\t"), "\n")
 end
 
@@ -1574,16 +1583,8 @@ function write_allele_file(
         end
     end
 
-    # per-allele reference span, for genomic HGVS. Only alt alleles get an entry;
-    # reference alleles (and multi-ref collisions) fall through to ".".
-    allele_refs = Dict{String, Set{String}}()
-    for v in variations
-        if !isempty(v.alt_allele)
-            push!(get!(allele_refs, v.alt_allele, Set{String}()), v.reference)
-        elseif v.base != v.reference
-            push!(get!(allele_refs, v.base, Set{String}()), v.reference)
-        end
-    end
+    # per-allele reference span, for genomic HGVS (shared basis with variationFeature)
+    allele_refs = build_allele_refs(variations)
 
     (allele_weights, total_weight) = compute_allele_weight_map(variations)
     ref_allele = variations[1].reference
@@ -1609,8 +1610,7 @@ function write_allele_file(
         n       = length(entries)
         ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
         matches_ref = allele == ref_allele ? 1 : 0
-        genomic_hgvs_str = (haskey(allele_refs, allele) && length(allele_refs[allele]) == 1) ?
-            genomic_hgvs(seq_id, location, first(allele_refs[allele]), allele) : "."
+        genomic_hgvs_str = allele_genomic_hgvs(allele, allele_refs, seq_id, location)
         write(allele_fh, join([
             string(location),
             seq_id,
@@ -1848,6 +1848,38 @@ function genomic_hgvs(seq_id::String, pos::Int, ref::String, alt::String)::Strin
         return length(r) == 1 ? "$(seq_id):g.$(start)delins$(a)" :
                                 "$(seq_id):g.$(start)_$(start+length(r)-1)delins$(a)"
     end
+end
+
+"""
+    build_allele_refs(variations) -> Dict{String, Set{String}}
+
+Maps each ALT allele string to the set of reference spans it was called against.
+Reference-matching calls are excluded, so a reference allele has no entry. A
+single allele string mapped to more than one ref is an ambiguous collision.
+Shared by write_snp_feature and write_allele_file so their genomic HGVS agree.
+"""
+function build_allele_refs(variations::Vector{Variation})::Dict{String, Set{String}}
+    allele_refs = Dict{String, Set{String}}()
+    for v in variations
+        if !isempty(v.alt_allele)
+            push!(get!(allele_refs, v.alt_allele, Set{String}()), v.reference)
+        elseif v.base != v.reference
+            push!(get!(allele_refs, v.base, Set{String}()), v.reference)
+        end
+    end
+    allele_refs
+end
+
+"""
+    allele_genomic_hgvs(allele, allele_refs, seq_id, location) -> String
+
+Genomic HGVS for one allele using its own reference span. Returns "." for a
+reference allele (no entry) or an ambiguous multi-ref collision.
+"""
+function allele_genomic_hgvs(allele::String, allele_refs::Dict{String,Set{String}},
+                             seq_id::String, location::Int)::String
+    (haskey(allele_refs, allele) && length(allele_refs[allele]) == 1) ?
+        genomic_hgvs(seq_id, location, first(allele_refs[allele]), allele) : "."
 end
 
 # ---------------------------------------------------------------------------
