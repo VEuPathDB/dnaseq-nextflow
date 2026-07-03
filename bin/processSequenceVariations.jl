@@ -1250,9 +1250,9 @@ function open_output_writers(output_vcf::String, reference_strain::String,
     snp_fh = open("snpFeature.dat", "w")
     write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\tvariant_type\tmajor_differs_from_reference\tis_singleton\thet_strain_count\tcalled_strain_count\tno_call_strain_count\tcall_rate\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
+    write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\tgenomic_hgvs\n")
     tp_fh = open("transcript_product.dat", "w")
-    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\n")
+    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\thgvs_p\n")
     hsss = open_hsss_writers(reference_strain, all_strains)
     OutputWriters(vcf_fh, snp_fh, allele_fh, tp_fh, hsss)
 end
@@ -1574,6 +1574,17 @@ function write_allele_file(
         end
     end
 
+    # per-allele reference span, for genomic HGVS. Only alt alleles get an entry;
+    # reference alleles (and multi-ref collisions) fall through to ".".
+    allele_refs = Dict{String, Set{String}}()
+    for v in variations
+        if !isempty(v.alt_allele)
+            push!(get!(allele_refs, v.alt_allele, Set{String}()), v.reference)
+        elseif v.base != v.reference
+            push!(get!(allele_refs, v.base, Set{String}()), v.reference)
+        end
+    end
+
     (allele_weights, total_weight) = compute_allele_weight_map(variations)
     ref_allele = variations[1].reference
 
@@ -1598,6 +1609,8 @@ function write_allele_file(
         n       = length(entries)
         ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
         matches_ref = allele == ref_allele ? 1 : 0
+        genomic_hgvs_str = (haskey(allele_refs, allele) && length(allele_refs[allele]) == 1) ?
+            genomic_hgvs(seq_id, location, first(allele_refs[allele]), allele) : "."
         write(allele_fh, join([
             string(location),
             seq_id,
@@ -1607,7 +1620,8 @@ function write_allele_file(
             @sprintf("%.2f", sum_coverage / n),
             @sprintf("%.2f", sum_percent  / n),
             ids_str,
-            string(matches_ref)
+            string(matches_ref),
+            genomic_hgvs_str
         ], "\t"), "\n")
     end
 
@@ -1650,6 +1664,7 @@ function write_transcript_product(
         count               = get(all_product_counts, product, 0)
         matches_ref_codon   = ec == annotation.ref_codon ? 1 : 0
         matches_ref_product = product == annotation.ref_product ? 1 : 0
+        hgvs_p = protein_hgvs(pos_in_protein, annotation.ref_product, product)
         write(fh, join([
             seq_id,
             string(location),
@@ -1662,7 +1677,8 @@ function write_transcript_product(
             product,
             string(matches_ref_codon),
             string(matches_ref_product),
-            dfs_str
+            dfs_str,
+            hgvs_p
         ], "\t"), "\n")
     end
 end
@@ -1743,6 +1759,28 @@ const AA_THREE_LETTER = Dict(
 )
 
 """
+    protein_hgvs(protpos, ref_aa, alt_aa) -> String
+
+Builds an HGVS.p string for a single-residue change at protein position
+`protpos`. Returns "." when it cannot form one (unknown amino acid, or stop-loss
+which needs extension notation — out of scope).
+"""
+function protein_hgvs(protpos::Int, ref_aa::String, alt_aa::String)::String
+    ref3 = get(AA_THREE_LETTER, ref_aa, "")
+    alt3 = get(AA_THREE_LETTER, alt_aa, "")
+    (isempty(ref3) || isempty(alt3)) && return "."
+    if ref_aa == alt_aa
+        return "p.$(ref3)$(protpos)="
+    elseif ref_aa == "*"
+        return "."
+    elseif protpos == 1 && ref_aa == "M"
+        return "p.Met1?"
+    else
+        return "p.$(ref3)$(protpos)$(alt3)"
+    end
+end
+
+"""
     substitution_hgvs(pos_in_cds, ref_codon, alt_codon, pic, ref_aa, alt_aa) -> (String, String)
 
 Builds (HGVS.c, HGVS.p) for a single-base coding substitution. Bases are read
@@ -1763,23 +1801,53 @@ function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String
         end
     end
 
-    hgvs_p = "."
-    ref3 = get(AA_THREE_LETTER, ref_aa, "")
-    alt3 = get(AA_THREE_LETTER, alt_aa, "")
-    if !isempty(ref3) && !isempty(alt3)
-        protpos = div(pos_in_cds - 1, 3) + 1
-        hgvs_p = if ref_aa == alt_aa
-            "p.$(ref3)$(protpos)="
-        elseif ref_aa == "*"
-            "."                       # stop-loss needs extension notation; out of Phase 1 scope
-        elseif protpos == 1 && ref_aa == "M"
-            "p.Met1?"
-        else
-            "p.$(ref3)$(protpos)$(alt3)"
-        end
-    end
+    protpos = div(pos_in_cds - 1, 3) + 1
+    hgvs_p  = protein_hgvs(protpos, ref_aa, alt_aa)
 
     (hgvs_c, hgvs_p)
+end
+
+"""
+    genomic_hgvs(seq_id, pos, ref, alt) -> String
+
+Builds a fully-qualified genomic HGVS string ("{seq_id}:g....") for one allele
+from its own (ref, alt) pair at genomic position `pos`. Reduces the pair by
+stripping the common prefix/suffix, then classifies: single-base substitution
+(">"), pure insertion ("ins"), pure deletion ("del"), or complex/MNV
+("delins"). Indels are left-aligned (not 3'-shifted). Returns "." for no change.
+"""
+function genomic_hgvs(seq_id::String, pos::Int, ref::String, alt::String)::String
+    ref = uppercase(ref)
+    alt = uppercase(alt)
+
+    # strip common prefix
+    p = 0
+    while p < min(length(ref), length(alt)) && ref[p+1] == alt[p+1]
+        p += 1
+    end
+    # strip common suffix (without overlapping the stripped prefix)
+    s = 0
+    while s < min(length(ref), length(alt)) - p && ref[end-s] == alt[end-s]
+        s += 1
+    end
+
+    r = ref[p+1 : length(ref)-s]
+    a = alt[p+1 : length(alt)-s]
+    start = pos + p
+
+    if isempty(r) && isempty(a)
+        return "."
+    elseif length(r) == 1 && length(a) == 1
+        return "$(seq_id):g.$(start)$(r)>$(a)"
+    elseif isempty(r)                      # insertion between start-1 and start
+        return "$(seq_id):g.$(start-1)_$(start)ins$(a)"
+    elseif isempty(a)                      # deletion
+        return length(r) == 1 ? "$(seq_id):g.$(start)del$(r)" :
+                                "$(seq_id):g.$(start)_$(start+length(r)-1)del$(r)"
+    else                                   # delins (complex / MNV)
+        return length(r) == 1 ? "$(seq_id):g.$(start)delins$(a)" :
+                                "$(seq_id):g.$(start)_$(start+length(r)-1)delins$(a)"
+    end
 end
 
 # ---------------------------------------------------------------------------

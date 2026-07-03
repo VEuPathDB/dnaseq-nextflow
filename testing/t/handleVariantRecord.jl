@@ -89,6 +89,15 @@ end
 # substitution_hgvs — Phase 1 HGVS for coding substitutions
 # ---------------------------------------------------------------------------
 
+@testset "protein_hgvs missense / synonymous / start-loss / stop-loss / unknown" begin
+    @test protein_hgvs(320, "D", "H") == "p.Asp320His"
+    @test protein_hgvs(134, "T", "T") == "p.Thr134="
+    @test protein_hgvs(1,   "M", "T") == "p.Met1?"
+    @test protein_hgvs(34,  "Q", "*") == "p.Gln34Ter"
+    @test protein_hgvs(327, "*", "Q") == "."
+    @test protein_hgvs(10,  "M", "X") == "."
+end
+
 @testset "substitution_hgvs missense: c. and p. from strand-oriented codons" begin
     (c, p) = substitution_hgvs(958, "GAC", "CAC", 1, "D", "H")
     @test c == "c.958G>C"
@@ -136,6 +145,42 @@ end
     (c, p) = substitution_hgvs(979, "TAA", "CAA", 1, "*", "Q")
     @test c == "c.979T>C"
     @test p == "."
+end
+
+# ---------------------------------------------------------------------------
+# genomic_hgvs — per-allele g. (sub / del / ins / delins), left-aligned
+# ---------------------------------------------------------------------------
+
+@testset "genomic_hgvs substitution" begin
+    @test genomic_hgvs("LmjF.01", 3745, "G", "C") == "LmjF.01:g.3745G>C"
+end
+@testset "genomic_hgvs substitution embedded in shared prefix" begin
+    @test genomic_hgvs("LmjF.01", 100, "CA", "CG") == "LmjF.01:g.101A>G"
+end
+@testset "genomic_hgvs pure deletion, single base" begin
+    @test genomic_hgvs("LmjF.01", 2531, "CA", "C") == "LmjF.01:g.2532delA"
+end
+@testset "genomic_hgvs pure deletion, multi base" begin
+    @test genomic_hgvs("LmjF.01", 3037, "CGA", "C") == "LmjF.01:g.3038_3039delGA"
+end
+@testset "genomic_hgvs pure insertion" begin
+    @test genomic_hgvs("LmjF.01", 1585, "C", "CGA") == "LmjF.01:g.1585_1586insGA"
+end
+@testset "genomic_hgvs delins from complex allele" begin
+    @test genomic_hgvs("LmjF.01", 100, "ATA", "ACCTG") == "LmjF.01:g.101_102delinsCCTG"
+end
+@testset "genomic_hgvs delins from equal-length MNV" begin
+    @test genomic_hgvs("LmjF.01", 100, "CA", "GT") == "LmjF.01:g.100_101delinsGT"
+end
+@testset "genomic_hgvs single-base delins" begin
+    # ref core "C" (len 1), alt core "GT" -> single-position delins
+    @test genomic_hgvs("LmjF.01", 100, "AC", "AGT") == "LmjF.01:g.101delinsGT"
+end
+@testset "genomic_hgvs uppercases soft-masked bases" begin
+    @test genomic_hgvs("LmjF.01", 3745, "g", "c") == "LmjF.01:g.3745G>C"
+end
+@testset "genomic_hgvs returns dot for no change" begin
+    @test genomic_hgvs("LmjF.01", 100, "A", "A") == "."
 end
 
 # ---------------------------------------------------------------------------
@@ -429,14 +474,58 @@ end
     @test split(lines[g_row], "\t")[9] == "0"
 end
 
-@testset "write_allele_file has 9 columns per row" begin
+@testset "write_allele_file has 10 columns per row" begin
     sample_id_map = Dict{String,Int}("s1" => 1)
     v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"
 
     buf = IOBuffer()
     write_allele_file(buf, [v1], "LmjF.01", 100, sample_id_map)
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
-    @test length(split(lines[1], "\t")) == 9
+    @test length(split(lines[1], "\t")) == 10
+end
+
+@testset "write_allele_file emits genomic_hgvs column for alt alleles" begin
+    v_ref = Variation(); v_ref.strain="ref"; v_ref.base="C"; v_ref.reference="C"; v_ref.ploidy=1; v_ref.coverage="10"; v_ref.percent="100"
+    v_s1  = Variation(); v_s1.strain="s1";  v_s1.base="T"; v_s1.reference="C"; v_s1.ploidy=1; v_s1.coverage="12"; v_s1.percent="100"
+    v_s2  = Variation(); v_s2.strain="s2";  v_s2.base="C"; v_s2.reference="C"; v_s2.ploidy=1; v_s2.coverage="9";  v_s2.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v_ref, v_s1, v_s2], "LmjF.01", 700, Dict("ref"=>5,"s1"=>1,"s2"=>2))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test length(rows["T"]) == 10
+    @test rows["T"][10] == "LmjF.01:g.700C>T"
+    @test rows["C"][10] == "."
+end
+
+@testset "write_allele_file genomic_hgvs for a deletion allele" begin
+    v_ref = Variation(); v_ref.strain="ref"; v_ref.base="CA"; v_ref.reference="CA"; v_ref.ploidy=1; v_ref.coverage="10"; v_ref.percent="100"
+    v_s1  = Variation(); v_s1.strain="s1";  v_s1.base="C";  v_s1.reference="CA"; v_s1.ploidy=1; v_s1.coverage="12"; v_s1.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v_ref, v_s1], "LmjF.01", 2531, Dict("ref"=>5,"s1"=>1))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test rows["C"][10] == "LmjF.01:g.2532delA"
+end
+
+@testset "write_allele_file genomic_hgvs is '.' on multi-ref collision" begin
+    # same allele string "C" arising from two different deletions (CA->C, CAT->C)
+    # at one locus: ref span is ambiguous, so g. must be "." rather than a wrong string.
+    v1 = Variation(); v1.strain="s1"; v1.base="C"; v1.reference="CA";  v1.ploidy=1; v1.coverage="10"; v1.percent="100"
+    v2 = Variation(); v2.strain="s2"; v2.base="C"; v2.reference="CAT"; v2.ploidy=1; v2.coverage="11"; v2.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v1, v2], "LmjF.01", 500, Dict("s1"=>1,"s2"=>2))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test rows["C"][10] == "."
 end
 
 @testset "collect_cann_entries_for_annotation returns entry keyed by alt allele" begin
@@ -508,7 +597,7 @@ end
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 12
+    @test length(fields) == 13
     @test fields[6] == "ATT"
 end
 
@@ -524,7 +613,7 @@ end
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 12
+    @test length(fields) == 13
     @test fields[6] == "ATT"
     @test fields[8] == "2"   # count = 2 strains with Ile product
 end
@@ -573,7 +662,7 @@ end
     @test fields[11] == "1"   # matches_ref_product: both encode F
 end
 
-@testset "write_transcript_product has 12 columns per row" begin
+@testset "write_transcript_product has 13 columns per row" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
@@ -581,7 +670,7 @@ end
     buf = IOBuffer()
     write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
-    @test length(split(lines[1], "\t")) == 12
+    @test length(split(lines[1], "\t")) == 13
 end
 
 @testset "write_transcript_product includes pos_in_cds and pos_in_protein" begin
@@ -627,6 +716,27 @@ end
         fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
         @test fields[5] == string(expected_pip)
     end
+end
+
+@testset "write_transcript_product emits hgvs_p per codon row" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=958,
+                          pos_in_codon_val=1, ref_codon="GAC", ref_product="D")
+    v1 = make_variation(strain="s1", codon="CAC", product=["H"], downstream_of_frameshift=0)
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1], ann, "LmjF.01", 3745, Dict{String,Int}())
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test length(fields) == 13
+    @test fields[13] == "p.Asp320His"
+end
+
+@testset "write_transcript_product hgvs_p is synonymous form for reference codon" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v1 = make_variation(strain="s1", codon="ATG", product=["M"], downstream_of_frameshift=0)
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test fields[13] == "p.Met4="
 end
 
 # ---------------------------------------------------------------------------
