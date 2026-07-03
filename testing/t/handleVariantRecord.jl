@@ -504,6 +504,21 @@ end
     @test rows["C"][10] == "LmjF.01:g.2532delA"
 end
 
+@testset "write_allele_file genomic_hgvs is '.' on multi-ref collision" begin
+    # same allele string "C" arising from two different deletions (CA->C, CAT->C)
+    # at one locus: ref span is ambiguous, so g. must be "." rather than a wrong string.
+    v1 = Variation(); v1.strain="s1"; v1.base="C"; v1.reference="CA";  v1.ploidy=1; v1.coverage="10"; v1.percent="100"
+    v2 = Variation(); v2.strain="s2"; v2.base="C"; v2.reference="CAT"; v2.ploidy=1; v2.coverage="11"; v2.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v1, v2], "LmjF.01", 500, Dict("s1"=>1,"s2"=>2))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test rows["C"][10] == "."
+end
+
 @testset "collect_cann_entries_for_annotation returns entry keyed by alt allele" begin
     ann    = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                               pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
