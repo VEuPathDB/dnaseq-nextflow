@@ -1796,7 +1796,7 @@ function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::Stri
     annotation.is_coding != 1 && return "."
     codon = isempty(annotation.ref_codon)   ? "." : annotation.ref_codon
     aa    = isempty(annotation.ref_product) ? "." : annotation.ref_product
-    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)"
+    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
 end
 
 """
@@ -1848,7 +1848,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     # SNP or complex variant: compute amino acid effect
@@ -1858,12 +1858,12 @@ function build_cann_string(
 
     # Codon/product suppressed because strain is downstream of a frameshift
     if codon == "." && isempty(unique_prods)
-        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     # Codon contains ambiguous base(s) — skip product and effect
     if occursin(r"[NnXx]", codon)
-        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     has_stop = any(p == "*" for p in unique_prods)
@@ -1876,7 +1876,10 @@ function build_cann_string(
     end
 
     if !is_indel
-        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)"
+        alt_aa = length(unique_prods) == 1 ? unique_prods[1] : ""
+        (hgvs_c, hgvs_p) = substitution_hgvs(pos_in_cds, annotation.ref_codon, codon, pic,
+                                             annotation.ref_product, alt_aa)
+        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)|$(hgvs_c)|$(hgvs_p)"
     else
         # Complex: indel with SNP at anchor position
         len_diff = alt_len - ref_len
@@ -1887,7 +1890,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 end
 

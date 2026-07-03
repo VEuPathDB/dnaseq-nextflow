@@ -455,6 +455,42 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# build_cann_string / build_ref_cann_entry — hgvs_c / hgvs_p fields
+# ---------------------------------------------------------------------------
+
+@testset "build_cann_string appends hgvs_c and hgvs_p for a coding substitution" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=958,
+                          pos_in_codon_val=1, ref_codon="GAC", ref_product="D")
+    v   = make_variation(strain="s1", codon="CAC", product=["H"])
+    entry = build_cann_string("G", "C", v, ann)     # SNP: ref len 1, alt len 1
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "c.958G>C"
+    @test parts[9] == "p.Asp320His"
+end
+
+@testset "build_cann_string emits dot hgvs for a pure indel" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v   = make_variation(strain="s1", codon=".", product=String[])
+    entry = build_cann_string("AT", "A", v, ann)    # deletion
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "."
+    @test parts[9] == "."
+end
+
+@testset "build_ref_cann_entry appends dot hgvs fields" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    entry = build_ref_cann_entry("r0", ann)
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "."
+    @test parts[9] == "."
+end
+
+# ---------------------------------------------------------------------------
 # write_transcript_product
 # ---------------------------------------------------------------------------
 
