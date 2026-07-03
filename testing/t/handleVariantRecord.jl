@@ -743,8 +743,8 @@ end
 # write_snp_feature — 14 genomic columns, called once per position
 # ---------------------------------------------------------------------------
 
-@testset "write_snp_feature emits 21 columns, no CDS fields" begin
-    # ref strain: A; s1: T; s2: A (matches ref)
+@testset "write_snp_feature emits 23 columns, no CDS fields" begin
+    # ref strain: A; s1: T; s2: A (matches ref) -> major=A (ref), minor=T (alt)
     v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
     v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "A"; v_s2.reference  = "A"; v_s2.ploidy = 1
@@ -755,12 +755,44 @@ end
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 21
+    @test length(fields) == 23
     @test fields[1]  == "500"       # location
     @test fields[2]  == "LmjF.01"  # seq_id
     @test fields[3]  == "ref"       # reference_strain
     @test fields[4]  == "A"         # ref_allele
+    @test fields[5]  == "A"         # major_allele (reference)
+    @test fields[6]  == "T"         # minor_allele (alt)
     @test fields[14] == "1"         # is_coding
+    @test fields[22] == "."                    # major_genomic_hgvs: major is reference -> no change
+    @test fields[23] == "LmjF.01:g.500A>T"     # minor_genomic_hgvs: the alt
+end
+
+@testset "write_snp_feature minor_genomic_hgvs for a deletion minor allele" begin
+    # ref CA at 2531; major=CA (ref, 2 strains), minor=C (deletion, 1 strain)
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "CA"; v_ref.reference = "CA"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "C";  v_s1.reference  = "CA"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CA"; v_s2.reference  = "CA"; v_s2.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 2531, "ref", ["s1", "s2"])
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test fields[5]  == "CA"                       # major (reference)
+    @test fields[6]  == "C"                        # minor (deletion)
+    @test fields[22] == "."                        # major is reference
+    @test fields[23] == "LmjF.01:g.2532delA"       # minor deletion g.
+end
+
+@testset "write_snp_feature minor_genomic_hgvs empty when locus is monoallelic" begin
+    # only the reference allele present -> no minor allele -> minor g. is empty
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "A"; v_s1.reference  = "A"; v_s1.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 300, "ref", ["s1"])
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test fields[6]  == ""     # minor_allele empty
+    @test fields[22] == "."    # major is reference
+    @test fields[23] == ""     # minor_genomic_hgvs empty (no minor allele)
 end
 
 @testset "write_snp_feature is_coding=0 for non-coding position" begin
