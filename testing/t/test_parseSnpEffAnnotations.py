@@ -238,12 +238,19 @@ def test_ann_row_carries_hgvs_c():
     assert rows == [("G", "T1:mRNA", "MODERATE", "missense_variant", "c.958G>C")]
 
 
-def test_ann_row_hgvs_c_dot_when_absent():
+def test_ann_row_hgvs_c_passes_through_snpeff_field_verbatim():
+    # Intergenic entries have no transcript_id, but SnpEff still fills the HGVS.c
+    # field (parts[9]) with n. notation; the parser passes it through unchanged.
     info = "ANN=G|intergenic_region|MODIFIER|A-B|A-B|intergenic_region|A-B|||n.233C>G||||||"
     rows = list(parse_ann_rows(info))
     assert rows and rows[0][1] == ""          # transcript_id empty for intergenic
-    # HGVS.c field here is "n.233C>G" (parts[9]); accept it verbatim OR "." per impl
-    assert rows[0][4] in (".", "n.233C>G")
+    assert rows[0][4] == "n.233C>G"
+
+def test_ann_row_hgvs_c_dot_when_field_empty():
+    # No HGVS.c field at all -> "."
+    info = "ANN=G|intergenic_region|MODIFIER|A-B|A-B|intergenic_region|A-B||||||||"
+    rows = list(parse_ann_rows(info))
+    assert rows and rows[0][4] == "."
 
 
 def test_cann_row_carries_hgvs_c():
