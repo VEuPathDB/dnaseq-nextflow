@@ -1248,7 +1248,7 @@ function open_output_writers(output_vcf::String, reference_strain::String,
                               all_strains::Vector{String})
     vcf_fh = open(output_vcf, "w")
     snp_fh = open("snpFeature.dat", "w")
-    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\n")
+    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\tvariant_type\tmajor_differs_from_reference\tis_singleton\thet_strain_count\tcalled_strain_count\tno_call_strain_count\tcall_rate\n")
     allele_fh = open("allele.dat", "w")
     write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
     tp_fh = open("transcript_product.dat", "w")
@@ -1462,7 +1462,8 @@ function write_snp_feature(
     is_coding::Int,
     seq_id::String,
     location::Int,
-    reference_strain::String
+    reference_strain::String,
+    sequenced_strains::Vector{String}
 )
     ref_allele = variations[1].reference
     isempty(ref_allele) && (ref_allele = variations[1].base)
@@ -1498,6 +1499,33 @@ function write_snp_feature(
     minor_allele_frequency    = length(sorted_alleles) > 1 ?
         @sprintf("%.4f", allele_weights[minor_allele] / total_ploidy_count) : ""
 
+    # --- precompute columns -------------------------------------------------
+    # variant_type: classify the alt alleles present at this locus by length
+    # relative to the reference. A same-length alt is a substitution (SNV);
+    # a different-length alt is an indel. Both present => MIXED.
+    has_snp   = false
+    has_indel = false
+    for v in variations
+        if !isempty(v.alt_allele)                       # het call: alt vs ref
+            length(v.reference) == length(v.alt_allele) ? (has_snp = true) : (has_indel = true)
+        elseif v.base != v.reference                    # hom alt call: base vs ref
+            length(v.reference) == length(v.base) ? (has_snp = true) : (has_indel = true)
+        end
+    end
+    variant_type = has_snp && has_indel ? "MIXED" : (has_indel ? "INDEL" : "SNV")
+
+    major_differs_from_reference = major_allele != ref_allele ? "1" : "0"
+    is_singleton = (minor_allele_strain_count isa Integer && minor_allele_strain_count == 1) ? "1" : "0"
+    het_strain_count = count(v -> !isempty(v.alt_allele), variations)
+
+    # call rate is over sequenced samples only; the reference is a synthetic
+    # always-present strain and is excluded from both numerator and denominator.
+    called_strain_count  = count(s -> s != reference_strain, strain_set)
+    total_sequenced      = length(sequenced_strains)
+    no_call_strain_count = max(0, total_sequenced - called_strain_count)
+    call_rate = total_sequenced > 0 ?
+        @sprintf("%.4f", called_strain_count / total_sequenced) : ""
+
     write(snp_fh, join([
         string(location),
         seq_id,
@@ -1512,7 +1540,14 @@ function write_snp_feature(
         string(distinct_strain_count),
         string(distinct_allele_count),
         string(total_ploidy_count),
-        string(is_coding)
+        string(is_coding),
+        variant_type,
+        major_differs_from_reference,
+        is_singleton,
+        string(het_strain_count),
+        string(called_strain_count),
+        string(no_call_strain_count),
+        call_rate
     ], "\t"), "\n")
 end
 
@@ -2060,7 +2095,7 @@ function handle_variant_record!(
 
     is_coding = any(a.is_coding == 1 for a in annotations) ? 1 : 0
     write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
-                      ctx.reference_strain)
+                      ctx.reference_strain, ctx.all_strains)
 
     # HSSS binary files are SNP-only; skip positions where no record has a SNP-length allele.
     if any(has_snp_allele, records)

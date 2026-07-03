@@ -544,19 +544,19 @@ end
 # write_snp_feature — 14 genomic columns, called once per position
 # ---------------------------------------------------------------------------
 
-@testset "write_snp_feature emits 14 columns, no CDS fields" begin
+@testset "write_snp_feature emits 21 columns, no CDS fields" begin
     # ref strain: A; s1: T; s2: A (matches ref)
     v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
     v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "A"; v_s2.reference  = "A"; v_s2.ploidy = 1
 
     buf = IOBuffer()
-    write_snp_feature(buf, [v_ref, v_s1, v_s2], 1, "LmjF.01", 500, "ref")
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 1, "LmjF.01", 500, "ref", ["s1", "s2"])
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 14
+    @test length(fields) == 21
     @test fields[1]  == "500"       # location
     @test fields[2]  == "LmjF.01"  # seq_id
     @test fields[3]  == "ref"       # reference_strain
@@ -569,9 +569,80 @@ end
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
 
     buf = IOBuffer()
-    write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 200, "ref")
+    write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 200, "ref", ["s1"])
     fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
     @test fields[14] == "0"
+end
+
+# ---------------------------------------------------------------------------
+# write_snp_feature — precompute columns (15-21):
+#   variant_type, major_differs_from_reference, is_singleton,
+#   het_strain_count, called_strain_count, no_call_strain_count, call_rate
+# ---------------------------------------------------------------------------
+
+@testset "write_snp_feature precompute columns for a SNV where major != reference" begin
+    # ref=C; s1,s2,s3 hom alt T; s4 hom ref C. All 4 sequenced samples called.
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "C"; v_ref.reference = "C"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "C"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "T"; v_s2.reference  = "C"; v_s2.ploidy = 1
+    v_s3  = Variation(); v_s3.strain  = "s3";  v_s3.base  = "T"; v_s3.reference  = "C"; v_s3.ploidy = 1
+    v_s4  = Variation(); v_s4.strain  = "s4";  v_s4.base  = "C"; v_s4.reference  = "C"; v_s4.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2, v_s3, v_s4], 0, "LmjF.01", 700, "ref",
+                      ["s1", "s2", "s3", "s4"])
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+
+    @test fields[15] == "SNV"       # variant_type
+    @test fields[16] == "1"         # major_differs_from_reference (major T != ref C)
+    @test fields[17] == "0"         # is_singleton (minor allele C seen in 2 strains)
+    @test fields[18] == "0"         # het_strain_count
+    @test fields[19] == "4"         # called_strain_count (s1..s4)
+    @test fields[20] == "0"         # no_call_strain_count
+    @test fields[21] == "1.0000"    # call_rate
+end
+
+@testset "write_snp_feature call_rate excludes reference and reflects no-calls" begin
+    # 4 sequenced samples; only s1 (ref-match) and s2 (het) have calls. s3,s4 are no-calls.
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "A"; v_s1.reference  = "A"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "R"; v_s2.reference = "A"; v_s2.alt_allele = "G"; v_s2.ploidy = 2
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 900, "ref",
+                      ["s1", "s2", "s3", "s4"])
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+
+    @test fields[15] == "SNV"       # variant_type (alt G is a substitution)
+    @test fields[17] == "1"         # is_singleton (minor allele G in 1 strain)
+    @test fields[18] == "1"         # het_strain_count (s2)
+    @test fields[19] == "2"         # called_strain_count (s1, s2; ref excluded)
+    @test fields[20] == "2"         # no_call_strain_count (s3, s4)
+    @test fields[21] == "0.5000"    # call_rate (2/4)
+end
+
+@testset "write_snp_feature variant_type INDEL when only indel alleles present" begin
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "CA"; v_ref.reference = "CA"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "C";  v_s1.reference  = "CA"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CA"; v_s2.reference  = "CA"; v_s2.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 1000, "ref", ["s1", "s2"])
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+
+    @test fields[15] == "INDEL"
+end
+
+@testset "write_snp_feature variant_type MIXED when both snp and indel alleles present" begin
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "C";   v_ref.reference = "C"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "G";   v_s1.reference  = "C"; v_s1.ploidy = 1  # SNP
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CGA"; v_s2.reference  = "C"; v_s2.ploidy = 1  # insertion
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 1100, "ref", ["s1", "s2"])
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+
+    @test fields[15] == "MIXED"
 end
 
 # ---------------------------------------------------------------------------
