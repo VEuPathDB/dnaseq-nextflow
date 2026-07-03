@@ -163,6 +163,10 @@ end
 @testset "genomic_hgvs delins from equal-length MNV" begin
     @test genomic_hgvs("LmjF.01", 100, "CA", "GT") == "LmjF.01:g.100_101delinsGT"
 end
+@testset "genomic_hgvs single-base delins" begin
+    # ref core "C" (len 1), alt core "GT" -> single-position delins
+    @test genomic_hgvs("LmjF.01", 100, "AC", "AGT") == "LmjF.01:g.101delinsGT"
+end
 @testset "genomic_hgvs uppercases soft-masked bases" begin
     @test genomic_hgvs("LmjF.01", 3745, "g", "c") == "LmjF.01:g.3745G>C"
 end
