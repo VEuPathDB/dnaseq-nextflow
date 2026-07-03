@@ -125,6 +125,19 @@ end
     @test p == "."
 end
 
+@testset "substitution_hgvs uppercases soft-masked bases" begin
+    (c, p) = substitution_hgvs(958, "gac", "cac", 1, "D", "H")
+    @test c == "c.958G>C"
+    @test p == "p.Asp320His"
+end
+
+@testset "substitution_hgvs stop-loss emits dot p. (out of Phase 1 scope)" begin
+    # ref stop(*) -> alt Gln(Q); protpos = div(979-1,3)+1 = 327
+    (c, p) = substitution_hgvs(979, "TAA", "CAA", 1, "*", "Q")
+    @test c == "c.979T>C"
+    @test p == "."
+end
+
 # ---------------------------------------------------------------------------
 # fill_missing_coverage_gt
 # ---------------------------------------------------------------------------

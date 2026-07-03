@@ -1756,8 +1756,8 @@ function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String
     if length(ref_codon) == 3 && length(alt_codon) == 3 &&
        !occursin(r"[^ACGTacgt]", ref_codon) && !occursin(r"[^ACGTacgt]", alt_codon) &&
        1 <= pic <= 3
-        rb = ref_codon[pic]
-        ab = alt_codon[pic]
+        rb = uppercase(ref_codon[pic])
+        ab = uppercase(alt_codon[pic])
         if rb != ab
             hgvs_c = "c.$(pos_in_cds)$(rb)>$(ab)"
         end
@@ -1770,10 +1770,10 @@ function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String
         protpos = div(pos_in_cds - 1, 3) + 1
         hgvs_p = if ref_aa == alt_aa
             "p.$(ref3)$(protpos)="
+        elseif ref_aa == "*"
+            "."                       # stop-loss needs extension notation; out of Phase 1 scope
         elseif protpos == 1 && ref_aa == "M"
             "p.Met1?"
-        elseif alt_aa == "*"
-            "p.$(ref3)$(protpos)Ter"
         else
             "p.$(ref3)$(protpos)$(alt3)"
         end

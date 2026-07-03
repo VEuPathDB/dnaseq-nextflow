@@ -8,7 +8,7 @@
 
 **Tech Stack:** Julia 1.10 (`bin/processSequenceVariations.jl`), Julia `Test` (`testing/t/handleVariantRecord.jl`), run in the `jbrestel/dnaseq:latest` container. Python parser docstring/header touch-ups only (`bin/parseSnpEffAnnotations.py`).
 
-**Scope boundary (explicit):** Substitutions only. Indels (`inframe_insertion`/`inframe_deletion`/`frameshift`), complex variants (indel+SNP at anchor), downstream-of-frameshift entries, and ambiguous codons emit `hgvs_c=. hgvs_p=.`. Indel HGVS is out of scope because (a) the pipeline does not compute an indel protein product today, and (b) indel calls are deliberately not 3'-normalized. See `docs/.../` discussion; that is Phase 2+.
+**Scope boundary (explicit):** Substitutions only. Indels (`inframe_insertion`/`inframe_deletion`/`frameshift`), complex variants (indel+SNP at anchor), downstream-of-frameshift entries, and ambiguous codons emit `hgvs_c=. hgvs_p=.`. Indel HGVS is out of scope because (a) the pipeline does not compute an indel protein product today, and (b) indel calls are deliberately not 3'-normalized. See `docs/.../` discussion; that is Phase 2+. Stop-loss substitutions (ref amino acid `*` → any residue) also emit `hgvs_p=.` because correct HGVS requires protein-extension notation (`p.Ter327GlnextTer?`); that is deferred to Phase 2+.
 
 **Why the codon is the source of the c. bases:** `ref_codon` and the alt `codon` (`v.codon`) are already built in transcript orientation (strand-correct). The base this variant changed sits at `pos_in_codon` (`pic`). Reading `ref_codon[pic]` and `codon[pic]` therefore yields the strand-correct ref>alt bases with no separate reverse-complement step. `pos_in_cds` is likewise a strand-correct CDS coordinate.
 
@@ -119,8 +119,8 @@ function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String
     if length(ref_codon) == 3 && length(alt_codon) == 3 &&
        !occursin(r"[^ACGTacgt]", ref_codon) && !occursin(r"[^ACGTacgt]", alt_codon) &&
        1 <= pic <= 3
-        rb = ref_codon[pic]
-        ab = alt_codon[pic]
+        rb = uppercase(ref_codon[pic])
+        ab = uppercase(alt_codon[pic])
         if rb != ab
             hgvs_c = "c.$(pos_in_cds)$(rb)>$(ab)"
         end
@@ -133,10 +133,10 @@ function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String
         protpos = div(pos_in_cds - 1, 3) + 1
         hgvs_p = if ref_aa == alt_aa
             "p.$(ref3)$(protpos)="
+        elseif ref_aa == "*"
+            "."                       # stop-loss needs extension notation; out of Phase 1 scope
         elseif protpos == 1 && ref_aa == "M"
             "p.Met1?"
-        elseif alt_aa == "*"
-            "p.$(ref3)$(protpos)Ter"
         else
             "p.$(ref3)$(protpos)$(alt3)"
         end
