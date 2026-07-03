@@ -1782,6 +1782,49 @@ function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String
     (hgvs_c, hgvs_p)
 end
 
+"""
+    genomic_hgvs(seq_id, pos, ref, alt) -> String
+
+Builds a fully-qualified genomic HGVS string ("{seq_id}:g....") for one allele
+from its own (ref, alt) pair at genomic position `pos`. Reduces the pair by
+stripping the common prefix/suffix, then classifies: single-base substitution
+(">"), pure insertion ("ins"), pure deletion ("del"), or complex/MNV
+("delins"). Indels are left-aligned (not 3'-shifted). Returns "." for no change.
+"""
+function genomic_hgvs(seq_id::String, pos::Int, ref::String, alt::String)::String
+    ref = uppercase(ref)
+    alt = uppercase(alt)
+
+    # strip common prefix
+    p = 0
+    while p < min(length(ref), length(alt)) && ref[p+1] == alt[p+1]
+        p += 1
+    end
+    # strip common suffix (without overlapping the stripped prefix)
+    s = 0
+    while s < min(length(ref), length(alt)) - p && ref[end-s] == alt[end-s]
+        s += 1
+    end
+
+    r = ref[p+1 : length(ref)-s]
+    a = alt[p+1 : length(alt)-s]
+    start = pos + p
+
+    if isempty(r) && isempty(a)
+        return "."
+    elseif length(r) == 1 && length(a) == 1
+        return "$(seq_id):g.$(start)$(r)>$(a)"
+    elseif isempty(r)                      # insertion between start-1 and start
+        return "$(seq_id):g.$(start-1)_$(start)ins$(a)"
+    elseif isempty(a)                      # deletion
+        return length(r) == 1 ? "$(seq_id):g.$(start)del$(r)" :
+                                "$(seq_id):g.$(start)_$(start+length(r)-1)del$(r)"
+    else                                   # delins (complex / MNV)
+        return length(r) == 1 ? "$(seq_id):g.$(start)delins$(a)" :
+                                "$(seq_id):g.$(start)_$(start+length(r)-1)delins$(a)"
+    end
+end
+
 # ---------------------------------------------------------------------------
 # CANN annotation
 # ---------------------------------------------------------------------------

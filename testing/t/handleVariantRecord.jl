@@ -139,6 +139,38 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# genomic_hgvs — per-allele g. (sub / del / ins / delins), left-aligned
+# ---------------------------------------------------------------------------
+
+@testset "genomic_hgvs substitution" begin
+    @test genomic_hgvs("LmjF.01", 3745, "G", "C") == "LmjF.01:g.3745G>C"
+end
+@testset "genomic_hgvs substitution embedded in shared prefix" begin
+    @test genomic_hgvs("LmjF.01", 100, "CA", "CG") == "LmjF.01:g.101A>G"
+end
+@testset "genomic_hgvs pure deletion, single base" begin
+    @test genomic_hgvs("LmjF.01", 2531, "CA", "C") == "LmjF.01:g.2532delA"
+end
+@testset "genomic_hgvs pure deletion, multi base" begin
+    @test genomic_hgvs("LmjF.01", 3037, "CGA", "C") == "LmjF.01:g.3038_3039delGA"
+end
+@testset "genomic_hgvs pure insertion" begin
+    @test genomic_hgvs("LmjF.01", 1585, "C", "CGA") == "LmjF.01:g.1585_1586insGA"
+end
+@testset "genomic_hgvs delins from complex allele" begin
+    @test genomic_hgvs("LmjF.01", 100, "ATA", "ACCTG") == "LmjF.01:g.101_102delinsCCTG"
+end
+@testset "genomic_hgvs delins from equal-length MNV" begin
+    @test genomic_hgvs("LmjF.01", 100, "CA", "GT") == "LmjF.01:g.100_101delinsGT"
+end
+@testset "genomic_hgvs uppercases soft-masked bases" begin
+    @test genomic_hgvs("LmjF.01", 3745, "g", "c") == "LmjF.01:g.3745G>C"
+end
+@testset "genomic_hgvs returns dot for no change" begin
+    @test genomic_hgvs("LmjF.01", 100, "A", "A") == "."
+end
+
+# ---------------------------------------------------------------------------
 # fill_missing_coverage_gt
 # ---------------------------------------------------------------------------
 
