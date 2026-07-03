@@ -1757,6 +1757,28 @@ const AA_THREE_LETTER = Dict(
 )
 
 """
+    protein_hgvs(protpos, ref_aa, alt_aa) -> String
+
+Builds an HGVS.p string for a single-residue change at protein position
+`protpos`. Returns "." when it cannot form one (unknown amino acid, or stop-loss
+which needs extension notation — out of scope).
+"""
+function protein_hgvs(protpos::Int, ref_aa::String, alt_aa::String)::String
+    ref3 = get(AA_THREE_LETTER, ref_aa, "")
+    alt3 = get(AA_THREE_LETTER, alt_aa, "")
+    (isempty(ref3) || isempty(alt3)) && return "."
+    if ref_aa == alt_aa
+        return "p.$(ref3)$(protpos)="
+    elseif ref_aa == "*"
+        return "."
+    elseif protpos == 1 && ref_aa == "M"
+        return "p.Met1?"
+    else
+        return "p.$(ref3)$(protpos)$(alt3)"
+    end
+end
+
+"""
     substitution_hgvs(pos_in_cds, ref_codon, alt_codon, pic, ref_aa, alt_aa) -> (String, String)
 
 Builds (HGVS.c, HGVS.p) for a single-base coding substitution. Bases are read
@@ -1777,21 +1799,8 @@ function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String
         end
     end
 
-    hgvs_p = "."
-    ref3 = get(AA_THREE_LETTER, ref_aa, "")
-    alt3 = get(AA_THREE_LETTER, alt_aa, "")
-    if !isempty(ref3) && !isempty(alt3)
-        protpos = div(pos_in_cds - 1, 3) + 1
-        hgvs_p = if ref_aa == alt_aa
-            "p.$(ref3)$(protpos)="
-        elseif ref_aa == "*"
-            "."                       # stop-loss needs extension notation; out of Phase 1 scope
-        elseif protpos == 1 && ref_aa == "M"
-            "p.Met1?"
-        else
-            "p.$(ref3)$(protpos)$(alt3)"
-        end
-    end
+    protpos = div(pos_in_cds - 1, 3) + 1
+    hgvs_p  = protein_hgvs(protpos, ref_aa, alt_aa)
 
     (hgvs_c, hgvs_p)
 end

@@ -89,6 +89,15 @@ end
 # substitution_hgvs — Phase 1 HGVS for coding substitutions
 # ---------------------------------------------------------------------------
 
+@testset "protein_hgvs missense / synonymous / start-loss / stop-loss / unknown" begin
+    @test protein_hgvs(320, "D", "H") == "p.Asp320His"
+    @test protein_hgvs(134, "T", "T") == "p.Thr134="
+    @test protein_hgvs(1,   "M", "T") == "p.Met1?"
+    @test protein_hgvs(34,  "Q", "*") == "p.Gln34Ter"
+    @test protein_hgvs(327, "*", "Q") == "."
+    @test protein_hgvs(10,  "M", "X") == "."
+end
+
 @testset "substitution_hgvs missense: c. and p. from strand-oriented codons" begin
     (c, p) = substitution_hgvs(958, "GAC", "CAC", 1, "D", "H")
     @test c == "c.958G>C"
