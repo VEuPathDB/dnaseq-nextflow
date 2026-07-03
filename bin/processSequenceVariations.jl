@@ -482,6 +482,10 @@ end
 # HSSS write_hsss_position! — defined here because it references Variation
 # ---------------------------------------------------------------------------
 
+# Same length-comparison criterion as has_snp_allele, applied to an already-built Variation
+# rather than a raw VCF record.
+is_snp_variation(v::Variation) = length(v.reference) == length(v.base)
+
 function write_hsss_position!(
     state::HsssState,
     variations::Vector{Variation},
@@ -552,9 +556,18 @@ function write_hsss_position!(
                 continue
             end
 
+            # HSSS is SNP-only: drop indel-length alleles rather than writing a bogus
+            # allele code of 0 for them (see has_snp_allele/is_snp_variation).
+            snp_svars = filter(is_snp_variation, svars)
+            if isempty(snp_svars)
+                # Strain's only allele(s) at this position are indels: treat as unknown
+                write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
+                continue
+            end
+
             # Het strains write one record per allele (including ref-matching); matches Perl hsssCreateStrainFiles behavior
-            is_het = length(svars) > 1
-            for sv in svars
+            is_het = length(snp_svars) > 1
+            for sv in snp_svars
                 # Skip non-het, reference-matching variations
                 !is_het && sv.matches_reference == 1 && continue
                 allele_c = get(HSSS_ALLELE_CODE, isempty(sv.base) ? ' ' : sv.base[1], Int8(0))
@@ -717,6 +730,12 @@ end
 
 # Returns true if all ALTs have the same length as REF (SNP or MNP, not indel)
 is_snp_record(record::VCFRecord) = all(length(a) == length(record.ref) for a in record.alts)
+
+# Returns true if any ALT has the same length as REF. mergeVariantsByLocation.py's
+# _recombine can merge decomposed rows back into one multi-ALT record that mixes a
+# SNP allele with an indel allele (e.g. REF=A ALT=G,AT) — such a record is not a
+# "SNP record" under is_snp_record, but still carries a real SNP allele.
+has_snp_allele(record::VCFRecord) = any(length(a) == length(record.ref) for a in record.alts)
 
 """
     parse_format_field(format_keys, sample_str) -> Dict{String,String}
@@ -2043,11 +2062,14 @@ function handle_variant_record!(
     write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
                       ctx.reference_strain)
 
-    unique_prods   = unique(all_annotation_products)
-    hsss_prod_code = length(unique_prods) == 1 ?
-        Int8(codepoint(first(only(unique_prods)))) : Int8(0)
-    write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
-                         seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
+    # HSSS binary files are SNP-only; skip positions where no record has a SNP-length allele.
+    if any(has_snp_allele, records)
+        unique_prods   = unique(all_annotation_products)
+        hsss_prod_code = length(unique_prods) == 1 ?
+            Int8(codepoint(first(only(unique_prods)))) : Int8(0)
+        write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
+                             seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
+    end
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
     modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage, ctx.ploidy)
