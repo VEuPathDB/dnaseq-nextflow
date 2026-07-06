@@ -1,7 +1,7 @@
 # variationFeature.dat per-class (SNP/indel) schema + allele identity fix
 
 **Date:** 2026-07-06
-**Status:** Design — approved shape, pending spec review
+**Status:** Implemented on branch `variationfeature-per-class` — unit tests green (`handleVariantRecord.jl`). e2e (`test_mergeExperiments_e2e.py`) assertions updated to the new schema but NOT run: requires a fresh `mergeExperiments` pipeline run (the existing run predates this schema change). Both the deferred `matches_reference` overlapping-ref bug and Finding 2 (SNP+deletion allele collapse) are fixed by the `(ref,base)` allele identity.
 **Branch target:** feature branch off `reduce-merge-outputs-snpeff-source`
 
 ## Context
