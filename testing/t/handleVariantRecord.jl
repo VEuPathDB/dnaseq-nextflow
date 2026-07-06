@@ -1256,3 +1256,57 @@ end
     # POS/CHROM are shared across both class-records
     @test all(r -> r[1] == "chr1" && r[2] == "100", rows)
 end
+
+# ---------------------------------------------------------------------------
+# handle_variant_record! — allele.dat must not double-count a strain that is
+# ./. on the SNP record precisely because it carries a REAL call on the sibling
+# insertion record. Such a strain must NOT get a fabricated reference variation.
+# Use an INSERTION (A>AT); a co-located SNP+deletion has a separate base-collapse
+# bug that is out of scope here.
+# ---------------------------------------------------------------------------
+
+@testset "handle_variant_record! does not synthesize reference for indel-carrying strain" begin
+    all_strains = ["S1", "S2"]
+    ctx = make_intergenic_ctx(all_strains)
+
+    vcf_buf    = IOBuffer()
+    allele_buf = IOBuffer()
+    hsss       = open_hsss_writers("ref", all_strains, mktempdir())
+    # OutputWriters fields: vcf_fh, snp_fh, allele_fh, transcript_product_fh, hsss
+    writers = OutputWriters(vcf_buf, IOBuffer(), allele_buf, IOBuffer(), hsss)
+    transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
+
+    # SNP record:       S1 = A>G (1/1),  S2 = no-call.
+    # Insertion record: S1 = no-call,    S2 = A>AT (1/1).
+    # S2 is ./. on the SNP record ONLY because it carries the insertion.
+    snp = VCFRecord("chr1", 100, "A", ["G"],  ".", ["GT","DP"], ["1/1:30", "./.:0"])
+    ins = VCFRecord("chr1", 100, "A", ["AT"], ".", ["GT","DP"], ["./.:0", "1/1:30"])
+
+    chrom_cov = Dict{String, Vector{Tuple{Int,Int,Float64}}}(
+        "S1" => [(1, 1000, 30.0)],
+        "S2" => [(1, 1000, 30.0)],
+    )
+
+    handle_variant_record!([snp, ins], Tuple{String,Int}[], ctx, writers,
+                           transcript_cache, all_strains, chrom_cov)
+    close_hsss_writers(hsss)
+
+    # allele.dat columns: location, seq_id, allele, distinct_strain_count,
+    #                     frequency, avg_coverage, avg_percent, strain_ids,
+    #                     matches_reference, genomic_hgvs
+    arows = [split(l, '\t') for l in filter(!isempty, split(String(take!(allele_buf)), "\n"))]
+    by_allele = Dict(r[3] => r for r in arows)
+
+    # Reference allele A must be credited with the reference strain ONLY (count 1),
+    # NOT with S2 (which carries the insertion). Alt alleles G and AT each carry 1.
+    @test haskey(by_allele, "A")
+    @test parse(Int, by_allele["A"][4]) == 1
+    @test haskey(by_allele, "G")
+    @test parse(Int, by_allele["G"][4]) == 1
+    @test haskey(by_allele, "AT")
+    @test parse(Int, by_allele["AT"][4]) == 1
+
+    # Invariant: no strain counted under more than one allele.
+    # Total distinct_strain_count across all alleles == 3 (S1→G, S2→AT, ref→A), NOT 4.
+    @test sum(parse(Int, r[4]) for r in arows) == 3
+end

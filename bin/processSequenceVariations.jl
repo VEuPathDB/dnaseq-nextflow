@@ -1107,7 +1107,8 @@ function build_variations_from_record(
     undone_strains::Set{String},
     chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}},
     ploidy::Int=1;
-    synthesize_ref::Bool=true
+    synthesize_ref::Bool=true,
+    no_synth_strains::Set{String}=Set{String}()
 )::Vector{Variation}
     variations = Variation[]
 
@@ -1120,6 +1121,7 @@ function build_variations_from_record(
         gt = get(fmt, "GT", "")
         if isempty(gt) || gt == "." || gt == "./." || gt == ".|."
             synthesize_ref || continue
+            strain in no_synth_strains && continue
             # No call: synthesize a reference Variation if position is covered
             (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
             if covered
@@ -2175,11 +2177,25 @@ function handle_variant_record!(
     # carrying a variant on one class-record is not also given a fabricated
     # reference variation from the sibling record.
     ref_record = pick_snp_record(records)
+
+    # A strain that carries a REAL call on ANY record at this locus must never
+    # get a fabricated reference variation (even from the SNP-preferred record),
+    # or it would be double-counted under the reference allele in allele.dat.
+    real_call_strains = Set{String}()
+    for r in records
+        for (i, strain) in enumerate(all_strains)
+            i > length(r.sample_data) && continue
+            gt = get(parse_format_field(r.format_keys, r.sample_data[i]), "GT", "")
+            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+            push!(real_call_strains, strain)
+        end
+    end
+
     per_record = Tuple{VCFRecord, Vector{Variation}}[]
     for r in records
         rv = build_variations_from_record(
             r, all_strains, ctx.undone_strains, chrom_coverage, ctx.ploidy;
-            synthesize_ref = (r === ref_record))
+            synthesize_ref = (r === ref_record), no_synth_strains = real_call_strains)
         push!(per_record, (r, rv))
     end
     variations = reduce(vcat, (rv for (_, rv) in per_record); init=Variation[])
