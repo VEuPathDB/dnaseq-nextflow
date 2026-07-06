@@ -160,3 +160,20 @@ snpeff expectations; run the Nextflow test profile.
 - Any change to per-experiment `processSingleExperiment` VCF processing.
 - SnpEff's own indel normalization vs. Julia's (already handled via the
   `_unnormalized` effect terms).
+
+## Known issue (deferred — found in final review)
+
+**SNP+deletion allele collapse:** At a locus with a co-located SNP record and a
+deletion record (now produced by `-m both`), the reference variation adopts the
+SNP record's single-base REF and a deletion `ATG>A` collapses to base `A`; the
+allele-aggregation keys by base string, so the deletion merges into the reference
+allele in `allele.dat` and is mislabeled `matches_reference=1` (with a `delTG`
+genomic_hgvs). Pure-deletion loci are unaffected. This needs a model-level change
+(allele keys must distinguish reference span) and is closely related to the
+deferred `matches_reference` overlapping-ref bug — fix them together. Verified in
+final review by running the annotator in `veupathdb/dnaseqanalysis:1.1.0`.
+
+Finding 1 from the same review (an indel-carrying strain double-counted under the
+reference allele via directional `synthesize_ref` gating) WAS fixed on this branch:
+reference synthesis is now skipped for any strain with a real GT on any record at
+the locus.
