@@ -743,56 +743,55 @@ end
 # write_snp_feature — 14 genomic columns, called once per position
 # ---------------------------------------------------------------------------
 
-@testset "write_snp_feature emits 23 columns, no CDS fields" begin
-    # ref strain: A; s1: T; s2: A (matches ref) -> major=A (ref), minor=T (alt)
+@testset "write_snp_feature emits 31 columns, no CDS fields" begin
+    # ref strain: A; s1: T; s2: A (matches ref) -> SNP alts = {T} -> snp_major = T
     v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
     v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "A"; v_s2.reference  = "A"; v_s2.ploidy = 1
 
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1, v_s2], 1, "LmjF.01", 500, "ref", ["s1", "s2"])
-    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+    lines = filter(!isempty, split(chomp(String(take!(buf))), "\n"))
 
     @test length(lines) == 1
-    fields = split(lines[1], "\t")
-    @test length(fields) == 23
+    fields = split(lines[1], '\t')
+    @test length(fields) == 31
     @test fields[1]  == "500"       # location
-    @test fields[2]  == "LmjF.01"  # seq_id
+    @test fields[2]  == "LmjF.01"   # seq_id
     @test fields[3]  == "ref"       # reference_strain
-    @test fields[4]  == "A"         # ref_allele
-    @test fields[5]  == "A"         # major_allele (reference)
-    @test fields[6]  == "T"         # minor_allele (alt)
-    @test fields[14] == "1"         # is_coding
-    @test fields[22] == "."                    # major_genomic_hgvs: major is reference -> no change
-    @test fields[23] == "LmjF.01:g.500A>T"     # minor_genomic_hgvs: the alt
+    @test fields[4]  == "1"         # is_coding
+    @test fields[13] == "A"                    # snp_ref_allele
+    @test fields[14] == "T"                    # snp_major_allele
+    @test fields[20] == "LmjF.01:g.500A>T"     # snp_major_genomic_hgvs
 end
 
-@testset "write_snp_feature minor_genomic_hgvs for a deletion minor allele" begin
-    # ref CA at 2531; major=CA (ref, 2 strains), minor=C (deletion, 1 strain)
+@testset "write_snp_feature indel major_genomic_hgvs for a deletion" begin
+    # ref CA at 2531; indel alts = {C} (deletion, 1 strain)
     v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "CA"; v_ref.reference = "CA"; v_ref.ploidy = 1
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "C";  v_s1.reference  = "CA"; v_s1.ploidy = 1
     v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CA"; v_s2.reference  = "CA"; v_s2.ploidy = 1
 
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 2531, "ref", ["s1", "s2"])
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
-    @test fields[5]  == "CA"                       # major (reference)
-    @test fields[6]  == "C"                        # minor (deletion)
-    @test fields[22] == "."                        # major is reference
-    @test fields[23] == "LmjF.01:g.2532delA"       # minor deletion g.
+    fields = split(chomp(String(take!(buf))), '\t')
+    @test fields[5]  == "INDEL"                    # variant_type
+    @test fields[22] == "CA"                       # indel_ref_allele
+    @test fields[23] == "C"                        # indel_major_allele
+    @test fields[29] == "LmjF.01:g.2532delA"       # indel_major_genomic_hgvs
 end
 
-@testset "write_snp_feature minor_genomic_hgvs empty when locus is monoallelic" begin
-    # only the reference allele present -> no minor allele -> minor g. is empty
+@testset "write_snp_feature allele families empty when locus is monoallelic" begin
+    # only the reference allele present -> no snp/indel alleles at all
     v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "A"; v_s1.reference  = "A"; v_s1.ploidy = 1
 
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 300, "ref", ["s1"])
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
-    @test fields[6]  == ""     # minor_allele empty
-    @test fields[22] == "."    # major is reference
-    @test fields[23] == ""     # minor_genomic_hgvs empty (no minor allele)
+    fields = split(chomp(String(take!(buf))), '\t')
+    @test fields[14] == ""     # snp_major_allele empty
+    @test fields[23] == ""     # indel_major_allele empty
+    @test fields[20] == ""     # snp_major_genomic_hgvs empty
+    @test fields[29] == ""     # indel_major_genomic_hgvs empty
 end
 
 @testset "write_snp_feature is_coding=0 for non-coding position" begin
@@ -801,8 +800,8 @@ end
 
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 200, "ref", ["s1"])
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
-    @test fields[14] == "0"
+    fields = split(chomp(String(take!(buf))), '\t')
+    @test fields[4] == "0"
 end
 
 # ---------------------------------------------------------------------------
@@ -822,15 +821,15 @@ end
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1, v_s2, v_s3, v_s4], 0, "LmjF.01", 700, "ref",
                       ["s1", "s2", "s3", "s4"])
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    fields = split(chomp(String(take!(buf))), '\t')
 
-    @test fields[15] == "SNV"       # variant_type
-    @test fields[16] == "1"         # major_differs_from_reference (major T != ref C)
-    @test fields[17] == "0"         # is_singleton (minor allele C seen in 2 strains)
-    @test fields[18] == "0"         # het_strain_count
-    @test fields[19] == "4"         # called_strain_count (s1..s4)
-    @test fields[20] == "0"         # no_call_strain_count
-    @test fields[21] == "1.0000"    # call_rate
+    @test fields[5]  == "SNV"       # variant_type
+    @test fields[12] == "0"         # het_strain_count
+    @test fields[7]  == "4"         # called_strain_count (s1..s4)
+    @test fields[8]  == "0"         # no_call_strain_count
+    @test fields[9]  == "1.0000"    # call_rate
+    @test fields[14] == "T"         # snp_major_allele
+    @test fields[16] == "3"         # snp_major_allele_strain_count (s1,s2,s3)
 end
 
 @testset "write_snp_feature call_rate excludes reference and reflects no-calls" begin
@@ -842,14 +841,13 @@ end
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 900, "ref",
                       ["s1", "s2", "s3", "s4"])
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    fields = split(chomp(String(take!(buf))), '\t')
 
-    @test fields[15] == "SNV"       # variant_type (alt G is a substitution)
-    @test fields[17] == "1"         # is_singleton (minor allele G in 1 strain)
-    @test fields[18] == "1"         # het_strain_count (s2)
-    @test fields[19] == "2"         # called_strain_count (s1, s2; ref excluded)
-    @test fields[20] == "2"         # no_call_strain_count (s3, s4)
-    @test fields[21] == "0.5000"    # call_rate (2/4)
+    @test fields[5]  == "SNV"       # variant_type (alt G is a substitution)
+    @test fields[12] == "1"         # het_strain_count (s2)
+    @test fields[7]  == "2"         # called_strain_count (s1, s2; ref excluded)
+    @test fields[8]  == "2"         # no_call_strain_count (s3, s4)
+    @test fields[9]  == "0.5000"    # call_rate (2/4)
 end
 
 @testset "write_snp_feature variant_type INDEL when only indel alleles present" begin
@@ -859,9 +857,9 @@ end
 
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 1000, "ref", ["s1", "s2"])
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    fields = split(chomp(String(take!(buf))), '\t')
 
-    @test fields[15] == "INDEL"
+    @test fields[5] == "INDEL"
 end
 
 @testset "write_snp_feature variant_type MIXED when both snp and indel alleles present" begin
@@ -871,9 +869,9 @@ end
 
     buf = IOBuffer()
     write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 1100, "ref", ["s1", "s2"])
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    fields = split(chomp(String(take!(buf))), '\t')
 
-    @test fields[15] == "MIXED"
+    @test fields[5] == "MIXED"
 end
 
 # ---------------------------------------------------------------------------
