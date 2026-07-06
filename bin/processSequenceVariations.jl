@@ -2242,7 +2242,7 @@ function handle_variant_record!(
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
-        # iterates record.alts, so we must use the original allele strings as keys here.
+        # iterates each record's alts, so we must use the original allele strings as keys here.
         for (rec, recvars) in per_record
             for (alt, smap) in collect_cann_entries_for_annotation(recvars, annotation, rec, ctx.reference_strain, all_strains, strain_idx_map)
                 for (strain, entries) in smap

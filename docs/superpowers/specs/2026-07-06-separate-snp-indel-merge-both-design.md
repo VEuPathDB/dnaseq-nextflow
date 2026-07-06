@@ -1,8 +1,10 @@
 # Separate SNP and indel handling in mergeExperiments (via `-m both`)
 
 **Date:** 2026-07-06
-**Status:** Design — approved shape, pending spec review
+**Status:** Implemented on branch `split-snp-indel-merge-both` — unit/shell tests green. Full pipeline e2e (`testing/t/test_mergeExperiments_e2e.py`, Perl `runTests` profile) NOT run here: requires Docker images + a completed `mergeExperiments` run. Run `nextflow run main.nf -entry mergeExperiments -profile mergeExperiments` then `pytest testing/t/test_mergeExperiments_e2e.py --run-dir <launch-dir>` before merge.
 **Branch target:** feature branch off `reduce-merge-outputs-snpeff-source`
+
+**Deviations during implementation:** (1) Task 3's `handle_variant_record!` change was folded into Task 5 (the per-record restructure) to avoid an untested intermediate. (2) Task 6 was a no-op: `downstream_frameshift` was already in `CANN_EFFECT_MAP` as `("downstream_frameshift","MODIFIER")`; per decision, that existing mapping was kept (the compound `frameshift&downstream_frameshift` splits into two already-mapped terms). (3) `chrom_coverage` is keyed by strain (not chromosome) — test fixtures corrected accordingly.
 
 ## Problem
 
