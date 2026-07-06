@@ -198,11 +198,13 @@ def test_merged_vcf_is_valid_bgzipped(work_dirs):
 
 
 def test_merged_vcf_input_vcfs_have_tbi_index(work_dirs):
-    """The merge process indexes each input VCF before merging."""
+    """The merge process normalizes each input VCF and indexes the .norm.vcf.gz
+    files it actually merges. Raw staged inputs (N.vcf.gz) are not indexed."""
     work = work_dirs['mergeVcfs']
-    input_vcfs = sorted(f for f in os.listdir(work) if f != 'merged.vcf.gz' and f.endswith('.vcf.gz'))
-    missing = [v for v in input_vcfs if not os.path.exists(os.path.join(work, v + '.tbi'))]
-    assert not missing, f"Input VCFs missing tabix index: {missing}"
+    norm_vcfs = sorted(f for f in os.listdir(work) if f.endswith('.norm.vcf.gz'))
+    assert norm_vcfs, "No .norm.vcf.gz files found in mergeVcfs work dir"
+    missing = [v for v in norm_vcfs if not os.path.exists(os.path.join(work, v + '.tbi'))]
+    assert not missing, f"Normalized input VCFs missing tabix index: {missing}"
 
 
 def test_merged_vcf_sample_names_match_input_strains(work_dirs):
@@ -467,8 +469,8 @@ def test_variation_feature_exists(work_dirs):
 
 def test_variation_feature_column_count(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 14]
-    assert not bad, f"Rows with wrong column count (expected 14): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 23]
+    assert not bad, f"Rows with wrong column count (expected 23): {bad[:5]}"
 
 
 def test_variation_feature_row_count(work_dirs):
@@ -600,8 +602,8 @@ def test_allele_dat_row_count(work_dirs):
 
 def test_allele_dat_column_count(work_dirs):
     rows = _read_allele(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 9]
-    assert not bad, f"Rows with wrong column count (expected 9): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 10]
+    assert not bad, f"Rows with wrong column count (expected 10): {bad[:5]}"
 
 
 def test_allele_dat_location_positive_int(work_dirs):
@@ -759,8 +761,8 @@ def test_transcript_product_dat_row_count(work_dirs):
 
 def test_transcript_product_dat_column_count(work_dirs):
     rows = _read_transcript_product(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 12]
-    assert not bad, f"Rows with wrong column count (expected 12): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 13]
+    assert not bad, f"Rows with wrong column count (expected 13): {bad[:5]}"
 
 
 def test_transcript_product_dat_location_positive_int(work_dirs):
