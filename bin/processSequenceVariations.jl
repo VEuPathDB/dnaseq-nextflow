@@ -1599,64 +1599,30 @@ function write_allele_file(
     location::Int,
     sample_id_map::Dict{String,Int}
 )
-    # allele_entries: allele -> [(strain, coverage, percent)]
-    # allele_weights comes from compute_allele_weight_map for frequency denominator
-    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64}}}()
-
-    for v in variations
-        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
-
-        if !isempty(v.alt_allele)
-            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct))
-            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct))
-        else
-            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct))
-        end
-    end
-
-    # per-allele reference span, for genomic HGVS (shared basis with variationFeature)
-    allele_refs = build_allele_refs(variations)
-
-    (allele_weights, total_weight) = compute_allele_weight_map(variations)
-    ref_allele = variations[1].reference
-
-    for (allele, entries) in allele_entries
-        distinct_strains = Set{String}()
-        strain_ids       = Set{Int}()
-        sum_coverage     = 0.0
-        sum_percent      = 0.0
-
-        for (strain, cov, pct) in entries
-            push!(distinct_strains, strain)
+    (stats, total_weight) = aggregate_locus_alleles(variations)
+    for ((ref, allele), st) in stats
+        strain_ids = Set{Int}()
+        for strain in st.strains
             sid = get(sample_id_map, strain, 0)
-            if sid > 0
-                push!(strain_ids, sid)
-            else
+            sid > 0 ? push!(strain_ids, sid) :
                 @warn "strain not found in sample_id_map, omitted from strain_ids" strain
-            end
-            sum_coverage += cov
-            sum_percent  += pct
         end
-
-        n       = length(entries)
-        ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
-        matches_ref = allele == ref_allele ? 1 : 0
-        genomic_hgvs_str = allele_genomic_hgvs(allele, allele_refs, seq_id, location)
+        ids_str     = "{" * join(sort(collect(strain_ids)), ",") * "}"
+        matches_ref = allele == ref ? 1 : 0
+        ghgvs       = matches_ref == 1 ? "." : genomic_hgvs(seq_id, location, ref, allele)
         write(allele_fh, join([
             string(location),
             seq_id,
             allele,
-            string(length(distinct_strains)),
-            @sprintf("%.4f", allele_weights[allele] / total_weight),
-            @sprintf("%.2f", sum_coverage / n),
-            @sprintf("%.2f", sum_percent  / n),
+            string(length(st.strains)),
+            @sprintf("%.4f", st.weight / total_weight),
+            @sprintf("%.2f", st.cov_sum / st.entry_count),
+            @sprintf("%.2f", st.pct_sum / st.entry_count),
             ids_str,
             string(matches_ref),
-            genomic_hgvs_str
+            ghgvs
         ], "\t"), "\n")
     end
-
 end
 
 function write_transcript_product(
