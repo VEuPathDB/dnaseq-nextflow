@@ -1252,7 +1252,7 @@ function open_output_writers(output_vcf::String, reference_strain::String,
                               all_strains::Vector{String})
     vcf_fh = open(output_vcf, "w")
     snp_fh = open("snpFeature.dat", "w")
-    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\tvariant_type\tmajor_differs_from_reference\tis_singleton\thet_strain_count\tcalled_strain_count\tno_call_strain_count\tcall_rate\tmajor_genomic_hgvs\tminor_genomic_hgvs\n")
+    write(snp_fh, "location\tseq_id\treference_strain\tis_coding\tvariant_type\tdistinct_strain_count\tcalled_strain_count\tno_call_strain_count\tcall_rate\ttotal_ploidy_count\tref_allele_frequency\thet_strain_count\tsnp_ref_allele\tsnp_major_allele\tsnp_major_allele_frequency\tsnp_major_allele_strain_count\tsnp_minor_allele\tsnp_minor_allele_frequency\tsnp_minor_allele_strain_count\tsnp_major_genomic_hgvs\tsnp_minor_genomic_hgvs\tindel_ref_allele\tindel_major_allele\tindel_major_allele_frequency\tindel_major_allele_strain_count\tindel_minor_allele\tindel_minor_allele_frequency\tindel_minor_allele_strain_count\tindel_major_genomic_hgvs\tindel_minor_genomic_hgvs\tindel_frame_effect\n")
     allele_fh = open("allele.dat", "w")
     write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\tgenomic_hgvs\n")
     tp_fh = open("transcript_product.dat", "w")
@@ -1522,98 +1522,73 @@ function write_snp_feature(
     reference_strain::String,
     sequenced_strains::Vector{String}
 )
-    ref_allele = variations[1].reference
-    isempty(ref_allele) && (ref_allele = variations[1].base)
+    (stats, total_weight) = aggregate_locus_alleles(variations)
 
-    (allele_weights, total_ploidy_count) = compute_allele_weight_map(variations)
-
-    # strain count is per-strain, not ploidy-weighted; compute separately
-    allele_counts = Dict{String,Int}()
-    strain_set    = Set{String}()
-    for v in variations
-        if !isempty(v.alt_allele)
-            allele_counts[v.reference]  = get(allele_counts, v.reference,  0) + 1
-            allele_counts[v.alt_allele] = get(allele_counts, v.alt_allele, 0) + 1
+    ref_weight = 0
+    snp_keys   = Tuple{String,String}[]
+    indel_keys = Tuple{String,String}[]
+    for (key, st) in stats
+        c = classify_allele(key[1], key[2])
+        if c == :reference
+            ref_weight += st.weight
+        elseif c == :snp
+            push!(snp_keys, key)
         else
-            allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+            push!(indel_keys, key)
         end
-        push!(strain_set, v.strain)
     end
+    rank(ks) = sort(ks; by = k -> (-stats[k].weight, k[2]))
+    snp_keys   = rank(snp_keys)
+    indel_keys = rank(indel_keys)
 
+    strain_set = Set{String}(v.strain for v in variations)
     distinct_strain_count = length(strain_set)
-    distinct_allele_count = length(allele_counts)
-
-    n_alt_alleles  = count(a -> a != ref_allele, keys(allele_counts))
-    sorted_alleles = sort(collect(keys(allele_counts));
-                         by = a -> (n_alt_alleles >= 2 && a == ref_allele ? 1 : 0,
-                                    -allele_counts[a], a))
-
-    major_allele              = sorted_alleles[1]
-    minor_allele              = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
-    major_allele_strain_count = allele_counts[major_allele]
-    minor_allele_strain_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
-    major_allele_frequency    = @sprintf("%.4f", allele_weights[major_allele] / total_ploidy_count)
-    minor_allele_frequency    = length(sorted_alleles) > 1 ?
-        @sprintf("%.4f", allele_weights[minor_allele] / total_ploidy_count) : ""
-
-    # --- precompute columns -------------------------------------------------
-    # variant_type: classify the alt alleles present at this locus by length
-    # relative to the reference. A same-length alt is a substitution (SNV);
-    # a different-length alt is an indel. Both present => MIXED.
-    has_snp   = false
-    has_indel = false
-    for v in variations
-        if !isempty(v.alt_allele)                       # het call: alt vs ref
-            length(v.reference) == length(v.alt_allele) ? (has_snp = true) : (has_indel = true)
-        elseif v.base != v.reference                    # hom alt call: base vs ref
-            length(v.reference) == length(v.base) ? (has_snp = true) : (has_indel = true)
-        end
-    end
-    variant_type = has_snp && has_indel ? "MIXED" : (has_indel ? "INDEL" : "SNV")
-
-    major_differs_from_reference = major_allele != ref_allele ? "1" : "0"
-    is_singleton = (minor_allele_strain_count isa Integer && minor_allele_strain_count == 1) ? "1" : "0"
-    het_strain_count = count(v -> !isempty(v.alt_allele), variations)
-
-    # call rate is over sequenced samples only; the reference is a synthetic
-    # always-present strain and is excluded from both numerator and denominator.
-    called_strain_count  = count(s -> s != reference_strain, strain_set)
-    total_sequenced      = length(sequenced_strains)
-    no_call_strain_count = max(0, total_sequenced - called_strain_count)
+    called_strain_count   = count(s -> s != reference_strain, strain_set)
+    total_sequenced       = length(sequenced_strains)
+    no_call_strain_count  = max(0, total_sequenced - called_strain_count)
     call_rate = total_sequenced > 0 ?
         @sprintf("%.4f", called_strain_count / total_sequenced) : ""
+    het_strain_count = count(v -> !isempty(v.alt_allele), variations)
+    has_snp   = !isempty(snp_keys)
+    has_indel = !isempty(indel_keys)
+    variant_type = has_snp && has_indel ? "MIXED" : (has_indel ? "INDEL" : "SNV")
+    ref_allele_frequency = @sprintf("%.4f", ref_weight / total_weight)
 
-    # genomic HGVS for the major and minor alleles (same per-allele-ref basis as
-    # allele.dat). A reference allele yields "."; an absent minor allele yields "".
-    allele_refs = build_allele_refs(variations)
-    major_genomic_hgvs = allele_genomic_hgvs(major_allele, allele_refs, seq_id, location)
-    minor_genomic_hgvs = isempty(minor_allele) ? "" :
-        allele_genomic_hgvs(minor_allele, allele_refs, seq_id, location)
+    class_fields = function(keys)
+        isempty(keys) && return ("","","","","","","","","")
+        ref  = keys[1][1]
+        maj  = keys[1][2]
+        majf = @sprintf("%.4f", stats[keys[1]].weight / total_weight)
+        majc = string(length(stats[keys[1]].strains))
+        majh = genomic_hgvs(seq_id, location, ref, maj)
+        if length(keys) > 1
+            mn   = keys[2][2]
+            mnf  = @sprintf("%.4f", stats[keys[2]].weight / total_weight)
+            mnc  = string(length(stats[keys[2]].strains))
+            mnh  = genomic_hgvs(seq_id, location, keys[2][1], mn)
+        else
+            mn = ""; mnf = ""; mnc = ""; mnh = ""
+        end
+        (ref, maj, majf, majc, mn, mnf, mnc, majh, mnh)
+    end
+    (sr, smaj, smajf, smajc, smin, sminf, sminc, smajh, sminh) = class_fields(snp_keys)
+    (ir, imaj, imajf, imajc, imin, iminf, iminc, imajh, iminh) = class_fields(indel_keys)
+
+    indel_frame_effect = ""
+    if has_indel
+        d = length(imaj) - length(ir)
+        indel_frame_effect = d % 3 != 0 ? "frameshift" :
+                             (d > 0 ? "inframe_insertion" : "inframe_deletion")
+    end
 
     write(snp_fh, join([
-        string(location),
-        seq_id,
-        reference_strain,
-        ref_allele,
-        major_allele,
-        minor_allele,
-        string(major_allele_strain_count),
-        string(minor_allele_strain_count),
-        major_allele_frequency,
-        minor_allele_frequency,
-        string(distinct_strain_count),
-        string(distinct_allele_count),
-        string(total_ploidy_count),
-        string(is_coding),
-        variant_type,
-        major_differs_from_reference,
-        is_singleton,
-        string(het_strain_count),
-        string(called_strain_count),
-        string(no_call_strain_count),
-        call_rate,
-        major_genomic_hgvs,
-        minor_genomic_hgvs
+        string(location), seq_id, reference_strain, string(is_coding), variant_type,
+        string(distinct_strain_count), string(called_strain_count),
+        string(no_call_strain_count), call_rate, string(total_weight),
+        ref_allele_frequency, string(het_strain_count),
+        sr, smaj, smajf, smajc, smin, sminf, sminc, smajh, sminh,
+        ir, imaj, imajf, imajc, imin, iminf, iminc, imajh, iminh,
+        indel_frame_effect
     ], "\t"), "\n")
 end
 

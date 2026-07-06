@@ -1346,3 +1346,38 @@ end
     @test stats[("ACA","A")].weight == 1
     @test length(stats[("A","G")].strains) == 1
 end
+
+@testset "write_snp_feature emits per-class SNP+indel columns without collapse" begin
+    vars = [
+        mkvar(strain="S1", reference="A",   base="G", coverage="30", percent="100"),
+        mkvar(strain="S2", reference="ACA", base="A", coverage="20", percent="100"),
+        mkvar(strain="REF", reference="A",  base="A", coverage="0",  percent="100", matches_reference=1),
+    ]
+    buf = IOBuffer()
+    write_snp_feature(buf, vars, 1, "LmjF.01", 13850, "REF", ["S1","S2"])
+    cols = split(chomp(String(take!(buf))), '\t')
+    @test length(cols) == 31
+    @test cols[1] == "13850"
+    @test cols[5] == "MIXED"
+    @test cols[13] == "A"                       # snp_ref_allele
+    @test cols[14] == "G"                       # snp_major_allele
+    @test cols[20] == "LmjF.01:g.13850A>G"      # snp_major_genomic_hgvs
+    @test cols[22] == "ACA"                     # indel_ref_allele
+    @test cols[23] == "A"                       # indel_major_allele
+    @test occursin("del", cols[29])             # indel_major_genomic_hgvs
+    @test cols[31] == "frameshift"              # indel_frame_effect (1-3=-2)
+    @test cols[14] != "A"                       # deletion did not collapse into SNP major
+end
+
+@testset "write_snp_feature SNP-only locus leaves indel family empty" begin
+    vars = [
+        mkvar(strain="S1", reference="A", base="G"),
+        mkvar(strain="REF", reference="A", base="A", matches_reference=1),
+    ]
+    buf = IOBuffer()
+    write_snp_feature(buf, vars, 1, "chr1", 100, "REF", ["S1"])
+    cols = split(chomp(String(take!(buf))), '\t')
+    @test cols[5] == "SNV"
+    @test cols[22] == ""                        # indel_ref_allele empty
+    @test cols[31] == ""                        # indel_frame_effect empty
+end
