@@ -1191,3 +1191,68 @@ end
     @test occursin("|frameshift|", s)
     @test !occursin("downstream_frameshift", s)
 end
+
+# ---------------------------------------------------------------------------
+# handle_variant_record! — with bcftools -m both, a locus can carry BOTH a
+# SNP class-record and an indel class-record. BOTH must contribute output.vcf
+# rows (each reading GT from its OWN sample columns), not just the SNP record.
+# ---------------------------------------------------------------------------
+
+# Builds a ProcessingContext whose GTF is empty, so every position is
+# intergenic (non-coding) and no transcript/indel DB queries are exercised.
+function make_intergenic_ctx(all_strains::Vector{String}; reference_strain="ref", ploidy=1)
+    tmp_dir = mktempdir()
+    transcript_db_path = joinpath(tmp_dir, "transcripts.db")
+    indel_db_path      = joinpath(tmp_dir, "indels.db")
+    SQLite.DB(transcript_db_path) |> close
+    let db = SQLite.DB(indel_db_path)
+        SQLite.execute(db, "CREATE TABLE indels (strain TEXT, transcript_id TEXT, position INTEGER, shift_amount INTEGER)")
+        close(db)
+    end
+    gtf_path = joinpath(tmp_dir, "empty.gtf")
+    write(gtf_path, "")
+    args = Dict(
+        "transcript_db"       => transcript_db_path,
+        "indel_db"            => indel_db_path,
+        "gtf_file"            => gtf_path,
+        "reference_strain"    => reference_strain,
+        "undone_strains_file" => "",
+        "ploidy"              => string(ploidy),
+    )
+    initialize_processing_context(args, all_strains)
+end
+
+@testset "handle_variant_record! emits BOTH the SNP and indel class-record rows" begin
+    all_strains = ["S1", "S2"]
+    ctx = make_intergenic_ctx(all_strains)
+
+    vcf_buf = IOBuffer()
+    hsss    = open_hsss_writers("ref", all_strains, mktempdir())
+    writers = OutputWriters(vcf_buf, IOBuffer(), IOBuffer(), IOBuffer(), hsss)
+    transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
+
+    # SNP record:   S1 = A>G (1/1), S2 = no-call.
+    # Indel record: S1 = no-call, S2 = ATG>A (1/1) deletion.
+    # Same locus, same strain column order.
+    snp   = VCFRecord("chr1", 100, "A",   ["G"], ".", ["GT","DP"], ["1/1:30", "./.:0"])
+    indel = VCFRecord("chr1", 100, "ATG", ["A"], ".", ["GT","DP"], ["./.:0", "1/1:30"])
+
+    # chrom_coverage is keyed by STRAIN name (not chromosome).
+    chrom_cov = Dict{String, Vector{Tuple{Int,Int,Float64}}}(
+        "S1" => [(1, 1000, 30.0)],
+        "S2" => [(1, 1000, 30.0)],
+    )
+
+    handle_variant_record!([snp, indel], Tuple{String,Int}[], ctx, writers,
+                           transcript_cache, all_strains, chrom_cov)
+    close_hsss_writers(hsss)
+
+    rows = [split(l, '\t') for l in filter(!isempty, split(String(take!(vcf_buf)), "\n"))]
+    # (REF, ALT) pairs written for this locus
+    ref_alt = Set((r[4], r[5]) for r in rows)
+
+    @test ("A", "G") in ref_alt        # SNP class-record row
+    @test ("ATG", "A") in ref_alt      # indel class-record row (dropped before the fix)
+    # POS/CHROM are shared across both class-records
+    @test all(r -> r[1] == "chr1" && r[2] == "100", rows)
+end

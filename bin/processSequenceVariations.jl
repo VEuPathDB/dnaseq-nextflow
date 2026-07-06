@@ -2170,16 +2170,20 @@ function handle_variant_record!(
     location = records[1].pos
     debug_log("Processing position: ", seq_id, ":", location)
 
-    # Build variations from all records at this position (SNPs + indels combined)
-    variations = Variation[]
+    # Build per-record variation lists. Reference synthesis for covered no-calls
+    # happens ONCE per locus (against the SNP-preferred record) so a strain
+    # carrying a variant on one class-record is not also given a fabricated
+    # reference variation from the sibling record.
+    ref_record = pick_snp_record(records)
+    per_record = Tuple{VCFRecord, Vector{Variation}}[]
     for r in records
-        append!(variations, build_variations_from_record(r, all_strains, ctx.undone_strains, chrom_coverage, ctx.ploidy))
+        rv = build_variations_from_record(
+            r, all_strains, ctx.undone_strains, chrom_coverage, ctx.ploidy;
+            synthesize_ref = (r === ref_record))
+        push!(per_record, (r, rv))
     end
+    variations = reduce(vcat, (rv for (_, rv) in per_record); init=Variation[])
     isempty(variations) && return false
-
-    # For CANN annotation and VCF output: use only the first SNP record.
-    # Indel records at the same position are included in variation tables but not AA annotation.
-    record = pick_snp_record(records)
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = if !isempty(cache_entries)
@@ -2239,10 +2243,12 @@ function handle_variant_record!(
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
         # iterates record.alts, so we must use the original allele strings as keys here.
-        for (alt, smap) in collect_cann_entries_for_annotation(variations, annotation, record, ctx.reference_strain, all_strains, strain_idx_map)
-            for (strain, entries) in smap
-                strain_map = get!(alt_strain_entries, alt, Dict{String, Vector{String}}())
-                append!(get!(strain_map, strain, String[]), entries)
+        for (rec, recvars) in per_record
+            for (alt, smap) in collect_cann_entries_for_annotation(recvars, annotation, rec, ctx.reference_strain, all_strains, strain_idx_map)
+                for (strain, entries) in smap
+                    strain_map = get!(alt_strain_entries, alt, Dict{String, Vector{String}}())
+                    append!(get!(strain_map, strain, String[]), entries)
+                end
             end
         end
     end
@@ -2263,31 +2269,33 @@ function handle_variant_record!(
     end
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
-    modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage, ctx.ploidy)
     (alt_cann_entries, alt_strain_to_ca) = assign_cann_keys(alt_strain_entries, all_strains)
 
-    # Write one VCF output entry per unique alt (for SnpEff downstream).
-    n_orig_alts = length(record.alts)
-    for (alt_i, alt) in enumerate(record.alts)
-        if alt == "*"
-            @warn "Unexpected * allele in VCF output at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
-            continue
-        end
-        haskey(alt_cann_entries, alt) || continue
-
-        coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])
-        all_entries = [ref_cann_entries..., coding_alt_entries...]
-        full_cann   = isempty(all_entries) ? "." : join(all_entries, ',')
-
-        strain_to_alt_keys = get(alt_strain_to_ca, alt, Dict{String, Vector{String}}())
-        ca_values = build_ca_values(record.format_keys, modified_sample_data, record.alts, alt,
-                                    ref_keys, all_strains, strain_to_alt_keys)
-        strain_to_dfs = Dict{String,String}(v.strain => string(v.downstream_of_frameshift) for v in variations)
+    # Write one VCF output entry per unique alt per class-record (for SnpEff).
+    for (rec, recvars) in per_record
+        modified_sample_data = fill_missing_coverage_gt(rec, all_strains, chrom_coverage, ctx.ploidy)
+        strain_to_dfs = Dict{String,String}(v.strain => string(v.downstream_of_frameshift) for v in recvars)
         dfs_values = [get(strain_to_dfs, s, ".") for s in all_strains]
-        write_vcf_entry(writers.vcf_fh, seq_id, location, record.ref, alt,
-                        full_cann, record.info, record.format_keys,
-                        modified_sample_data, ca_values, dfs_values,
-                        n_orig_alts, alt_i)
+        n_orig_alts = length(rec.alts)
+        for (alt_i, alt) in enumerate(rec.alts)
+            if alt == "*"
+                @warn "Unexpected * allele in VCF output at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
+                continue
+            end
+            haskey(alt_cann_entries, alt) || continue
+
+            coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])
+            all_entries = [ref_cann_entries..., coding_alt_entries...]
+            full_cann   = isempty(all_entries) ? "." : join(all_entries, ',')
+
+            strain_to_alt_keys = get(alt_strain_to_ca, alt, Dict{String, Vector{String}}())
+            ca_values = build_ca_values(rec.format_keys, modified_sample_data, rec.alts, alt,
+                                        ref_keys, all_strains, strain_to_alt_keys)
+            write_vcf_entry(writers.vcf_fh, seq_id, location, rec.ref, alt,
+                            full_cann, rec.info, rec.format_keys,
+                            modified_sample_data, ca_values, dfs_values,
+                            n_orig_alts, alt_i)
+        end
     end
 
     true
