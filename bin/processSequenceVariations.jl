@@ -482,6 +482,10 @@ end
 # HSSS write_hsss_position! — defined here because it references Variation
 # ---------------------------------------------------------------------------
 
+# Same length-comparison criterion as has_snp_allele, applied to an already-built Variation
+# rather than a raw VCF record.
+is_snp_variation(v::Variation) = length(v.reference) == length(v.base)
+
 function write_hsss_position!(
     state::HsssState,
     variations::Vector{Variation},
@@ -552,9 +556,18 @@ function write_hsss_position!(
                 continue
             end
 
+            # HSSS is SNP-only: drop indel-length alleles rather than writing a bogus
+            # allele code of 0 for them (see has_snp_allele/is_snp_variation).
+            snp_svars = filter(is_snp_variation, svars)
+            if isempty(snp_svars)
+                # Strain's only allele(s) at this position are indels: treat as unknown
+                write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
+                continue
+            end
+
             # Het strains write one record per allele (including ref-matching); matches Perl hsssCreateStrainFiles behavior
-            is_het = length(svars) > 1
-            for sv in svars
+            is_het = length(snp_svars) > 1
+            for sv in snp_svars
                 # Skip non-het, reference-matching variations
                 !is_het && sv.matches_reference == 1 && continue
                 allele_c = get(HSSS_ALLELE_CODE, isempty(sv.base) ? ' ' : sv.base[1], Int8(0))
@@ -717,6 +730,12 @@ end
 
 # Returns true if all ALTs have the same length as REF (SNP or MNP, not indel)
 is_snp_record(record::VCFRecord) = all(length(a) == length(record.ref) for a in record.alts)
+
+# Returns true if any ALT has the same length as REF. mergeVariantsByLocation.py's
+# _recombine can merge decomposed rows back into one multi-ALT record that mixes a
+# SNP allele with an indel allele (e.g. REF=A ALT=G,AT) — such a record is not a
+# "SNP record" under is_snp_record, but still carries a real SNP allele.
+has_snp_allele(record::VCFRecord) = any(length(a) == length(record.ref) for a in record.alts)
 
 """
     parse_format_field(format_keys, sample_str) -> Dict{String,String}
@@ -908,7 +927,7 @@ function write_vcf_cache_header(fh::IO, all_strains::Vector{String}, info_header
     for h in info_headers
         write(fh, h, "\n")
     end
-    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
+    write(fh, "##INFO=<ID=CANN,Number=.,Type=String,Description=\"Coding annotation entries, comma-separated. r-prefixed keys (r0,r1,...) = reference allele per transcript; k-prefixed keys (k0,k1,...) = alt allele per transcript. Format per entry: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon|hgvs_c|hgvs_p. hgvs_c/hgvs_p are populated for coding substitutions only; '.' otherwise. Compound effects use '&' separator (e.g. missense&frameshift).\">\n")
     write(fh, "##FORMAT=<ID=CA,Number=1,Type=String,Description=\"CANN key(s) per GT allele. Alleles separated by '/' (unphased) or '|' (phased). Multiple transcript keys for one allele separated by ';'. 'r'=ref allele no CDS annotation, '.'=missing/no-call\">\n")
     write(fh, "##FORMAT=<ID=DFS,Number=1,Type=Integer,Description=\"Downstream of frameshift: 1 if this sample carries an upstream indel that disrupts the reading frame at this position, 0 otherwise.\">\n")
     chrom_line = join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", all_strains...], '\t')
@@ -1087,7 +1106,9 @@ function build_variations_from_record(
     all_strains::Vector{String},
     undone_strains::Set{String},
     chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}},
-    ploidy::Int=1
+    ploidy::Int=1;
+    synthesize_ref::Bool=true,
+    no_synth_strains::Set{String}=Set{String}()
 )::Vector{Variation}
     variations = Variation[]
 
@@ -1099,6 +1120,8 @@ function build_variations_from_record(
 
         gt = get(fmt, "GT", "")
         if isempty(gt) || gt == "." || gt == "./." || gt == ".|."
+            synthesize_ref || continue
+            strain in no_synth_strains && continue
             # No call: synthesize a reference Variation if position is covered
             (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
             if covered
@@ -1229,11 +1252,11 @@ function open_output_writers(output_vcf::String, reference_strain::String,
                               all_strains::Vector{String})
     vcf_fh = open(output_vcf, "w")
     snp_fh = open("snpFeature.dat", "w")
-    write(snp_fh, "location\tseq_id\treference_strain\tref_allele\tmajor_allele\tminor_allele\tmajor_allele_strain_count\tminor_allele_strain_count\tmajor_allele_frequency\tminor_allele_frequency\tdistinct_strain_count\tdistinct_allele_count\ttotal_ploidy_count\tis_coding\n")
+    write(snp_fh, "location\tseq_id\treference_strain\tis_coding\tvariant_type\tdistinct_strain_count\tcalled_strain_count\tno_call_strain_count\tcall_rate\ttotal_ploidy_count\tref_allele_frequency\thet_strain_count\tsnp_ref_allele\tsnp_major_allele\tsnp_major_allele_frequency\tsnp_major_allele_strain_count\tsnp_minor_allele\tsnp_minor_allele_frequency\tsnp_minor_allele_strain_count\tsnp_major_genomic_hgvs\tsnp_minor_genomic_hgvs\tindel_ref_allele\tindel_major_allele\tindel_major_allele_frequency\tindel_major_allele_strain_count\tindel_minor_allele\tindel_minor_allele_frequency\tindel_minor_allele_strain_count\tindel_major_genomic_hgvs\tindel_minor_genomic_hgvs\tindel_frame_effect\n")
     allele_fh = open("allele.dat", "w")
-    write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\n")
+    write(allele_fh, "location\tseq_id\tallele\tdistinct_strain_count\tallele_frequency\tavg_coverage\tavg_percent\tstrain_ids\tmatches_reference\tgenomic_hgvs\n")
     tp_fh = open("transcript_product.dat", "w")
-    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\n")
+    write(tp_fh, "#seq_id\tlocation\ttranscript_id\tpos_in_cds\tpos_in_protein\tcodon\tpos_in_codon\tcount\tproduct\tmatches_ref_codon\tmatches_ref_product\tdownstream_of_frameshift_strain_ids\thgvs_p\n")
     hsss = open_hsss_writers(reference_strain, all_strains)
     OutputWriters(vcf_fh, snp_fh, allele_fh, tp_fh, hsss)
 end
@@ -1415,26 +1438,57 @@ end
 # Output writing
 # ---------------------------------------------------------------------------
 
-"""
-    compute_allele_weight_map(variations) -> (Dict{String,Int}, Int)
+mutable struct AlleleStat
+    weight::Int
+    strains::Set{String}
+    cov_sum::Float64
+    pct_sum::Float64
+    entry_count::Int
+end
+AlleleStat() = AlleleStat(0, Set{String}(), 0.0, 0.0, 0)
 
-Returns (allele_weight_counts, total_weight).  Het calls contribute weight 1
-to each of ref and alt; hom calls contribute v.ploidy to v.base.
 """
-function compute_allele_weight_map(variations::Vector{Variation})::Tuple{Dict{String,Int}, Int}
-    weights = Dict{String,Int}()
-    total   = 0
+    classify_allele(ref, allele) -> Symbol
+
+:reference if allele == ref; :snp if same length (substitution); :indel otherwise.
+"""
+function classify_allele(ref::String, allele::String)::Symbol
+    allele == ref                 ? :reference :
+    length(allele) == length(ref) ? :snp : :indel
+end
+
+"""
+    aggregate_locus_alleles(variations) -> (Dict{Tuple{String,String},AlleleStat}, total_weight)
+
+Ploidy-weighted allele aggregation keyed by the (reference_span, allele) tuple, so
+a deletion product (e.g. "A" from ref "ACA") never collides with a same-string SNP
+reference. Het calls split ploidy across their reference and alt components exactly
+as write_allele_file did. Shared by write_snp_feature and write_allele_file.
+"""
+function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tuple{String,String},AlleleStat}, Int}
+    stats = Dict{Tuple{String,String},AlleleStat}()
+    total = 0
+    add! = function(ref, allele, weight, strain, cov, pct)
+        st = get!(stats, (ref, allele), AlleleStat())
+        st.weight      += weight
+        push!(st.strains, strain)
+        st.cov_sum     += cov
+        st.pct_sum     += pct
+        st.entry_count += 1
+    end
     for v in variations
+        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
+        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
         if !isempty(v.alt_allele)
-            weights[v.reference]  = get(weights, v.reference,  0) + 1
-            weights[v.alt_allele] = get(weights, v.alt_allele, 0) + 1
+            add!(v.reference, v.reference, 1, v.strain, cov, 100.0 - pct)
+            add!(v.reference, v.alt_allele, 1, v.strain, cov, pct)
             total += 2
         else
-            weights[v.base] = get(weights, v.base, 0) + v.ploidy
+            add!(v.reference, v.base, v.ploidy, v.strain, cov, pct)
             total += v.ploidy
         end
     end
-    (weights, total)
+    (stats, total)
 end
 
 function write_snp_feature(
@@ -1443,57 +1497,78 @@ function write_snp_feature(
     is_coding::Int,
     seq_id::String,
     location::Int,
-    reference_strain::String
+    reference_strain::String,
+    sequenced_strains::Vector{String}
 )
-    ref_allele = variations[1].reference
-    isempty(ref_allele) && (ref_allele = variations[1].base)
+    (stats, total_weight) = aggregate_locus_alleles(variations)
 
-    (allele_weights, total_ploidy_count) = compute_allele_weight_map(variations)
-
-    # strain count is per-strain, not ploidy-weighted; compute separately
-    allele_counts = Dict{String,Int}()
-    strain_set    = Set{String}()
-    for v in variations
-        if !isempty(v.alt_allele)
-            allele_counts[v.reference]  = get(allele_counts, v.reference,  0) + 1
-            allele_counts[v.alt_allele] = get(allele_counts, v.alt_allele, 0) + 1
+    ref_weight = 0
+    snp_keys   = Tuple{String,String}[]
+    indel_keys = Tuple{String,String}[]
+    for (key, st) in stats
+        c = classify_allele(key[1], key[2])
+        if c == :reference
+            ref_weight += st.weight
+        elseif c == :snp
+            push!(snp_keys, key)
         else
-            allele_counts[v.base] = get(allele_counts, v.base, 0) + 1
+            push!(indel_keys, key)
         end
-        push!(strain_set, v.strain)
+    end
+    # tie-break: weight desc, then allele string, then ref span — the last key
+    # keeps ordering deterministic for same-string alleles from different refs
+    rank(ks) = sort(ks; by = k -> (-stats[k].weight, k[2], k[1]))
+    snp_keys   = rank(snp_keys)
+    indel_keys = rank(indel_keys)
+
+    strain_set = Set{String}(v.strain for v in variations)
+    distinct_strain_count = length(strain_set)
+    called_strain_count   = count(s -> s != reference_strain, strain_set)
+    total_sequenced       = length(sequenced_strains)
+    no_call_strain_count  = max(0, total_sequenced - called_strain_count)
+    call_rate = total_sequenced > 0 ?
+        @sprintf("%.4f", called_strain_count / total_sequenced) : ""
+    het_strain_count = count(v -> !isempty(v.alt_allele), variations)
+    has_snp   = !isempty(snp_keys)
+    has_indel = !isempty(indel_keys)
+    variant_type = has_snp && has_indel ? "MIXED" : (has_indel ? "INDEL" : "SNV")
+    ref_allele_frequency = @sprintf("%.4f", ref_weight / total_weight)
+
+    class_fields = function(keys)
+        isempty(keys) && return ("","","","","","","","","")
+        ref  = keys[1][1]
+        maj  = keys[1][2]
+        majf = @sprintf("%.4f", stats[keys[1]].weight / total_weight)
+        majc = string(length(stats[keys[1]].strains))
+        majh = genomic_hgvs(seq_id, location, ref, maj)
+        if length(keys) > 1
+            mn   = keys[2][2]
+            mnf  = @sprintf("%.4f", stats[keys[2]].weight / total_weight)
+            mnc  = string(length(stats[keys[2]].strains))
+            mnh  = genomic_hgvs(seq_id, location, keys[2][1], mn)
+        else
+            mn = ""; mnf = ""; mnc = ""; mnh = ""
+        end
+        (ref, maj, majf, majc, mn, mnf, mnc, majh, mnh)
+    end
+    (sr, smaj, smajf, smajc, smin, sminf, sminc, smajh, sminh) = class_fields(snp_keys)
+    (ir, imaj, imajf, imajc, imin, iminf, iminc, imajh, iminh) = class_fields(indel_keys)
+
+    indel_frame_effect = ""
+    if has_indel
+        d = length(imaj) - length(ir)
+        indel_frame_effect = d % 3 != 0 ? "frameshift" :
+                             (d > 0 ? "inframe_insertion" : "inframe_deletion")
     end
 
-    distinct_strain_count = length(strain_set)
-    distinct_allele_count = length(allele_counts)
-
-    n_alt_alleles  = count(a -> a != ref_allele, keys(allele_counts))
-    sorted_alleles = sort(collect(keys(allele_counts));
-                         by = a -> (n_alt_alleles >= 2 && a == ref_allele ? 1 : 0,
-                                    -allele_counts[a], a))
-
-    major_allele              = sorted_alleles[1]
-    minor_allele              = length(sorted_alleles) > 1 ? sorted_alleles[2] : ""
-    major_allele_strain_count = allele_counts[major_allele]
-    minor_allele_strain_count = length(sorted_alleles) > 1 ? allele_counts[minor_allele] : ""
-    major_allele_frequency    = @sprintf("%.4f", allele_weights[major_allele] / total_ploidy_count)
-    minor_allele_frequency    = length(sorted_alleles) > 1 ?
-        @sprintf("%.4f", allele_weights[minor_allele] / total_ploidy_count) : ""
-
     write(snp_fh, join([
-        string(location),
-        seq_id,
-        reference_strain,
-        ref_allele,
-        major_allele,
-        minor_allele,
-        string(major_allele_strain_count),
-        string(minor_allele_strain_count),
-        major_allele_frequency,
-        minor_allele_frequency,
-        string(distinct_strain_count),
-        string(distinct_allele_count),
-        string(total_ploidy_count),
-        string(is_coding)
+        string(location), seq_id, reference_strain, string(is_coding), variant_type,
+        string(distinct_strain_count), string(called_strain_count),
+        string(no_call_strain_count), call_rate, string(total_weight),
+        ref_allele_frequency, string(het_strain_count),
+        sr, smaj, smajf, smajc, smin, sminf, sminc, smajh, sminh,
+        ir, imaj, imajf, imajc, imin, iminf, iminc, imajh, iminh,
+        indel_frame_effect
     ], "\t"), "\n")
 end
 
@@ -1504,59 +1579,30 @@ function write_allele_file(
     location::Int,
     sample_id_map::Dict{String,Int}
 )
-    # allele_entries: allele -> [(strain, coverage, percent)]
-    # allele_weights comes from compute_allele_weight_map for frequency denominator
-    allele_entries = Dict{String, Vector{Tuple{String, Float64, Float64}}}()
-
-    for v in variations
-        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
-
-        if !isempty(v.alt_allele)
-            push!(get!(allele_entries, v.reference,  []), (v.strain, cov, 100.0 - pct))
-            push!(get!(allele_entries, v.alt_allele, []), (v.strain, cov, pct))
-        else
-            push!(get!(allele_entries, v.base, []), (v.strain, cov, pct))
-        end
-    end
-
-    (allele_weights, total_weight) = compute_allele_weight_map(variations)
-    ref_allele = variations[1].reference
-
-    for (allele, entries) in allele_entries
-        distinct_strains = Set{String}()
-        strain_ids       = Set{Int}()
-        sum_coverage     = 0.0
-        sum_percent      = 0.0
-
-        for (strain, cov, pct) in entries
-            push!(distinct_strains, strain)
+    (stats, total_weight) = aggregate_locus_alleles(variations)
+    for ((ref, allele), st) in stats
+        strain_ids = Set{Int}()
+        for strain in st.strains
             sid = get(sample_id_map, strain, 0)
-            if sid > 0
-                push!(strain_ids, sid)
-            else
+            sid > 0 ? push!(strain_ids, sid) :
                 @warn "strain not found in sample_id_map, omitted from strain_ids" strain
-            end
-            sum_coverage += cov
-            sum_percent  += pct
         end
-
-        n       = length(entries)
-        ids_str = "{" * join(sort(collect(strain_ids)), ",") * "}"
-        matches_ref = allele == ref_allele ? 1 : 0
+        ids_str     = "{" * join(sort(collect(strain_ids)), ",") * "}"
+        matches_ref = allele == ref ? 1 : 0
+        ghgvs       = matches_ref == 1 ? "." : genomic_hgvs(seq_id, location, ref, allele)
         write(allele_fh, join([
             string(location),
             seq_id,
             allele,
-            string(length(distinct_strains)),
-            @sprintf("%.4f", allele_weights[allele] / total_weight),
-            @sprintf("%.2f", sum_coverage / n),
-            @sprintf("%.2f", sum_percent  / n),
+            string(length(st.strains)),
+            @sprintf("%.4f", st.weight / total_weight),
+            @sprintf("%.2f", st.cov_sum / st.entry_count),
+            @sprintf("%.2f", st.pct_sum / st.entry_count),
             ids_str,
-            string(matches_ref)
+            string(matches_ref),
+            ghgvs
         ], "\t"), "\n")
     end
-
 end
 
 function write_transcript_product(
@@ -1596,6 +1642,7 @@ function write_transcript_product(
         count               = get(all_product_counts, product, 0)
         matches_ref_codon   = ec == annotation.ref_codon ? 1 : 0
         matches_ref_product = product == annotation.ref_product ? 1 : 0
+        hgvs_p = protein_hgvs(pos_in_protein, annotation.ref_product, product)
         write(fh, join([
             seq_id,
             string(location),
@@ -1608,7 +1655,8 @@ function write_transcript_product(
             product,
             string(matches_ref_codon),
             string(matches_ref_product),
-            dfs_str
+            dfs_str,
+            hgvs_p
         ], "\t"), "\n")
     end
 end
@@ -1680,6 +1728,106 @@ function build_ca_values(
     result
 end
 
+const AA_THREE_LETTER = Dict(
+    "A"=>"Ala","R"=>"Arg","N"=>"Asn","D"=>"Asp","C"=>"Cys",
+    "Q"=>"Gln","E"=>"Glu","G"=>"Gly","H"=>"His","I"=>"Ile",
+    "L"=>"Leu","K"=>"Lys","M"=>"Met","F"=>"Phe","P"=>"Pro",
+    "S"=>"Ser","T"=>"Thr","W"=>"Trp","Y"=>"Tyr","V"=>"Val",
+    "*"=>"Ter",
+)
+
+"""
+    protein_hgvs(protpos, ref_aa, alt_aa) -> String
+
+Builds an HGVS.p string for a single-residue change at protein position
+`protpos`. Returns "." when it cannot form one (unknown amino acid, or stop-loss
+which needs extension notation — out of scope).
+"""
+function protein_hgvs(protpos::Int, ref_aa::String, alt_aa::String)::String
+    ref3 = get(AA_THREE_LETTER, ref_aa, "")
+    alt3 = get(AA_THREE_LETTER, alt_aa, "")
+    (isempty(ref3) || isempty(alt3)) && return "."
+    if ref_aa == alt_aa
+        return "p.$(ref3)$(protpos)="
+    elseif ref_aa == "*"
+        return "."
+    elseif protpos == 1 && ref_aa == "M"
+        return "p.Met1?"
+    else
+        return "p.$(ref3)$(protpos)$(alt3)"
+    end
+end
+
+"""
+    substitution_hgvs(pos_in_cds, ref_codon, alt_codon, pic, ref_aa, alt_aa) -> (String, String)
+
+Builds (HGVS.c, HGVS.p) for a single-base coding substitution. Bases are read
+from the strand-oriented codons at position `pic`, so no separate strand
+handling is required. Returns "." for either string it cannot form (ambiguous
+or non-triplet codon, unknown amino acid, or no base change at `pic`).
+"""
+function substitution_hgvs(pos_in_cds::Int, ref_codon::String, alt_codon::String,
+                           pic::Int, ref_aa::String, alt_aa::String)::Tuple{String,String}
+    hgvs_c = "."
+    if length(ref_codon) == 3 && length(alt_codon) == 3 &&
+       !occursin(r"[^ACGTacgt]", ref_codon) && !occursin(r"[^ACGTacgt]", alt_codon) &&
+       1 <= pic <= 3
+        rb = uppercase(ref_codon[pic])
+        ab = uppercase(alt_codon[pic])
+        if rb != ab
+            hgvs_c = "c.$(pos_in_cds)$(rb)>$(ab)"
+        end
+    end
+
+    protpos = div(pos_in_cds - 1, 3) + 1
+    hgvs_p  = protein_hgvs(protpos, ref_aa, alt_aa)
+
+    (hgvs_c, hgvs_p)
+end
+
+"""
+    genomic_hgvs(seq_id, pos, ref, alt) -> String
+
+Builds a fully-qualified genomic HGVS string ("{seq_id}:g....") for one allele
+from its own (ref, alt) pair at genomic position `pos`. Reduces the pair by
+stripping the common prefix/suffix, then classifies: single-base substitution
+(">"), pure insertion ("ins"), pure deletion ("del"), or complex/MNV
+("delins"). Indels are left-aligned (not 3'-shifted). Returns "." for no change.
+"""
+function genomic_hgvs(seq_id::String, pos::Int, ref::String, alt::String)::String
+    ref = uppercase(ref)
+    alt = uppercase(alt)
+
+    # strip common prefix
+    p = 0
+    while p < min(length(ref), length(alt)) && ref[p+1] == alt[p+1]
+        p += 1
+    end
+    # strip common suffix (without overlapping the stripped prefix)
+    s = 0
+    while s < min(length(ref), length(alt)) - p && ref[end-s] == alt[end-s]
+        s += 1
+    end
+
+    r = ref[p+1 : length(ref)-s]
+    a = alt[p+1 : length(alt)-s]
+    start = pos + p
+
+    if isempty(r) && isempty(a)
+        return "."
+    elseif length(r) == 1 && length(a) == 1
+        return "$(seq_id):g.$(start)$(r)>$(a)"
+    elseif isempty(r)                      # insertion between start-1 and start
+        return "$(seq_id):g.$(start-1)_$(start)ins$(a)"
+    elseif isempty(a)                      # deletion
+        return length(r) == 1 ? "$(seq_id):g.$(start)del$(r)" :
+                                "$(seq_id):g.$(start)_$(start+length(r)-1)del$(r)"
+    else                                   # delins (complex / MNV)
+        return length(r) == 1 ? "$(seq_id):g.$(start)delins$(a)" :
+                                "$(seq_id):g.$(start)_$(start+length(r)-1)delins$(a)"
+    end
+end
+
 # ---------------------------------------------------------------------------
 # CANN annotation
 # ---------------------------------------------------------------------------
@@ -1688,13 +1836,14 @@ end
     build_ref_cann_entry(key, annotation) -> String
 
 Builds the r-keyed CANN entry for the reference allele at a coding position.
-Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon
+Format mirrors alt entries: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon|hgvs_c|hgvs_p
+(hgvs_c/hgvs_p are always "." for reference entries.)
 """
 function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::String
     annotation.is_coding != 1 && return "."
     codon = isempty(annotation.ref_codon)   ? "." : annotation.ref_codon
     aa    = isempty(annotation.ref_product) ? "." : annotation.ref_product
-    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)"
+    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
 end
 
 """
@@ -1746,7 +1895,9 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
+        effect = v.downstream_of_frameshift == 1 ?
+            "$(structural)&downstream_frameshift" : structural
+        return "k0|.|.|$(effect)|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     # SNP or complex variant: compute amino acid effect
@@ -1756,12 +1907,12 @@ function build_cann_string(
 
     # Codon/product suppressed because strain is downstream of a frameshift
     if codon == "." && isempty(unique_prods)
-        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     # Codon contains ambiguous base(s) — skip product and effect
     if occursin(r"[NnXx]", codon)
-        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     has_stop = any(p == "*" for p in unique_prods)
@@ -1774,7 +1925,10 @@ function build_cann_string(
     end
 
     if !is_indel
-        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)"
+        alt_aa = length(unique_prods) == 1 ? unique_prods[1] : ""
+        (hgvs_c, hgvs_p) = substitution_hgvs(pos_in_cds, annotation.ref_codon, codon, pic,
+                                             annotation.ref_product, alt_aa)
+        return "k0|$(codon)|$(product_str)|$(aa_effect)|$(tid)|$(pos_in_cds)|$(pic)|$(hgvs_c)|$(hgvs_p)"
     else
         # Complex: indel with SNP at anchor position
         len_diff = alt_len - ref_len
@@ -1785,7 +1939,7 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)"
+        return "k0|$(codon)|$(product_str)|$(aa_effect)&$(structural)|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 end
 
@@ -1960,16 +2114,34 @@ function handle_variant_record!(
     location = records[1].pos
     debug_log("Processing position: ", seq_id, ":", location)
 
-    # Build variations from all records at this position (SNPs + indels combined)
-    variations = Variation[]
-    for r in records
-        append!(variations, build_variations_from_record(r, all_strains, ctx.undone_strains, chrom_coverage, ctx.ploidy))
-    end
-    isempty(variations) && return false
+    # Build per-record variation lists. Reference synthesis for covered no-calls
+    # happens ONCE per locus (against the SNP-preferred record) so a strain
+    # carrying a variant on one class-record is not also given a fabricated
+    # reference variation from the sibling record.
+    ref_record = pick_snp_record(records)
 
-    # For CANN annotation and VCF output: use only the first SNP record.
-    # Indel records at the same position are included in variation tables but not AA annotation.
-    record = pick_snp_record(records)
+    # A strain that carries a REAL call on ANY record at this locus must never
+    # get a fabricated reference variation (even from the SNP-preferred record),
+    # or it would be double-counted under the reference allele in allele.dat.
+    real_call_strains = Set{String}()
+    for r in records
+        for (i, strain) in enumerate(all_strains)
+            i > length(r.sample_data) && continue
+            gt = get(parse_format_field(r.format_keys, r.sample_data[i]), "GT", "")
+            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+            push!(real_call_strains, strain)
+        end
+    end
+
+    per_record = Tuple{VCFRecord, Vector{Variation}}[]
+    for r in records
+        rv = build_variations_from_record(
+            r, all_strains, ctx.undone_strains, chrom_coverage, ctx.ploidy;
+            synthesize_ref = (r === ref_record), no_synth_strains = real_call_strains)
+        push!(per_record, (r, rv))
+    end
+    variations = reduce(vcat, (rv for (_, rv) in per_record); init=Variation[])
+    isempty(variations) && return false
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = if !isempty(cache_entries)
@@ -2028,11 +2200,13 @@ function handle_variant_record!(
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
-        # iterates record.alts, so we must use the original allele strings as keys here.
-        for (alt, smap) in collect_cann_entries_for_annotation(variations, annotation, record, ctx.reference_strain, all_strains, strain_idx_map)
-            for (strain, entries) in smap
-                strain_map = get!(alt_strain_entries, alt, Dict{String, Vector{String}}())
-                append!(get!(strain_map, strain, String[]), entries)
+        # iterates each record's alts, so we must use the original allele strings as keys here.
+        for (rec, recvars) in per_record
+            for (alt, smap) in collect_cann_entries_for_annotation(recvars, annotation, rec, ctx.reference_strain, all_strains, strain_idx_map)
+                for (strain, entries) in smap
+                    strain_map = get!(alt_strain_entries, alt, Dict{String, Vector{String}}())
+                    append!(get!(strain_map, strain, String[]), entries)
+                end
             end
         end
     end
@@ -2041,40 +2215,45 @@ function handle_variant_record!(
 
     is_coding = any(a.is_coding == 1 for a in annotations) ? 1 : 0
     write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
-                      ctx.reference_strain)
+                      ctx.reference_strain, ctx.all_strains)
 
-    unique_prods   = unique(all_annotation_products)
-    hsss_prod_code = length(unique_prods) == 1 ?
-        Int8(codepoint(first(only(unique_prods)))) : Int8(0)
-    write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
-                         seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
+    # HSSS binary files are SNP-only; skip positions where no record has a SNP-length allele.
+    if any(has_snp_allele, records)
+        unique_prods   = unique(all_annotation_products)
+        hsss_prod_code = length(unique_prods) == 1 ?
+            Int8(codepoint(first(only(unique_prods)))) : Int8(0)
+        write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
+                             seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
+    end
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
-    modified_sample_data = fill_missing_coverage_gt(record, all_strains, chrom_coverage, ctx.ploidy)
     (alt_cann_entries, alt_strain_to_ca) = assign_cann_keys(alt_strain_entries, all_strains)
 
-    # Write one VCF output entry per unique alt (for SnpEff downstream).
-    n_orig_alts = length(record.alts)
-    for (alt_i, alt) in enumerate(record.alts)
-        if alt == "*"
-            @warn "Unexpected * allele in VCF output at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
-            continue
-        end
-        haskey(alt_cann_entries, alt) || continue
-
-        coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])
-        all_entries = [ref_cann_entries..., coding_alt_entries...]
-        full_cann   = isempty(all_entries) ? "." : join(all_entries, ',')
-
-        strain_to_alt_keys = get(alt_strain_to_ca, alt, Dict{String, Vector{String}}())
-        ca_values = build_ca_values(record.format_keys, modified_sample_data, record.alts, alt,
-                                    ref_keys, all_strains, strain_to_alt_keys)
-        strain_to_dfs = Dict{String,String}(v.strain => string(v.downstream_of_frameshift) for v in variations)
+    # Write one VCF output entry per unique alt per class-record (for SnpEff).
+    for (rec, recvars) in per_record
+        modified_sample_data = fill_missing_coverage_gt(rec, all_strains, chrom_coverage, ctx.ploidy)
+        strain_to_dfs = Dict{String,String}(v.strain => string(v.downstream_of_frameshift) for v in recvars)
         dfs_values = [get(strain_to_dfs, s, ".") for s in all_strains]
-        write_vcf_entry(writers.vcf_fh, seq_id, location, record.ref, alt,
-                        full_cann, record.info, record.format_keys,
-                        modified_sample_data, ca_values, dfs_values,
-                        n_orig_alts, alt_i)
+        n_orig_alts = length(rec.alts)
+        for (alt_i, alt) in enumerate(rec.alts)
+            if alt == "*"
+                @warn "Unexpected * allele in VCF output at $(seq_id):$(location) — should have been removed by mergeVariantsByLocation.py"
+                continue
+            end
+            haskey(alt_cann_entries, alt) || continue
+
+            coding_alt_entries = filter(!=((".")), alt_cann_entries[alt])
+            all_entries = [ref_cann_entries..., coding_alt_entries...]
+            full_cann   = isempty(all_entries) ? "." : join(all_entries, ',')
+
+            strain_to_alt_keys = get(alt_strain_to_ca, alt, Dict{String, Vector{String}}())
+            ca_values = build_ca_values(rec.format_keys, modified_sample_data, rec.alts, alt,
+                                        ref_keys, all_strains, strain_to_alt_keys)
+            write_vcf_entry(writers.vcf_fh, seq_id, location, rec.ref, alt,
+                            full_cann, rec.info, rec.format_keys,
+                            modified_sample_data, ca_values, dfs_values,
+                            n_orig_alts, alt_i)
+        end
     end
 
     true

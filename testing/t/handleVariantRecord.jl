@@ -86,6 +86,104 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# substitution_hgvs — Phase 1 HGVS for coding substitutions
+# ---------------------------------------------------------------------------
+
+@testset "protein_hgvs missense / synonymous / start-loss / stop-loss / unknown" begin
+    @test protein_hgvs(320, "D", "H") == "p.Asp320His"
+    @test protein_hgvs(134, "T", "T") == "p.Thr134="
+    @test protein_hgvs(1,   "M", "T") == "p.Met1?"
+    @test protein_hgvs(34,  "Q", "*") == "p.Gln34Ter"
+    @test protein_hgvs(327, "*", "Q") == "."
+    @test protein_hgvs(10,  "M", "X") == "."
+end
+
+@testset "substitution_hgvs missense: c. and p. from strand-oriented codons" begin
+    (c, p) = substitution_hgvs(958, "GAC", "CAC", 1, "D", "H")
+    @test c == "c.958G>C"
+    @test p == "p.Asp320His"
+end
+
+@testset "substitution_hgvs synonymous uses '=' protein form" begin
+    (c, p) = substitution_hgvs(402, "ACT", "ACC", 3, "T", "T")
+    @test c == "c.402T>C"
+    @test p == "p.Thr134="
+end
+
+@testset "substitution_hgvs nonsense uses Ter" begin
+    (c, p) = substitution_hgvs(100, "CAA", "TAA", 1, "Q", "*")
+    @test c == "c.100C>T"
+    @test p == "p.Gln34Ter"
+end
+
+@testset "substitution_hgvs start-loss renders p.Met1?" begin
+    (c, p) = substitution_hgvs(1, "ATG", "ACG", 2, "M", "T")
+    @test c == "c.1T>C"
+    @test p == "p.Met1?"
+end
+
+@testset "substitution_hgvs returns dots for ambiguous codon" begin
+    (c, p) = substitution_hgvs(10, "ATG", "ANG", 2, "M", "X")
+    @test c == "."
+    @test p == "."
+end
+
+@testset "substitution_hgvs returns dot p. for unknown amino acid" begin
+    (c, p) = substitution_hgvs(10, "ATG", "ACG", 2, "M", "X")
+    @test c == "c.10T>C"
+    @test p == "."
+end
+
+@testset "substitution_hgvs uppercases soft-masked bases" begin
+    (c, p) = substitution_hgvs(958, "gac", "cac", 1, "D", "H")
+    @test c == "c.958G>C"
+    @test p == "p.Asp320His"
+end
+
+@testset "substitution_hgvs stop-loss emits dot p. (out of Phase 1 scope)" begin
+    # ref stop(*) -> alt Gln(Q); protpos = div(979-1,3)+1 = 327
+    (c, p) = substitution_hgvs(979, "TAA", "CAA", 1, "*", "Q")
+    @test c == "c.979T>C"
+    @test p == "."
+end
+
+# ---------------------------------------------------------------------------
+# genomic_hgvs — per-allele g. (sub / del / ins / delins), left-aligned
+# ---------------------------------------------------------------------------
+
+@testset "genomic_hgvs substitution" begin
+    @test genomic_hgvs("LmjF.01", 3745, "G", "C") == "LmjF.01:g.3745G>C"
+end
+@testset "genomic_hgvs substitution embedded in shared prefix" begin
+    @test genomic_hgvs("LmjF.01", 100, "CA", "CG") == "LmjF.01:g.101A>G"
+end
+@testset "genomic_hgvs pure deletion, single base" begin
+    @test genomic_hgvs("LmjF.01", 2531, "CA", "C") == "LmjF.01:g.2532delA"
+end
+@testset "genomic_hgvs pure deletion, multi base" begin
+    @test genomic_hgvs("LmjF.01", 3037, "CGA", "C") == "LmjF.01:g.3038_3039delGA"
+end
+@testset "genomic_hgvs pure insertion" begin
+    @test genomic_hgvs("LmjF.01", 1585, "C", "CGA") == "LmjF.01:g.1585_1586insGA"
+end
+@testset "genomic_hgvs delins from complex allele" begin
+    @test genomic_hgvs("LmjF.01", 100, "ATA", "ACCTG") == "LmjF.01:g.101_102delinsCCTG"
+end
+@testset "genomic_hgvs delins from equal-length MNV" begin
+    @test genomic_hgvs("LmjF.01", 100, "CA", "GT") == "LmjF.01:g.100_101delinsGT"
+end
+@testset "genomic_hgvs single-base delins" begin
+    # ref core "C" (len 1), alt core "GT" -> single-position delins
+    @test genomic_hgvs("LmjF.01", 100, "AC", "AGT") == "LmjF.01:g.101delinsGT"
+end
+@testset "genomic_hgvs uppercases soft-masked bases" begin
+    @test genomic_hgvs("LmjF.01", 3745, "g", "c") == "LmjF.01:g.3745G>C"
+end
+@testset "genomic_hgvs returns dot for no change" begin
+    @test genomic_hgvs("LmjF.01", 100, "A", "A") == "."
+end
+
+# ---------------------------------------------------------------------------
 # fill_missing_coverage_gt
 # ---------------------------------------------------------------------------
 
@@ -376,14 +474,59 @@ end
     @test split(lines[g_row], "\t")[9] == "0"
 end
 
-@testset "write_allele_file has 9 columns per row" begin
+@testset "write_allele_file has 10 columns per row" begin
     sample_id_map = Dict{String,Int}("s1" => 1)
     v1 = Variation(); v1.strain = "s1"; v1.base = "A"; v1.reference = "A"; v1.coverage = "30"; v1.percent = "100"
 
     buf = IOBuffer()
     write_allele_file(buf, [v1], "LmjF.01", 100, sample_id_map)
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
-    @test length(split(lines[1], "\t")) == 9
+    @test length(split(lines[1], "\t")) == 10
+end
+
+@testset "write_allele_file emits genomic_hgvs column for alt alleles" begin
+    v_ref = Variation(); v_ref.strain="ref"; v_ref.base="C"; v_ref.reference="C"; v_ref.ploidy=1; v_ref.coverage="10"; v_ref.percent="100"
+    v_s1  = Variation(); v_s1.strain="s1";  v_s1.base="T"; v_s1.reference="C"; v_s1.ploidy=1; v_s1.coverage="12"; v_s1.percent="100"
+    v_s2  = Variation(); v_s2.strain="s2";  v_s2.base="C"; v_s2.reference="C"; v_s2.ploidy=1; v_s2.coverage="9";  v_s2.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v_ref, v_s1, v_s2], "LmjF.01", 700, Dict("ref"=>5,"s1"=>1,"s2"=>2))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test length(rows["T"]) == 10
+    @test rows["T"][10] == "LmjF.01:g.700C>T"
+    @test rows["C"][10] == "."
+end
+
+@testset "write_allele_file genomic_hgvs for a deletion allele" begin
+    v_ref = Variation(); v_ref.strain="ref"; v_ref.base="CA"; v_ref.reference="CA"; v_ref.ploidy=1; v_ref.coverage="10"; v_ref.percent="100"
+    v_s1  = Variation(); v_s1.strain="s1";  v_s1.base="C";  v_s1.reference="CA"; v_s1.ploidy=1; v_s1.coverage="12"; v_s1.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v_ref, v_s1], "LmjF.01", 2531, Dict("ref"=>5,"s1"=>1))
+    rows = Dict{String,Vector{SubString{String}}}()
+    for ln in filter(!isempty, split(String(take!(buf)), "\n"))
+        f = split(ln, "\t"); rows[f[3]] = f
+    end
+    @test rows["C"][10] == "LmjF.01:g.2532delA"
+end
+
+@testset "write_allele_file keys by (ref,allele), so same-string alleles from different refs stay distinct rows" begin
+    # allele string "C" arising from two different deletions (CA->C, CAT->C) at one
+    # locus: since aggregation is keyed by (ref, allele), each ref span gets its own
+    # row with its own correct (non-ambiguous) g.HGVS, rather than collapsing into
+    # a single "." row as the old allele-string-keyed aggregation did.
+    v1 = Variation(); v1.strain="s1"; v1.base="C"; v1.reference="CA";  v1.ploidy=1; v1.coverage="10"; v1.percent="100"
+    v2 = Variation(); v2.strain="s2"; v2.base="C"; v2.reference="CAT"; v2.ploidy=1; v2.coverage="11"; v2.percent="100"
+
+    buf = IOBuffer()
+    write_allele_file(buf, [v1, v2], "LmjF.01", 500, Dict("s1"=>1,"s2"=>2))
+    rows = [split(ln, "\t") for ln in filter(!isempty, split(String(take!(buf)), "\n")) if split(ln, "\t")[3] == "C"]
+    @test length(rows) == 2
+    hgvs = Set(r[10] for r in rows)
+    @test hgvs == Set(["LmjF.01:g.501delA", "LmjF.01:g.501_502delAT"])
 end
 
 @testset "collect_cann_entries_for_annotation returns entry keyed by alt allele" begin
@@ -399,6 +542,42 @@ end
     @test haskey(result["T"], "s1")
     @test length(result["T"]["s1"]) == 1
     @test contains(result["T"]["s1"][1], "T1")
+end
+
+# ---------------------------------------------------------------------------
+# build_cann_string / build_ref_cann_entry — hgvs_c / hgvs_p fields
+# ---------------------------------------------------------------------------
+
+@testset "build_cann_string appends hgvs_c and hgvs_p for a coding substitution" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=958,
+                          pos_in_codon_val=1, ref_codon="GAC", ref_product="D")
+    v   = make_variation(strain="s1", codon="CAC", product=["H"])
+    entry = build_cann_string("G", "C", v, ann)     # SNP: ref len 1, alt len 1
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "c.958G>C"
+    @test parts[9] == "p.Asp320His"
+end
+
+@testset "build_cann_string emits dot hgvs for a pure indel" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v   = make_variation(strain="s1", codon=".", product=String[])
+    entry = build_cann_string("AT", "A", v, ann)    # deletion
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "."
+    @test parts[9] == "."
+end
+
+@testset "build_ref_cann_entry appends dot hgvs fields" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    entry = build_ref_cann_entry("r0", ann)
+    parts = split(entry, "|")
+    @test length(parts) == 9
+    @test parts[8] == "."
+    @test parts[9] == "."
 end
 
 # ---------------------------------------------------------------------------
@@ -419,7 +598,7 @@ end
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 12
+    @test length(fields) == 13
     @test fields[6] == "ATT"
 end
 
@@ -435,7 +614,7 @@ end
 
     @test length(lines) == 1
     fields = split(lines[1], "\t")
-    @test length(fields) == 12
+    @test length(fields) == 13
     @test fields[6] == "ATT"
     @test fields[8] == "2"   # count = 2 strains with Ile product
 end
@@ -484,7 +663,7 @@ end
     @test fields[11] == "1"   # matches_ref_product: both encode F
 end
 
-@testset "write_transcript_product has 12 columns per row" begin
+@testset "write_transcript_product has 13 columns per row" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
     v1 = make_variation(strain="s1", codon="ATT", product=["I"], downstream_of_frameshift=0)
@@ -492,7 +671,7 @@ end
     buf = IOBuffer()
     write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
     lines = filter(!isempty, split(String(take!(buf)), "\n"))
-    @test length(split(lines[1], "\t")) == 12
+    @test length(split(lines[1], "\t")) == 13
 end
 
 @testset "write_transcript_product includes pos_in_cds and pos_in_protein" begin
@@ -540,28 +719,80 @@ end
     end
 end
 
+@testset "write_transcript_product emits hgvs_p per codon row" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=958,
+                          pos_in_codon_val=1, ref_codon="GAC", ref_product="D")
+    v1 = make_variation(strain="s1", codon="CAC", product=["H"], downstream_of_frameshift=0)
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1], ann, "LmjF.01", 3745, Dict{String,Int}())
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test length(fields) == 13
+    @test fields[13] == "p.Asp320His"
+end
+
+@testset "write_transcript_product hgvs_p is synonymous form for reference codon" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
+                          pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
+    v1 = make_variation(strain="s1", codon="ATG", product=["M"], downstream_of_frameshift=0)
+    buf = IOBuffer()
+    write_transcript_product(buf, [v1], ann, "chr1", 100, Dict{String,Int}())
+    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
+    @test fields[13] == "p.Met4="
+end
+
 # ---------------------------------------------------------------------------
 # write_snp_feature — 14 genomic columns, called once per position
 # ---------------------------------------------------------------------------
 
-@testset "write_snp_feature emits 14 columns, no CDS fields" begin
-    # ref strain: A; s1: T; s2: A (matches ref)
+@testset "write_snp_feature emits 31 columns, no CDS fields" begin
+    # ref strain: A; s1: T; s2: A (matches ref) -> SNP alts = {T} -> snp_major = T
     v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
     v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "A"; v_s2.reference  = "A"; v_s2.ploidy = 1
 
     buf = IOBuffer()
-    write_snp_feature(buf, [v_ref, v_s1, v_s2], 1, "LmjF.01", 500, "ref")
-    lines = filter(!isempty, split(String(take!(buf)), "\n"))
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 1, "LmjF.01", 500, "ref", ["s1", "s2"])
+    lines = filter(!isempty, split(chomp(String(take!(buf))), "\n"))
 
     @test length(lines) == 1
-    fields = split(lines[1], "\t")
-    @test length(fields) == 14
+    fields = split(lines[1], '\t')
+    @test length(fields) == 31
     @test fields[1]  == "500"       # location
-    @test fields[2]  == "LmjF.01"  # seq_id
+    @test fields[2]  == "LmjF.01"   # seq_id
     @test fields[3]  == "ref"       # reference_strain
-    @test fields[4]  == "A"         # ref_allele
-    @test fields[14] == "1"         # is_coding
+    @test fields[4]  == "1"         # is_coding
+    @test fields[13] == "A"                    # snp_ref_allele
+    @test fields[14] == "T"                    # snp_major_allele
+    @test fields[20] == "LmjF.01:g.500A>T"     # snp_major_genomic_hgvs
+end
+
+@testset "write_snp_feature indel major_genomic_hgvs for a deletion" begin
+    # ref CA at 2531; indel alts = {C} (deletion, 1 strain)
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "CA"; v_ref.reference = "CA"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "C";  v_s1.reference  = "CA"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CA"; v_s2.reference  = "CA"; v_s2.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 2531, "ref", ["s1", "s2"])
+    fields = split(chomp(String(take!(buf))), '\t')
+    @test fields[5]  == "INDEL"                    # variant_type
+    @test fields[22] == "CA"                       # indel_ref_allele
+    @test fields[23] == "C"                        # indel_major_allele
+    @test fields[29] == "LmjF.01:g.2532delA"       # indel_major_genomic_hgvs
+end
+
+@testset "write_snp_feature allele families empty when locus is monoallelic" begin
+    # only the reference allele present -> no snp/indel alleles at all
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "A"; v_s1.reference  = "A"; v_s1.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 300, "ref", ["s1"])
+    fields = split(chomp(String(take!(buf))), '\t')
+    @test fields[14] == ""     # snp_major_allele empty
+    @test fields[23] == ""     # indel_major_allele empty
+    @test fields[20] == ""     # snp_major_genomic_hgvs empty
+    @test fields[29] == ""     # indel_major_genomic_hgvs empty
 end
 
 @testset "write_snp_feature is_coding=0 for non-coding position" begin
@@ -569,9 +800,79 @@ end
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"; v_s1.ploidy = 1
 
     buf = IOBuffer()
-    write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 200, "ref")
-    fields = split(filter(!isempty, split(String(take!(buf)), "\n"))[1], "\t")
-    @test fields[14] == "0"
+    write_snp_feature(buf, [v_ref, v_s1], 0, "LmjF.01", 200, "ref", ["s1"])
+    fields = split(chomp(String(take!(buf))), '\t')
+    @test fields[4] == "0"
+end
+
+# ---------------------------------------------------------------------------
+# write_snp_feature — precompute columns (15-21):
+#   variant_type, major_differs_from_reference, is_singleton,
+#   het_strain_count, called_strain_count, no_call_strain_count, call_rate
+# ---------------------------------------------------------------------------
+
+@testset "write_snp_feature precompute columns for a SNV where major != reference" begin
+    # ref=C; s1,s2,s3 hom alt T; s4 hom ref C. All 4 sequenced samples called.
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "C"; v_ref.reference = "C"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "C"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "T"; v_s2.reference  = "C"; v_s2.ploidy = 1
+    v_s3  = Variation(); v_s3.strain  = "s3";  v_s3.base  = "T"; v_s3.reference  = "C"; v_s3.ploidy = 1
+    v_s4  = Variation(); v_s4.strain  = "s4";  v_s4.base  = "C"; v_s4.reference  = "C"; v_s4.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2, v_s3, v_s4], 0, "LmjF.01", 700, "ref",
+                      ["s1", "s2", "s3", "s4"])
+    fields = split(chomp(String(take!(buf))), '\t')
+
+    @test fields[5]  == "SNV"       # variant_type
+    @test fields[12] == "0"         # het_strain_count
+    @test fields[7]  == "4"         # called_strain_count (s1..s4)
+    @test fields[8]  == "0"         # no_call_strain_count
+    @test fields[9]  == "1.0000"    # call_rate
+    @test fields[14] == "T"         # snp_major_allele
+    @test fields[16] == "3"         # snp_major_allele_strain_count (s1,s2,s3)
+end
+
+@testset "write_snp_feature call_rate excludes reference and reflects no-calls" begin
+    # 4 sequenced samples; only s1 (ref-match) and s2 (het) have calls. s3,s4 are no-calls.
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "A"; v_s1.reference  = "A"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "R"; v_s2.reference = "A"; v_s2.alt_allele = "G"; v_s2.ploidy = 2
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 900, "ref",
+                      ["s1", "s2", "s3", "s4"])
+    fields = split(chomp(String(take!(buf))), '\t')
+
+    @test fields[5]  == "SNV"       # variant_type (alt G is a substitution)
+    @test fields[12] == "1"         # het_strain_count (s2)
+    @test fields[7]  == "2"         # called_strain_count (s1, s2; ref excluded)
+    @test fields[8]  == "2"         # no_call_strain_count (s3, s4)
+    @test fields[9]  == "0.5000"    # call_rate (2/4)
+end
+
+@testset "write_snp_feature variant_type INDEL when only indel alleles present" begin
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "CA"; v_ref.reference = "CA"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "C";  v_s1.reference  = "CA"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CA"; v_s2.reference  = "CA"; v_s2.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 1000, "ref", ["s1", "s2"])
+    fields = split(chomp(String(take!(buf))), '\t')
+
+    @test fields[5] == "INDEL"
+end
+
+@testset "write_snp_feature variant_type MIXED when both snp and indel alleles present" begin
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "C";   v_ref.reference = "C"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "G";   v_s1.reference  = "C"; v_s1.ploidy = 1  # SNP
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CGA"; v_s2.reference  = "C"; v_s2.ploidy = 1  # insertion
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 1100, "ref", ["s1", "s2"])
+    fields = split(chomp(String(take!(buf))), '\t')
+
+    @test fields[5] == "MIXED"
 end
 
 # ---------------------------------------------------------------------------
@@ -712,37 +1013,6 @@ end
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# compute_allele_weight_map — shared helper
-# ---------------------------------------------------------------------------
-
-@testset "compute_allele_weight_map returns correct weights for haploid hom variations" begin
-    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.ploidy = 1; v1.alt_allele = ""
-    v2 = Variation(); v2.base = "T"; v2.reference = "A"; v2.ploidy = 1; v2.alt_allele = ""
-    v3 = Variation(); v3.base = "T"; v3.reference = "A"; v3.ploidy = 1; v3.alt_allele = ""
-    (weights, total) = compute_allele_weight_map([v1, v2, v3])
-    @test weights["A"] == 1
-    @test weights["T"] == 2
-    @test total == 3
-end
-
-@testset "compute_allele_weight_map respects ploidy for diploid hom variations" begin
-    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.ploidy = 2; v1.alt_allele = ""
-    v2 = Variation(); v2.base = "T"; v2.reference = "A"; v2.ploidy = 2; v2.alt_allele = ""
-    (weights, total) = compute_allele_weight_map([v1, v2])
-    @test weights["A"] == 2
-    @test weights["T"] == 2
-    @test total == 4
-end
-
-@testset "compute_allele_weight_map splits het call: ref and alt each get weight 1" begin
-    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.alt_allele = "G"; v1.ploidy = 2
-    (weights, total) = compute_allele_weight_map([v1])
-    @test weights["A"] == 1
-    @test weights["G"] == 1
-    @test total == 2
-end
-
-# ---------------------------------------------------------------------------
 # fill_missing_coverage_gt — ploidy-aware GT string
 # ---------------------------------------------------------------------------
 
@@ -846,4 +1116,254 @@ end
     @test rec[2] == 1234
     @test rec[3] == "LmjF.01.0010"
     @test rec[4] == 42
+end
+
+# ---------------------------------------------------------------------------
+# -m both: cross-record ./. must not fabricate a duplicate reference variation
+# ---------------------------------------------------------------------------
+
+@testset "build_variations_from_record: synthesize_ref=false skips covered ./." begin
+    indel = make_vcf_record(ref="ATG", alts=["A"],
+                            format_keys=["GT","DP"], sample_data=["./.:0"])
+    chrom_cov = Dict("S1" => [(1, 1000, 30.0)])
+    vars = build_variations_from_record(indel, ["S1"], Set{String}(), chrom_cov, 1;
+                                        synthesize_ref=false)
+    @test isempty(vars)
+end
+
+@testset "build_variations_from_record: synthesize_ref=true keeps old behavior" begin
+    indel = make_vcf_record(ref="ATG", alts=["A"],
+                            format_keys=["GT","DP"], sample_data=["./.:0"])
+    chrom_cov = Dict("S1" => [(1, 1000, 30.0)])
+    vars = build_variations_from_record(indel, ["S1"], Set{String}(), chrom_cov, 1;
+                                        synthesize_ref=true)
+    @test length(vars) == 1
+    @test vars[1].matches_reference == 1
+end
+
+@testset "build_cann_string: indel downstream of frameshift → compound effect" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=42,
+                          pos_in_codon_val=2)
+    v = Variation()
+    v.downstream_of_frameshift = 1
+    # deletion ATG>A : len_diff = -2 → structurally a frameshift
+    s = build_cann_string("ATG", "A", v, ann)
+    @test occursin("frameshift&downstream_frameshift", s)
+end
+
+@testset "build_cann_string: indel NOT downstream of frameshift → structural only" begin
+    ann = make_annotation(is_coding=1)
+    v = Variation()
+    v.downstream_of_frameshift = 0
+    s = build_cann_string("ATG", "A", v, ann)   # frameshift
+    @test occursin("|frameshift|", s)
+    @test !occursin("downstream_frameshift", s)
+end
+
+# ---------------------------------------------------------------------------
+# handle_variant_record! — with bcftools -m both, a locus can carry BOTH a
+# SNP class-record and an indel class-record. BOTH must contribute output.vcf
+# rows (each reading GT from its OWN sample columns), not just the SNP record.
+# ---------------------------------------------------------------------------
+
+# Builds a ProcessingContext whose GTF is empty, so every position is
+# intergenic (non-coding) and no transcript/indel DB queries are exercised.
+function make_intergenic_ctx(all_strains::Vector{String}; reference_strain="ref", ploidy=1)
+    tmp_dir = mktempdir()
+    transcript_db_path = joinpath(tmp_dir, "transcripts.db")
+    indel_db_path      = joinpath(tmp_dir, "indels.db")
+    SQLite.DB(transcript_db_path) |> close
+    let db = SQLite.DB(indel_db_path)
+        SQLite.execute(db, "CREATE TABLE indels (strain TEXT, transcript_id TEXT, position INTEGER, shift_amount INTEGER)")
+        close(db)
+    end
+    gtf_path = joinpath(tmp_dir, "empty.gtf")
+    write(gtf_path, "")
+    args = Dict(
+        "transcript_db"       => transcript_db_path,
+        "indel_db"            => indel_db_path,
+        "gtf_file"            => gtf_path,
+        "reference_strain"    => reference_strain,
+        "undone_strains_file" => "",
+        "ploidy"              => string(ploidy),
+    )
+    initialize_processing_context(args, all_strains)
+end
+
+@testset "handle_variant_record! emits BOTH the SNP and indel class-record rows" begin
+    all_strains = ["S1", "S2"]
+    ctx = make_intergenic_ctx(all_strains)
+
+    vcf_buf = IOBuffer()
+    hsss    = open_hsss_writers("ref", all_strains, mktempdir())
+    writers = OutputWriters(vcf_buf, IOBuffer(), IOBuffer(), IOBuffer(), hsss)
+    transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
+
+    # SNP record:   S1 = A>G (1/1), S2 = no-call.
+    # Indel record: S1 = no-call, S2 = ATG>A (1/1) deletion.
+    # Same locus, same strain column order.
+    snp   = VCFRecord("chr1", 100, "A",   ["G"], ".", ["GT","DP"], ["1/1:30", "./.:0"])
+    indel = VCFRecord("chr1", 100, "ATG", ["A"], ".", ["GT","DP"], ["./.:0", "1/1:30"])
+
+    # chrom_coverage is keyed by STRAIN name (not chromosome).
+    chrom_cov = Dict{String, Vector{Tuple{Int,Int,Float64}}}(
+        "S1" => [(1, 1000, 30.0)],
+        "S2" => [(1, 1000, 30.0)],
+    )
+
+    handle_variant_record!([snp, indel], Tuple{String,Int}[], ctx, writers,
+                           transcript_cache, all_strains, chrom_cov)
+    close_hsss_writers(hsss)
+
+    rows = [split(l, '\t') for l in filter(!isempty, split(String(take!(vcf_buf)), "\n"))]
+    # (REF, ALT) pairs written for this locus
+    ref_alt = Set((r[4], r[5]) for r in rows)
+
+    @test ("A", "G") in ref_alt        # SNP class-record row
+    @test ("ATG", "A") in ref_alt      # indel class-record row (dropped before the fix)
+    # POS/CHROM are shared across both class-records
+    @test all(r -> r[1] == "chr1" && r[2] == "100", rows)
+end
+
+# ---------------------------------------------------------------------------
+# handle_variant_record! — allele.dat must not double-count a strain that is
+# ./. on the SNP record precisely because it carries a REAL call on the sibling
+# insertion record. Such a strain must NOT get a fabricated reference variation.
+# Use an INSERTION (A>AT); a co-located SNP+deletion has a separate base-collapse
+# bug that is out of scope here.
+# ---------------------------------------------------------------------------
+
+@testset "handle_variant_record! does not synthesize reference for indel-carrying strain" begin
+    all_strains = ["S1", "S2"]
+    ctx = make_intergenic_ctx(all_strains)
+
+    vcf_buf    = IOBuffer()
+    allele_buf = IOBuffer()
+    hsss       = open_hsss_writers("ref", all_strains, mktempdir())
+    # OutputWriters fields: vcf_fh, snp_fh, allele_fh, transcript_product_fh, hsss
+    writers = OutputWriters(vcf_buf, IOBuffer(), allele_buf, IOBuffer(), hsss)
+    transcript_cache = TranscriptSequenceCache(Dict{String, Dict{String,String}}())
+
+    # SNP record:       S1 = A>G (1/1),  S2 = no-call.
+    # Insertion record: S1 = no-call,    S2 = A>AT (1/1).
+    # S2 is ./. on the SNP record ONLY because it carries the insertion.
+    snp = VCFRecord("chr1", 100, "A", ["G"],  ".", ["GT","DP"], ["1/1:30", "./.:0"])
+    ins = VCFRecord("chr1", 100, "A", ["AT"], ".", ["GT","DP"], ["./.:0", "1/1:30"])
+
+    chrom_cov = Dict{String, Vector{Tuple{Int,Int,Float64}}}(
+        "S1" => [(1, 1000, 30.0)],
+        "S2" => [(1, 1000, 30.0)],
+    )
+
+    handle_variant_record!([snp, ins], Tuple{String,Int}[], ctx, writers,
+                           transcript_cache, all_strains, chrom_cov)
+    close_hsss_writers(hsss)
+
+    # allele.dat columns: location, seq_id, allele, distinct_strain_count,
+    #                     frequency, avg_coverage, avg_percent, strain_ids,
+    #                     matches_reference, genomic_hgvs
+    arows = [split(l, '\t') for l in filter(!isempty, split(String(take!(allele_buf)), "\n"))]
+    by_allele = Dict(r[3] => r for r in arows)
+
+    # Reference allele A must be credited with the reference strain ONLY (count 1),
+    # NOT with S2 (which carries the insertion). Alt alleles G and AT each carry 1.
+    @test haskey(by_allele, "A")
+    @test parse(Int, by_allele["A"][4]) == 1
+    @test haskey(by_allele, "G")
+    @test parse(Int, by_allele["G"][4]) == 1
+    @test haskey(by_allele, "AT")
+    @test parse(Int, by_allele["AT"][4]) == 1
+
+    # Invariant: no strain counted under more than one allele.
+    # Total distinct_strain_count across all alleles == 3 (S1→G, S2→AT, ref→A), NOT 4.
+    @test sum(parse(Int, r[4]) for r in arows) == 3
+end
+
+# ---------------------------------------------------------------------------
+# aggregate_locus_alleles / classify_allele — (ref,base)-keyed aggregation
+# ---------------------------------------------------------------------------
+
+function mkvar(; strain, reference, base, alt_allele="", ploidy=1,
+                coverage="30", percent="100", matches_reference=0)
+    v = Variation()
+    v.strain = strain; v.reference = reference; v.base = base
+    v.alt_allele = alt_allele; v.ploidy = ploidy
+    v.coverage = coverage; v.percent = percent
+    v.matches_reference = matches_reference
+    v
+end
+
+@testset "classify_allele distinguishes reference/snp/indel" begin
+    @test classify_allele("A", "A")     == :reference
+    @test classify_allele("A", "G")     == :snp
+    @test classify_allele("ACA", "A")   == :indel   # deletion
+    @test classify_allele("A", "AT")    == :indel   # insertion
+end
+
+@testset "aggregate_locus_alleles keys by (ref,base), no collapse" begin
+    vars = [
+        mkvar(strain="S1", reference="A",   base="G"),
+        mkvar(strain="S2", reference="ACA", base="A"),
+        mkvar(strain="REF", reference="A",  base="A", matches_reference=1),
+    ]
+    (stats, total) = aggregate_locus_alleles(vars)
+    @test total == 3
+    @test haskey(stats, ("ACA", "A"))
+    @test haskey(stats, ("A", "A"))
+    @test haskey(stats, ("A", "G"))
+    @test stats[("ACA","A")].weight == 1
+    @test length(stats[("A","G")].strains) == 1
+end
+
+@testset "write_snp_feature emits per-class SNP+indel columns without collapse" begin
+    vars = [
+        mkvar(strain="S1", reference="A",   base="G", coverage="30", percent="100"),
+        mkvar(strain="S2", reference="ACA", base="A", coverage="20", percent="100"),
+        mkvar(strain="REF", reference="A",  base="A", coverage="0",  percent="100", matches_reference=1),
+    ]
+    buf = IOBuffer()
+    write_snp_feature(buf, vars, 1, "LmjF.01", 13850, "REF", ["S1","S2"])
+    cols = split(chomp(String(take!(buf))), '\t')
+    @test length(cols) == 31
+    @test cols[1] == "13850"
+    @test cols[5] == "MIXED"
+    @test cols[13] == "A"                       # snp_ref_allele
+    @test cols[14] == "G"                       # snp_major_allele
+    @test cols[20] == "LmjF.01:g.13850A>G"      # snp_major_genomic_hgvs
+    @test cols[22] == "ACA"                     # indel_ref_allele
+    @test cols[23] == "A"                       # indel_major_allele
+    @test occursin("del", cols[29])             # indel_major_genomic_hgvs
+    @test cols[31] == "frameshift"              # indel_frame_effect (1-3=-2)
+    @test cols[14] != "A"                       # deletion did not collapse into SNP major
+end
+
+@testset "write_snp_feature SNP-only locus leaves indel family empty" begin
+    vars = [
+        mkvar(strain="S1", reference="A", base="G"),
+        mkvar(strain="REF", reference="A", base="A", matches_reference=1),
+    ]
+    buf = IOBuffer()
+    write_snp_feature(buf, vars, 1, "chr1", 100, "REF", ["S1"])
+    cols = split(chomp(String(take!(buf))), '\t')
+    @test cols[5] == "SNV"
+    @test cols[22] == ""                        # indel_ref_allele empty
+    @test cols[31] == ""                        # indel_frame_effect empty
+end
+
+@testset "write_allele_file keeps deletion and reference as distinct rows" begin
+    vars = [
+        mkvar(strain="S1", reference="A",   base="G"),
+        mkvar(strain="S2", reference="ACA", base="A"),
+        mkvar(strain="REF", reference="A",  base="A", matches_reference=1),
+    ]
+    buf = IOBuffer()
+    sid = Dict("S1"=>1, "S2"=>2, "REF"=>3)
+    write_allele_file(buf, vars, "LmjF.01", 13850, sid)
+    rows = [split(l, '\t') for l in filter(!isempty, split(String(take!(buf)), "\n"))]
+    del  = [r for r in rows if r[3] == "A" && r[9] == "0"]
+    refr = [r for r in rows if r[3] == "A" && r[9] == "1"]
+    @test length(del)  == 1                 # deletion A, matches_reference 0
+    @test length(refr) == 1                 # reference A, matches_reference 1
+    @test occursin("del", del[1][10])       # deletion has a del g.HGVS
+    @test refr[1][10] == "."                # reference row g.HGVS is "."
 end

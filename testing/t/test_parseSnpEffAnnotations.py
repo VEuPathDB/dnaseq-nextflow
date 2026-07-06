@@ -1,5 +1,6 @@
 """Tests for bin/parseSnpEffAnnotations.py"""
 import gzip
+import importlib.util
 import os
 import subprocess
 import tempfile
@@ -8,9 +9,18 @@ import pytest
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "../../bin/parseSnpEffAnnotations.py")
 
+_spec = importlib.util.spec_from_file_location("parseSnpEffAnnotations", SCRIPT)
+parseSnpEffAnnotations = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(parseSnpEffAnnotations)
+parse_ann_rows = parseSnpEffAnnotations.parse_ann_rows
+parse_cann_rows = parseSnpEffAnnotations.parse_cann_rows
 
-def run_script(vcf_content: str, compressed: bool = True) -> list[str]:
-    """Write VCF content to a temp file, run script, return output lines (no header)."""
+
+def run_script(vcf_content: str, compressed: bool = True, include_header: bool = False) -> list[str]:
+    """Write VCF content to a temp file, run script, return output lines.
+
+    Header is dropped unless include_header=True.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         vcf_path = os.path.join(tmp, "test.vcf.gz" if compressed else "test.vcf")
         out_path  = os.path.join(tmp, "snpeff.dat")
@@ -26,7 +36,7 @@ def run_script(vcf_content: str, compressed: bool = True) -> list[str]:
         )
         with open(out_path) as f:
             lines = f.read().strip().split('\n')
-        return lines[1:]  # skip header
+        return lines if include_header else lines[1:]
 
 
 MINIMAL_HEADER = "##fileformat=VCFv4.1\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
@@ -95,3 +105,156 @@ def test_skips_records_without_ann():
     vcf = MINIMAL_HEADER + "LmjF.01\t999\t.\tC\tT\t.\t.\tDP=30\n"
     rows = [r for r in run_script(vcf) if r]
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# source column + hand-rolled product calls from the CANN INFO field
+# CANN entry format: key|codon|aa|effect|transcript_id|pos_in_cds|pos_in_codon
+# ---------------------------------------------------------------------------
+
+def test_ann_row_has_source_snpeff():
+    vcf = MINIMAL_HEADER + f"LmjF.01\t3745\t.\tC\tT\t.\t.\tANN={ANN_MODERATE}\n"
+    rows = run_script(vcf)
+    assert len(rows) == 1
+    fields = rows[0].split('\t')
+    assert fields[7] == "snpeff"      # source column (after hgvs_c)
+
+
+def test_cann_missense_becomes_product_call_row():
+    vcf = MINIMAL_HEADER + "LmjF.01\t100\t.\tC\tT\t.\t.\tCANN=k0|ATG|M|missense|tx1|100|1\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 1
+    f = rows[0].split('\t')
+    assert f[0] == "100"                 # location
+    assert f[1] == "LmjF.01"             # seq_id
+    assert f[2] == "T"                   # allele (VCF ALT)
+    assert f[3] == "tx1"                 # transcript_id
+    assert f[4] == "MODERATE"            # impact tier
+    assert f[5] == "missense_variant"    # SnpEff-aligned effect term
+    assert f[7] == "product_call"        # source
+
+
+def test_cann_effect_and_impact_mapping():
+    cases = {
+        "synonymous":           ("synonymous_variant", "LOW"),
+        "missense":             ("missense_variant",   "MODERATE"),
+        "nonsense":             ("stop_gained",        "HIGH"),
+        "frameshift":           ("frameshift_variant", "HIGH"),
+        "inframe_insertion":    ("inframe_insertion_unnormalized", "MODERATE"),
+        "inframe_deletion":     ("inframe_deletion_unnormalized",  "MODERATE"),
+        "downstream_frameshift":("downstream_frameshift", "MODIFIER"),
+    }
+    for julia_term, (so_term, impact) in cases.items():
+        vcf = MINIMAL_HEADER + f"LmjF.01\t100\t.\tC\tT\t.\t.\tCANN=k0|.|.|{julia_term}|tx1|100|1\n"
+        rows = [r for r in run_script(vcf) if r]
+        assert len(rows) == 1, julia_term
+        f = rows[0].split('\t')
+        assert f[4] == impact, julia_term
+        assert f[5] == so_term, julia_term
+
+
+def test_cann_compound_effect_splits_into_one_row_per_effect():
+    vcf = MINIMAL_HEADER + "LmjF.01\t100\t.\tC\tCT\t.\t.\tCANN=k0|ATG|M|missense&frameshift|tx1|100|1\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 2
+    by_effect = {r.split('\t')[5]: r.split('\t')[4] for r in rows}
+    assert by_effect == {"missense_variant": "MODERATE", "frameshift_variant": "HIGH"}
+    assert all(r.split('\t')[7] == "product_call" for r in rows)
+
+
+def test_ann_compound_effect_splits_with_replicated_impact():
+    # SnpEff reports one impact for the whole entry; split rows inherit it.
+    ann_compound = ("T|missense_variant&splice_region_variant|MODERATE|geneA|geneA_id|"
+                    "transcript|tx1|protein_coding|1/3|c.100A>T|p.Ser34Cys|100/900|100/900|34/300|.|")
+    vcf = MINIMAL_HEADER + f"LmjF.01\t3745\t.\tC\tT\t.\t.\tANN={ann_compound}\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 2
+    effects = {r.split('\t')[5] for r in rows}
+    assert effects == {"missense_variant", "splice_region_variant"}
+    for r in rows:
+        f = r.split('\t')
+        assert f[4] == "MODERATE"          # entry-level impact replicated onto each row
+        assert f[7] == "snpeff"
+
+
+def test_cann_reference_r_entries_are_skipped():
+    cann = "r0|ATG|M|reference|tx1|100|1,k0|ATG|L|missense|tx1|100|1"
+    vcf  = MINIMAL_HEADER + f"LmjF.01\t100\t.\tC\tT\t.\t.\tCANN={cann}\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 1                 # only the k-entry
+    assert rows[0].split('\t')[5] == "missense_variant"
+
+
+def test_cann_het_indel_codon_maps_to_het_indel():
+    # Codon carries an X — always a het indel (per the consensus X-masking rule).
+    vcf = MINIMAL_HEADER + "LmjF.01\t100\t.\tC\tT\t.\t.\tCANN=k0|AXG|.|.|tx1|100|1\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 1
+    f = rows[0].split('\t')
+    assert f[5] == "het_indel"
+    assert f[4] == "MODIFIER"
+
+
+def test_cann_missing_sequence_codon_maps_to_coding_sequence_variant():
+    # Codon is all-N (missing strain sequence, not a het indel): consequence unknown.
+    vcf = MINIMAL_HEADER + "LmjF.01\t100\t.\tC\tT\t.\t.\tCANN=k0|NNN|.|.|tx1|100|1\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 1
+    f = rows[0].split('\t')
+    assert f[5] == "coding_sequence_variant"
+    assert f[4] == "MODIFIER"
+
+
+def test_header_column_names():
+    vcf = MINIMAL_HEADER + f"LmjF.01\t100\t.\tC\tT\t.\t.\tANN={ANN_MODERATE}\n"
+    header = run_script(vcf, include_header=True)[0]
+    assert header.split('\t') == [
+        "location", "seq_id", "allele", "transcript_id", "impact", "effect", "hgvs_c", "source"
+    ]
+
+
+def test_ann_and_cann_both_emitted_from_same_record():
+    info = f"ANN={ANN_MODERATE};CANN=k0|ATG|L|missense|tx1|100|1"
+    vcf  = MINIMAL_HEADER + f"LmjF.01\t3745\t.\tC\tT\t.\t.\t{info}\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert len(rows) == 2
+    sources = {r.split('\t')[7] for r in rows}
+    assert sources == {"snpeff", "product_call"}
+
+
+def test_cann_skips_non_coding_dot_entry():
+    vcf = MINIMAL_HEADER + "LmjF.01\t100\t.\tC\tT\t.\t.\tCANN=.\n"
+    rows = [r for r in run_script(vcf) if r]
+    assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# hgvs_c column
+# ---------------------------------------------------------------------------
+
+def test_ann_row_carries_hgvs_c():
+    info = "ANN=G|missense_variant|MODERATE|GENE|GENE|transcript|T1:mRNA|protein_coding|1/1|c.958G>C|p.Asp320His|958/999|958/999|320/332||"
+    rows = list(parse_ann_rows(info))
+    assert rows == [("G", "T1:mRNA", "MODERATE", "missense_variant", "c.958G>C")]
+
+
+def test_ann_row_hgvs_c_passes_through_snpeff_field_verbatim():
+    # Intergenic entries have no transcript_id, but SnpEff still fills the HGVS.c
+    # field (parts[9]) with n. notation; the parser passes it through unchanged.
+    info = "ANN=G|intergenic_region|MODIFIER|A-B|A-B|intergenic_region|A-B|||n.233C>G||||||"
+    rows = list(parse_ann_rows(info))
+    assert rows and rows[0][1] == ""          # transcript_id empty for intergenic
+    assert rows[0][4] == "n.233C>G"
+
+def test_ann_row_hgvs_c_dot_when_field_empty():
+    # No HGVS.c field at all -> "."
+    info = "ANN=G|intergenic_region|MODIFIER|A-B|A-B|intergenic_region|A-B||||||||"
+    rows = list(parse_ann_rows(info))
+    assert rows and rows[0][4] == "."
+
+
+def test_cann_row_carries_hgvs_c():
+    info = "CANN=k0|CAC|H|missense|T1:mRNA|958|1|c.958G>C|p.Asp320His"
+    rows = list(parse_cann_rows("C", info))
+    # confirmed via CANN_EFFECT_MAP["missense"] = ("missense_variant", "MODERATE")
+    assert rows == [("C", "T1:mRNA", "MODERATE", "missense_variant", "c.958G>C")]
