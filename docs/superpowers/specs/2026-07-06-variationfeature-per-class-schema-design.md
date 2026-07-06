@@ -41,17 +41,19 @@ both deferred bugs at their shared root, while keeping one row per locus.
    columns; downstream derives them (`snp_major_allele != snp_ref_allele`;
    `strain_count == 1`).
 
-## variationFeature.dat schema (30 columns)
+## variationFeature.dat schema (31 columns)
 
 **Locus-invariant (always populated):**
 ```
 location, seq_id, reference_strain, is_coding, variant_type,
 distinct_strain_count, called_strain_count, no_call_strain_count, call_rate,
-total_ploidy_count, ref_allele_frequency
+total_ploidy_count, ref_allele_frequency, het_strain_count
 ```
 - `variant_type ∈ {SNV, INDEL, MIXED}` (unchanged classification).
 - `ref_allele_frequency` = ploidy-weighted fraction of the locus-wide space that is
   the reference genome. Well-defined even though the ref *string* differs per class.
+- `het_strain_count` = number of strains with a het call at the locus
+  (`count(v -> !isempty(v.alt_allele), variations)`), unchanged from today.
 
 **SNP family — `snp_*` (empty when the locus has no SNP):**
 ```
@@ -71,9 +73,8 @@ indel_major_genomic_hgvs, indel_minor_genomic_hgvs, indel_frame_effect
 
 **Removed** (the collapsing columns): single `ref_allele`, `major_allele`,
 `minor_allele`, `major_allele_*`, `minor_allele_*`, `major_differs_from_reference`,
-`is_singleton`, `het_strain_count`. Their meaning moves into the per-class families or
-is derived. (`het_strain_count` — decide during implementation whether the webapp
-still wants it; if so, keep as a locus-invariant column. Default: drop.)
+`is_singleton`. Their meaning moves into the per-class families or is derived.
+`het_strain_count` is retained as a locus-invariant column.
 
 ## Computation
 
