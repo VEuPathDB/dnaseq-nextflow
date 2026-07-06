@@ -1491,28 +1491,6 @@ function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tupl
     (stats, total)
 end
 
-"""
-    compute_allele_weight_map(variations) -> (Dict{String,Int}, Int)
-
-Returns (allele_weight_counts, total_weight).  Het calls contribute weight 1
-to each of ref and alt; hom calls contribute v.ploidy to v.base.
-"""
-function compute_allele_weight_map(variations::Vector{Variation})::Tuple{Dict{String,Int}, Int}
-    weights = Dict{String,Int}()
-    total   = 0
-    for v in variations
-        if !isempty(v.alt_allele)
-            weights[v.reference]  = get(weights, v.reference,  0) + 1
-            weights[v.alt_allele] = get(weights, v.alt_allele, 0) + 1
-            total += 2
-        else
-            weights[v.base] = get(weights, v.base, 0) + v.ploidy
-            total += v.ploidy
-        end
-    end
-    (weights, total)
-end
-
 function write_snp_feature(
     snp_fh::IO,
     variations::Vector{Variation},
@@ -1537,7 +1515,9 @@ function write_snp_feature(
             push!(indel_keys, key)
         end
     end
-    rank(ks) = sort(ks; by = k -> (-stats[k].weight, k[2]))
+    # tie-break: weight desc, then allele string, then ref span — the last key
+    # keeps ordering deterministic for same-string alleles from different refs
+    rank(ks) = sort(ks; by = k -> (-stats[k].weight, k[2], k[1]))
     snp_keys   = rank(snp_keys)
     indel_keys = rank(indel_keys)
 

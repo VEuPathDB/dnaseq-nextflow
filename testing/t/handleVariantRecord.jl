@@ -1013,37 +1013,6 @@ end
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# compute_allele_weight_map — shared helper
-# ---------------------------------------------------------------------------
-
-@testset "compute_allele_weight_map returns correct weights for haploid hom variations" begin
-    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.ploidy = 1; v1.alt_allele = ""
-    v2 = Variation(); v2.base = "T"; v2.reference = "A"; v2.ploidy = 1; v2.alt_allele = ""
-    v3 = Variation(); v3.base = "T"; v3.reference = "A"; v3.ploidy = 1; v3.alt_allele = ""
-    (weights, total) = compute_allele_weight_map([v1, v2, v3])
-    @test weights["A"] == 1
-    @test weights["T"] == 2
-    @test total == 3
-end
-
-@testset "compute_allele_weight_map respects ploidy for diploid hom variations" begin
-    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.ploidy = 2; v1.alt_allele = ""
-    v2 = Variation(); v2.base = "T"; v2.reference = "A"; v2.ploidy = 2; v2.alt_allele = ""
-    (weights, total) = compute_allele_weight_map([v1, v2])
-    @test weights["A"] == 2
-    @test weights["T"] == 2
-    @test total == 4
-end
-
-@testset "compute_allele_weight_map splits het call: ref and alt each get weight 1" begin
-    v1 = Variation(); v1.base = "A"; v1.reference = "A"; v1.alt_allele = "G"; v1.ploidy = 2
-    (weights, total) = compute_allele_weight_map([v1])
-    @test weights["A"] == 1
-    @test weights["G"] == 1
-    @test total == 2
-end
-
-# ---------------------------------------------------------------------------
 # fill_missing_coverage_gt — ploidy-aware GT string
 # ---------------------------------------------------------------------------
 
