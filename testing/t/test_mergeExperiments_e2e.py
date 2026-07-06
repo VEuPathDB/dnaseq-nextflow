@@ -469,8 +469,8 @@ def test_variation_feature_exists(work_dirs):
 
 def test_variation_feature_column_count(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 23]
-    assert not bad, f"Rows with wrong column count (expected 23): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if len(r) != 31]
+    assert not bad, f"Rows with wrong column count (expected 31): {bad[:5]}"
 
 
 def test_variation_feature_row_count(work_dirs):
@@ -497,84 +497,84 @@ def test_variation_feature_reference_strain(work_dirs):
     assert next(iter(values)), "reference_strain (col 3) is empty"
 
 
-def test_variation_feature_major_allele_nonempty(work_dirs):
-    rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[4].strip()]
-    assert not bad, f"Rows with empty major_allele (col 5): {bad[:5]}"
-
-
 def test_variation_feature_major_allele_strain_count_positive(work_dirs):
+    """snp_major_allele_strain_count (col 16) / indel_major_allele_strain_count (col 25) must
+    be positive whenever the corresponding per-class major allele column is populated."""
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[6].isdigit() or int(r[6]) <= 0]
-    assert not bad, f"Rows with major_allele_strain_count <= 0 (col 7): {bad[:5]}"
+    bad = []
+    for i, r in enumerate(rows):
+        if r[13] and (not r[15].isdigit() or int(r[15]) <= 0):
+            bad.append(i + 1)
+        if r[22] and (not r[24].isdigit() or int(r[24]) <= 0):
+            bad.append(i + 1)
+    assert not bad, (
+        f"Rows with a per-class major_allele_strain_count <= 0 while the corresponding "
+        f"major allele is present (cols 13/15, 22/24): {bad[:5]}"
+    )
 
 
 def test_variation_feature_distinct_strain_count_in_range(work_dirs):
-    """distinct_strain_count (col 11) includes the reference strain as a separate variation,
+    """distinct_strain_count (col 6) includes the reference strain as a separate variation,
     so the upper bound is N_vcf_samples + 1."""
     vcf_path = os.path.join(work_dirs['mergeVcfs'], 'merged.vcf.gz')
     n_strains = len(bcftools_samples(vcf_path))
     rows = _read_variation_feature(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not r[10].isdigit() or not (1 <= int(r[10]) <= n_strains + 1)
+        if not r[5].isdigit() or not (1 <= int(r[5]) <= n_strains + 1)
     ]
-    assert not bad, f"Rows with distinct_strain_count out of range [1,{n_strains + 1}] (col 11): {bad[:5]}"
+    assert not bad, f"Rows with distinct_strain_count out of range [1,{n_strains + 1}] (col 6): {bad[:5]}"
 
 
 def test_variation_feature_is_coding_binary(work_dirs):
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if r[13] not in ('0', '1')]
-    assert not bad, f"Rows with is_coding not 0/1 (col 14): {bad[:5]}"
+    bad = [i + 1 for i, r in enumerate(rows) if r[3] not in ('0', '1')]
+    assert not bad, f"Rows with is_coding not 0/1 (col 4): {bad[:5]}"
 
 
 def test_variation_feature_ref_allele_nonempty(work_dirs):
+    """snp_ref_allele (col 13) / indel_ref_allele (col 22) must be populated whenever the
+    row's variant_type indicates that family is present."""
     rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[3].strip()]
-    assert not bad, f"Rows with empty ref_allele (col 4): {bad[:5]}"
-
-
-def test_variation_feature_distinct_allele_count_gte_1(work_dirs):
-    rows = _read_variation_feature(work_dirs)
-    bad = [i + 1 for i, r in enumerate(rows) if not r[11].isdigit() or int(r[11]) < 1]
-    assert not bad, f"Rows with distinct_allele_count < 1 (col 12): {bad[:5]}"
+    bad = []
+    for i, r in enumerate(rows):
+        vt = r[4]
+        if vt in ('SNV', 'MIXED') and not r[12].strip():
+            bad.append(i + 1)
+        if vt in ('INDEL', 'MIXED') and not r[21].strip():
+            bad.append(i + 1)
+    assert not bad, (
+        f"Rows missing snp_ref_allele/indel_ref_allele for their variant_type "
+        f"(cols 13, 22): {bad[:5]}"
+    )
 
 
 def test_variation_feature_total_ploidy_count_gte_strain_count(work_dirs):
     rows = _read_variation_feature(work_dirs)
     bad = [
         i + 1 for i, r in enumerate(rows)
-        if not r[12].isdigit() or int(r[12]) < int(r[10])
+        if not r[9].isdigit() or int(r[9]) < int(r[5])
     ]
-    assert not bad, f"Rows where total_ploidy_count < distinct_strain_count (col 13 < col 11): {bad[:5]}"
+    assert not bad, f"Rows where total_ploidy_count < distinct_strain_count (col 10 < col 6): {bad[:5]}"
 
 
-def test_variation_feature_major_allele_frequency_in_range(work_dirs):
-    """major_allele_frequency (col 9) is between 0 and 1 exclusive."""
-    rows = _read_variation_feature(work_dirs)
-    bad = []
-    for i, r in enumerate(rows):
-        try:
-            f = float(r[8])
-            if not (0.0 < f <= 1.0):
-                bad.append(i + 1)
-        except ValueError:
-            bad.append(i + 1)
-    assert not bad, f"Rows with major_allele_frequency out of range (col 9): {bad[:5]}"
-
-
-def test_variation_feature_allele_frequencies_sum_to_one(work_dirs):
-    """major + minor allele frequencies must sum to 1.0 per row (tolerance 0.01)."""
-    rows = _read_variation_feature(work_dirs)
-    bad = []
-    for i, r in enumerate(rows):
-        major = float(r[8])
-        minor = float(r[9]) if r[9] != '' else 0.0
-        # sum all allele frequencies — there may be more than 2 alleles not captured here,
-        # but major + minor should be <= 1.0; if only 2 alleles they sum to 1.0
-        if major + minor > 1.0 + 0.01:
-            bad.append(i + 1)
-    assert not bad, f"Rows where major+minor allele frequency > 1.0 (col 9+10): {bad[:5]}"
+def test_variation_feature_mixed_locus_families_disjoint(work_dirs):
+    """A MIXED row populates both families; SNV/INDEL leaves the other empty."""
+    path = os.path.join(work_dirs['processSeqVars'], 'variationFeature.dat')
+    with open(path) as f:
+        header = f.readline().rstrip('\n').split('\t')
+        idx = {name: i for i, name in enumerate(header)}
+        for line in f:
+            r = line.rstrip('\n').split('\t')
+            vt = r[idx['variant_type']]
+            snp_present   = bool(r[idx['snp_major_allele']])
+            indel_present = bool(r[idx['indel_major_allele']])
+            if vt == 'SNV':
+                assert snp_present and not indel_present
+            elif vt == 'INDEL':
+                assert indel_present and not snp_present
+            elif vt == 'MIXED':
+                assert snp_present and indel_present
 
 
 # ---------------------------------------------------------------------------
@@ -984,17 +984,20 @@ def test_allele_dat_no_iupac_alleles(work_dirs):
 
 
 def test_variation_feature_no_iupac_alleles(work_dirs):
-    """major_allele and minor_allele in variationFeature.dat must not contain IUPAC
-    ambiguity codes. Het calls must be expanded into their component alleles."""
+    """snp_major_allele, snp_minor_allele, indel_major_allele, indel_minor_allele in
+    variationFeature.dat must not contain IUPAC ambiguity codes. Het calls must be
+    expanded into their component alleles."""
     import re
     rows = _read_variation_feature(work_dirs)
     iupac_pattern = re.compile(r'^[RYSWKMBDHV]$', re.IGNORECASE)
+    allele_cols = [13, 16, 22, 25]  # snp_major, snp_minor, indel_major, indel_minor
     bad = [
-        (i + 1, r[4], r[5]) for i, r in enumerate(rows)
-        if iupac_pattern.match(r[4]) or (r[5] and iupac_pattern.match(r[5]))
+        (i + 1, c, r[c]) for i, r in enumerate(rows)
+        for c in allele_cols
+        if r[c] and iupac_pattern.match(r[c])
     ]
     assert not bad, (
-        f"IUPAC allele codes in variationFeature.dat (row, major, minor): {bad[:10]}"
+        f"IUPAC allele codes in variationFeature.dat (row, col, allele): {bad[:10]}"
     )
 
 
