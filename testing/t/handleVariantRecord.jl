@@ -1149,3 +1149,25 @@ end
     @test rec[3] == "LmjF.01.0010"
     @test rec[4] == 42
 end
+
+# ---------------------------------------------------------------------------
+# -m both: cross-record ./. must not fabricate a duplicate reference variation
+# ---------------------------------------------------------------------------
+
+@testset "SPIKE: covered ./. on sibling record synthesizes a reference variation" begin
+    # Strain S1 is ./. on this (indel) record; coverage says the locus is covered,
+    # so build_variations_from_record currently synthesizes a REF variation.
+    indel = make_vcf_record(ref="ATG", alts=["A"],
+                            format_keys=["GT","DP"], sample_data=["./.:0"])
+    # chrom_coverage is keyed by strain (not chrom) — see load_chrom_coverage!,
+    # which does get!(chrom_coverage, sample, ...). Interval (1,1000,30.0) covers
+    # pos-1=99 since get_coverage checks start<=pos<end_.
+    chrom_cov = Dict("S1" => [(1, 1000, 30.0)])
+    vars = build_variations_from_record(indel, ["S1"], Set{String}(), chrom_cov, 1)
+
+    # CURRENT behavior (to be changed in a later task):
+    @test length(vars) == 1
+    @test vars[1].matches_reference == 1
+    @test vars[1].reference == "ATG"
+    @test vars[1].base == "ATG"
+end
