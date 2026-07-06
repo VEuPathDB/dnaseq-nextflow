@@ -1106,7 +1106,8 @@ function build_variations_from_record(
     all_strains::Vector{String},
     undone_strains::Set{String},
     chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}},
-    ploidy::Int=1
+    ploidy::Int=1;
+    synthesize_ref::Bool=true
 )::Vector{Variation}
     variations = Variation[]
 
@@ -1118,6 +1119,7 @@ function build_variations_from_record(
 
         gt = get(fmt, "GT", "")
         if isempty(gt) || gt == "." || gt == "./." || gt == ".|."
+            synthesize_ref || continue
             # No call: synthesize a reference Variation if position is covered
             (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
             if covered
