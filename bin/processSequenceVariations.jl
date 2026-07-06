@@ -1438,6 +1438,59 @@ end
 # Output writing
 # ---------------------------------------------------------------------------
 
+mutable struct AlleleStat
+    weight::Int
+    strains::Set{String}
+    cov_sum::Float64
+    pct_sum::Float64
+    entry_count::Int
+end
+AlleleStat() = AlleleStat(0, Set{String}(), 0.0, 0.0, 0)
+
+"""
+    classify_allele(ref, allele) -> Symbol
+
+:reference if allele == ref; :snp if same length (substitution); :indel otherwise.
+"""
+function classify_allele(ref::String, allele::String)::Symbol
+    allele == ref                 ? :reference :
+    length(allele) == length(ref) ? :snp : :indel
+end
+
+"""
+    aggregate_locus_alleles(variations) -> (Dict{Tuple{String,String},AlleleStat}, total_weight)
+
+Ploidy-weighted allele aggregation keyed by the (reference_span, allele) tuple, so
+a deletion product (e.g. "A" from ref "ACA") never collides with a same-string SNP
+reference. Het calls split ploidy across their reference and alt components exactly
+as write_allele_file did. Shared by write_snp_feature and write_allele_file.
+"""
+function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tuple{String,String},AlleleStat}, Int}
+    stats = Dict{Tuple{String,String},AlleleStat}()
+    total = 0
+    add! = function(ref, allele, weight, strain, cov, pct)
+        st = get!(stats, (ref, allele), AlleleStat())
+        st.weight      += weight
+        push!(st.strains, strain)
+        st.cov_sum     += cov
+        st.pct_sum     += pct
+        st.entry_count += 1
+    end
+    for v in variations
+        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
+        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
+        if !isempty(v.alt_allele)
+            add!(v.reference, v.reference, 1, v.strain, cov, 100.0 - pct)
+            add!(v.reference, v.alt_allele, 1, v.strain, cov, pct)
+            total += 2
+        else
+            add!(v.reference, v.base, v.ploidy, v.strain, cov, pct)
+            total += v.ploidy
+        end
+    end
+    (stats, total)
+end
+
 """
     compute_allele_weight_map(variations) -> (Dict{String,Int}, Int)
 

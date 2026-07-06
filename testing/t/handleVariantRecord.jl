@@ -1310,3 +1310,39 @@ end
     # Total distinct_strain_count across all alleles == 3 (S1→G, S2→AT, ref→A), NOT 4.
     @test sum(parse(Int, r[4]) for r in arows) == 3
 end
+
+# ---------------------------------------------------------------------------
+# aggregate_locus_alleles / classify_allele — (ref,base)-keyed aggregation
+# ---------------------------------------------------------------------------
+
+function mkvar(; strain, reference, base, alt_allele="", ploidy=1,
+                coverage="30", percent="100", matches_reference=0)
+    v = Variation()
+    v.strain = strain; v.reference = reference; v.base = base
+    v.alt_allele = alt_allele; v.ploidy = ploidy
+    v.coverage = coverage; v.percent = percent
+    v.matches_reference = matches_reference
+    v
+end
+
+@testset "classify_allele distinguishes reference/snp/indel" begin
+    @test classify_allele("A", "A")     == :reference
+    @test classify_allele("A", "G")     == :snp
+    @test classify_allele("ACA", "A")   == :indel   # deletion
+    @test classify_allele("A", "AT")    == :indel   # insertion
+end
+
+@testset "aggregate_locus_alleles keys by (ref,base), no collapse" begin
+    vars = [
+        mkvar(strain="S1", reference="A",   base="G"),
+        mkvar(strain="S2", reference="ACA", base="A"),
+        mkvar(strain="REF", reference="A",  base="A", matches_reference=1),
+    ]
+    (stats, total) = aggregate_locus_alleles(vars)
+    @test total == 3
+    @test haskey(stats, ("ACA", "A"))
+    @test haskey(stats, ("A", "A"))
+    @test haskey(stats, ("A", "G"))
+    @test stats[("ACA","A")].weight == 1
+    @test length(stats[("A","G")].strains) == 1
+end
