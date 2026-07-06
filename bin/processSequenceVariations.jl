@@ -1951,7 +1951,9 @@ function build_cann_string(
         else
             "inframe_deletion"
         end
-        return "k0|.|.|$(structural)|$(tid)|$(pos_in_cds)|$(pic)|.|."
+        effect = v.downstream_of_frameshift == 1 ?
+            "$(structural)&downstream_frameshift" : structural
+        return "k0|.|.|$(effect)|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
     # SNP or complex variant: compute amino acid effect

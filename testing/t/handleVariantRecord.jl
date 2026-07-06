@@ -1172,3 +1172,22 @@ end
     @test length(vars) == 1
     @test vars[1].matches_reference == 1
 end
+
+@testset "build_cann_string: indel downstream of frameshift → compound effect" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=42,
+                          pos_in_codon_val=2)
+    v = Variation()
+    v.downstream_of_frameshift = 1
+    # deletion ATG>A : len_diff = -2 → structurally a frameshift
+    s = build_cann_string("ATG", "A", v, ann)
+    @test occursin("frameshift&downstream_frameshift", s)
+end
+
+@testset "build_cann_string: indel NOT downstream of frameshift → structural only" begin
+    ann = make_annotation(is_coding=1)
+    v = Variation()
+    v.downstream_of_frameshift = 0
+    s = build_cann_string("ATG", "A", v, ann)   # frameshift
+    @test occursin("|frameshift|", s)
+    @test !occursin("downstream_frameshift", s)
+end
