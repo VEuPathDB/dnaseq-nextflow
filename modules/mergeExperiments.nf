@@ -41,7 +41,7 @@ process mergeVcfs {
         bcftools norm -m -any -Oz -o "\${vcf%.vcf.gz}.norm.vcf.gz"
       bcftools index --tbi "\${vcf%.vcf.gz}.norm.vcf.gz"
     done
-    bcftools merge --merge all -O z -o merged.vcf.gz *.norm.vcf.gz
+    bcftools merge --merge both -O z -o merged.vcf.gz *.norm.vcf.gz
     """
 
   stub:
