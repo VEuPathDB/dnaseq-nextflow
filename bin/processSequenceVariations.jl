@@ -1848,38 +1848,6 @@ function genomic_hgvs(seq_id::String, pos::Int, ref::String, alt::String)::Strin
     end
 end
 
-"""
-    build_allele_refs(variations) -> Dict{String, Set{String}}
-
-Maps each ALT allele string to the set of reference spans it was called against.
-Reference-matching calls are excluded, so a reference allele has no entry. A
-single allele string mapped to more than one ref is an ambiguous collision.
-Shared by write_snp_feature and write_allele_file so their genomic HGVS agree.
-"""
-function build_allele_refs(variations::Vector{Variation})::Dict{String, Set{String}}
-    allele_refs = Dict{String, Set{String}}()
-    for v in variations
-        if !isempty(v.alt_allele)
-            push!(get!(allele_refs, v.alt_allele, Set{String}()), v.reference)
-        elseif v.base != v.reference
-            push!(get!(allele_refs, v.base, Set{String}()), v.reference)
-        end
-    end
-    allele_refs
-end
-
-"""
-    allele_genomic_hgvs(allele, allele_refs, seq_id, location) -> String
-
-Genomic HGVS for one allele using its own reference span. Returns "." for a
-reference allele (no entry) or an ambiguous multi-ref collision.
-"""
-function allele_genomic_hgvs(allele::String, allele_refs::Dict{String,Set{String}},
-                             seq_id::String, location::Int)::String
-    (haskey(allele_refs, allele) && length(allele_refs[allele]) == 1) ?
-        genomic_hgvs(seq_id, location, first(allele_refs[allele]), allele) : "."
-end
-
 # ---------------------------------------------------------------------------
 # CANN annotation
 # ---------------------------------------------------------------------------
