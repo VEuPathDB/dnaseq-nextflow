@@ -1584,7 +1584,7 @@ function write_snp_feature(
     no_call_strain_count  = max(0, total_sequenced - called_strain_count)
     call_rate = total_sequenced > 0 ?
         @sprintf("%.4f", called_strain_count / total_sequenced) : ""
-    het_strain_count = count(v -> !isempty(v.alt_allele), variations)
+    het_strain_count = length(Set(v.strain for v in variations if !isempty(v.alt_allele)))
     has_snp   = !isempty(snp_keys)
     has_indel = !isempty(indel_keys)
     variant_type = has_snp && has_indel ? "MIXED" : (has_indel ? "INDEL" : "SNV")

@@ -1455,3 +1455,13 @@ end
     @test occursin("del", del[1][10])       # deletion has a del g.HGVS
     @test refr[1][10] == "."                # reference row g.HGVS is "."
 end
+
+@testset "write_snp_feature het_strain_count counts distinct strains" begin
+    # One strain, two het records (split 1/2). het_strain_count must be 1, not 2.
+    v1 = Variation(); v1.strain="Seid"; v1.reference="T"; v1.base="TA";  v1.alt_allele="TA";  v1.ploidy=2; v1.coverage="12"; v1.percent="58"
+    v2 = Variation(); v2.strain="Seid"; v2.reference="T"; v2.base="TAA"; v2.alt_allele="TAA"; v2.ploidy=2; v2.coverage="12"; v2.percent="42"
+    buf = IOBuffer()
+    write_snp_feature(buf, [v1, v2], 0, "LmjF.01", 8962, "synthref", ["Seid"])
+    fields = split(strip(String(take!(buf))), "\t")
+    @test fields[12] == "1"   # het_strain_count (column 12)
+end
