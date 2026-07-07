@@ -1315,6 +1315,22 @@ end
     @test length(stats[("A","G")].strains) == 1
 end
 
+@testset "chromosome_alleles: legacy hom derives from base×ploidy" begin
+    v = Variation(); v.reference = "A"; v.base = "G"; v.ploidy = 2
+    @test chromosome_alleles(v) == ["G", "G"]
+end
+
+@testset "chromosome_alleles: legacy het derives [ref, alt]" begin
+    v = Variation(); v.reference = "A"; v.base = "R"; v.alt_allele = "G"; v.ploidy = 2
+    @test chromosome_alleles(v) == ["A", "G"]
+end
+
+@testset "chromosome_alleles: explicit allele_slots wins over legacy fields" begin
+    v = Variation(); v.reference = "T"; v.base = "TA"; v.ploidy = 2
+    v.allele_slots = ["TA"]
+    @test chromosome_alleles(v) == ["TA"]
+end
+
 @testset "write_snp_feature emits per-class SNP+indel columns without collapse" begin
     vars = [
         mkvar(strain="S1", reference="A",   base="G", coverage="30", percent="100"),

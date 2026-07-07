@@ -471,11 +471,12 @@ mutable struct Variation
     cds_number::Int
     matches_reference::Int
     ploidy::Int
+    allele_slots::Vector{String}   # resolved allele per non-missing GT slot; empty ⇒ derive from legacy fields
 end
 
 function Variation()
     Variation("", 0, "", "", "", "", "", "", "", "", "",
-              0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 1)
+              0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 1, String[])
 end
 
 # ---------------------------------------------------------------------------
@@ -1430,7 +1431,8 @@ function build_reference_variation(
         adjacent_snp_causes_product_difference,
         annotation.cds_number,
         1,   # matches_reference
-        1    # ploidy: reference genome is a single representative
+        1,   # ploidy: reference genome is a single representative
+        String[]   # allele_slots: derive from legacy fields
     )
 end
 
@@ -1455,6 +1457,20 @@ AlleleStat() = AlleleStat(0, Set{String}(), 0.0, 0.0, 0)
 function classify_allele(ref::String, allele::String)::Symbol
     allele == ref                 ? :reference :
     length(allele) == length(ref) ? :snp : :indel
+end
+
+"""
+    chromosome_alleles(v) -> Vector{String}
+
+The resolved allele string carried by each non-missing chromosome copy this
+variation represents. Uses `v.allele_slots` when populated (set by
+build_variations_from_record); otherwise derives from the legacy fields: a het
+(`alt_allele` set) is `[reference, alt_allele]`; a hom/ref call is `base`
+repeated `ploidy` times.
+"""
+function chromosome_alleles(v::Variation)::Vector{String}
+    isempty(v.allele_slots) || return v.allele_slots
+    isempty(v.alt_allele) ? fill(v.base, v.ploidy) : [v.reference, v.alt_allele]
 end
 
 """
