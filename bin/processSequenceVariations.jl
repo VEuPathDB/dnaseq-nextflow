@@ -959,15 +959,18 @@ function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
             sep_idx = findfirst(c -> c == '/' || c == '|', gt)
             sep = isnothing(sep_idx) ? nothing : gt[sep_idx]
             remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
+            # A '.' slot (from --multi-overlaps . on a split multiallelic) stays '.';
+            # remap numeric slots individually. Do NOT bail the whole GT on a missing
+            # slot — a non-target alt slot must remap to 0, not be left as a stale index.
+            remap_tok = function(s)
+                s == "." && return "."
+                idx = tryparse(Int, s)
+                isnothing(idx) ? s : string(remap(idx))
+            end
             if isnothing(sep_idx)
-                idx = tryparse(Int, gt)
-                isnothing(idx) && continue
-                result[fi] = string(remap(idx))
+                result[fi] = remap_tok(gt)
             else
-                a1 = tryparse(Int, gt[1:sep_idx-1])
-                a2 = tryparse(Int, gt[sep_idx+1:end])
-                (isnothing(a1) || isnothing(a2)) && continue
-                result[fi] = "$(remap(a1))$(sep)$(remap(a2))"
+                result[fi] = "$(remap_tok(gt[1:sep_idx-1]))$(sep)$(remap_tok(gt[sep_idx+1:end]))"
             end
         elseif key == "GL"
             result[fi] = "."

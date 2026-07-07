@@ -1456,6 +1456,18 @@ end
     @test refr[1][10] == "."                # reference row g.HGVS is "."
 end
 
+@testset "remap_sample_for_split remaps half-missing GT per-slot" begin
+    # n_orig_alts=2, target_alt_i=2: slot "1" is a NON-target alt → 0; "." stays "."
+    @test remap_sample_for_split("1/.", ["GT"], 2, 2) == "0/."
+    @test remap_sample_for_split("./1", ["GT"], 2, 2) == "./0"
+    # target_alt_i=1: slot "1" IS the target alt → 1; "." stays "."
+    @test remap_sample_for_split("1/.", ["GT"], 2, 1) == "1/."
+    # full-missing GT is left as-is (guarded earlier)
+    @test remap_sample_for_split("./.", ["GT"], 2, 2) == "./."
+    # sanity: existing biallelic behavior unaffected (n_orig_alts=1 → unchanged)
+    @test remap_sample_for_split("1/2", ["GT"], 1, 1) == "1/2"
+end
+
 @testset "write_snp_feature het_strain_count counts distinct strains" begin
     # One strain, two het records (split 1/2). het_strain_count must be 1, not 2.
     v1 = Variation(); v1.strain="Seid"; v1.reference="T"; v1.base="TA";  v1.alt_allele="TA";  v1.ploidy=2; v1.coverage="12"; v1.percent="58"
