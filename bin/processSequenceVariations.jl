@@ -1503,12 +1503,23 @@ function chromosome_alleles(v::Variation)::Vector{String}
 end
 
 """
-    aggregate_locus_alleles(variations) -> (Dict{Tuple{String,String},AlleleStat}, total_weight)
+    aggregate_locus_alleles(variations) -> (Dict{Tuple{String,String},AlleleStat}, total)
 
 Ploidy-weighted allele aggregation keyed by the (reference_span, allele) tuple, so
 a deletion product (e.g. "A" from ref "ACA") never collides with a same-string SNP
-reference. Het calls split ploidy across their reference and alt components exactly
-as write_allele_file did. Shared by write_snp_feature and write_allele_file.
+reference.
+
+Numerator: one weight unit per non-missing chromosome slot, taken from
+`chromosome_alleles(v)` (a `.` missing slot contributes to no allele, so split
+compound-het records never fabricate a reference allele).
+
+Denominator (`total`): the sum of each DISTINCT strain's ploidy, counted once —
+so a strain appearing in multiple co-located records (complex-variant
+decomposition, or a split multiallelic) is not double-counted. Because one
+chromosome can be both a SNP and an indel, per-class frequencies (reference +
+SNP alts + indel alts) may sum to more than 1.0 at complex loci by design.
+
+Shared by write_snp_feature and write_allele_file.
 """
 function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tuple{String,String},AlleleStat}, Int}
     stats = Dict{Tuple{String,String},AlleleStat}()
