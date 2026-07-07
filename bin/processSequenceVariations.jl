@@ -1005,6 +1005,8 @@ function resolve_gt_slots(gt::String, ref::String, alts::Vector{String})::Vector
     slots = isnothing(sep_idx) ? [gt] : split(gt, r"[/|]")
     for s in slots
         s == "." && continue
+        # GT indices are guaranteed valid against `alts` (input is post-`bcftools norm`);
+        # a silent bounds-guard is intentionally avoided — it would undercount copies.
         idx = parse(Int, s)
         push!(result, idx == 0 ? ref : alts[idx])
     end
