@@ -994,6 +994,24 @@ end
 # ---------------------------------------------------------------------------
 
 """
+    resolve_gt_slots(gt, ref, alts) -> Vector{String}
+
+Resolved allele string for each non-missing GT slot. A `.` slot is skipped
+(its allele lives in a sibling split-multiallelic record); `0` → ref; `n` → alts[n].
+"""
+function resolve_gt_slots(gt::String, ref::String, alts::Vector{String})::Vector{String}
+    result = String[]
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    slots = isnothing(sep_idx) ? [gt] : split(gt, r"[/|]")
+    for s in slots
+        s == "." && continue
+        idx = parse(Int, s)
+        push!(result, idx == 0 ? ref : alts[idx])
+    end
+    result
+end
+
+"""
     gt_to_base(gt, ref, alts) -> String
 
 Converts a GT field value to a base/allele string.
@@ -1012,7 +1030,14 @@ function gt_to_base(gt::String, ref::String, alts::Vector{String})::String
     else
         a1_str = gt[1:sep_idx-1]
         a2_str = gt[sep_idx+1:end]
-        (a1_str == "." || a2_str == ".") && return ""
+
+        # Half-missing (e.g. "1/." from a split multiallelic): return the present allele.
+        if a1_str == "." || a2_str == "."
+            present = a1_str == "." ? a2_str : a1_str
+            present == "." && return ""
+            idx = parse(Int, present)
+            return idx == 0 ? ref : alts[idx]
+        end
 
         a1 = parse(Int, a1_str)
         a2 = parse(Int, a2_str)
@@ -1047,8 +1072,7 @@ function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
         [parse(Int, gt)]
     else
         a1 = gt[1:sep_idx-1]; a2 = gt[sep_idx+1:end]
-        (a1 == "." || a2 == ".") && return String[]
-        [parse(Int, a1), parse(Int, a2)]
+        collect(parse(Int, s) for s in (a1, a2) if s != ".")
     end
     seen = Set{Int}()
     result = String[]
@@ -1078,8 +1102,9 @@ function compute_percent(fmt::Dict{String,String}, gt::String)::String
         aidx = parse(Int, gt)
         aidx == 0 && return "0.0"
     else
-        a1 = parse(Int, gt[1:sep_idx-1])
-        a2 = parse(Int, gt[sep_idx+1:end])
+        a1s = gt[1:sep_idx-1]; a2s = gt[sep_idx+1:end]
+        a1 = a1s == "." ? 0 : parse(Int, a1s)
+        a2 = a2s == "." ? 0 : parse(Int, a2s)
         aidx = a1 != 0 ? a1 : a2
         aidx == 0 && return "0.0"
     end
@@ -1139,6 +1164,7 @@ function build_variations_from_record(
                 v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
                 v.matches_reference  = 1
                 v.ploidy             = ploidy
+                v.allele_slots       = fill(record.ref, ploidy)
                 push!(variations, v)
             end
             continue
@@ -1176,6 +1202,7 @@ function build_variations_from_record(
         v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
         v.matches_reference  = (base == record.ref) ? 1 : 0
         v.ploidy             = gt_ploidy
+        v.allele_slots       = resolve_gt_slots(gt, record.ref, record.alts)
 
         push!(variations, v)
     end

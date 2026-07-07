@@ -1331,6 +1331,32 @@ end
     @test chromosome_alleles(v) == ["TA"]
 end
 
+@testset "gt_to_base: half-missing 1/. returns the present alt" begin
+    @test gt_to_base("1/.", "T", ["TA"]) == "TA"
+    @test gt_to_base("./1", "T", ["TA"]) == "TA"
+end
+
+@testset "nonref_alt_alleles: half-missing keeps the present alt" begin
+    @test nonref_alt_alleles("1/.", ["TA"]) == ["TA"]
+    @test nonref_alt_alleles("./1", ["TA"]) == ["TA"]
+end
+
+@testset "compute_percent: half-missing uses present alt AO" begin
+    fmt = Dict("AO" => "7", "RO" => "0")
+    @test compute_percent(fmt, "1/.") == "100.00"
+    @test compute_percent(fmt, "./1") == "100.00"
+end
+
+@testset "build_variations_from_record: 1/. yields one alt slot, no ref" begin
+    rec = make_vcf_record(pos=8962, ref="T", alts=["TA"],
+                          format_keys=["GT","AO","RO"], sample_data=["1/.:7:0"])
+    cov = make_coverage("s1", 8961, 200, 12.0)
+    vars = build_variations_from_record(rec, ["s1"], Set{String}(), cov, 2)
+    @test length(vars) == 1
+    @test vars[1].allele_slots == ["TA"]
+    @test vars[1].ploidy == 2
+end
+
 @testset "write_snp_feature emits per-class SNP+indel columns without collapse" begin
     vars = [
         mkvar(strain="S1", reference="A",   base="G", coverage="30", percent="100"),
