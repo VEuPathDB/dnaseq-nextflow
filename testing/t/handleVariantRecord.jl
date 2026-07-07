@@ -1315,6 +1315,52 @@ end
     @test length(stats[("A","G")].strains) == 1
 end
 
+@testset "aggregate: complex decomposition counts each strain's ploidy once" begin
+    # LmjF.01:85879 shape — 2 diploid strains carry BOTH a SNP (T>C) and a
+    # deletion (TGT>T) via two 1/1 records; 2 ref strains + 1 haploid synthetic ref.
+    mkslots(strain, ref, base, ploidy) = begin
+        v = Variation(); v.strain = strain; v.reference = ref; v.base = base
+        v.ploidy = ploidy; v.percent = "100"; v.coverage = "10"
+        v.allele_slots = fill(base, ploidy); v
+    end
+    vars = [
+        mkslots("LV39",     "T",   "C", 2), mkslots("LV39",     "TGT", "T", 2),
+        mkslots("LV39cl5",  "T",   "C", 2), mkslots("LV39cl5",  "TGT", "T", 2),
+        mkslots("Fried",    "T",   "T", 2), mkslots("Seid",     "T",   "T", 2),
+        mkslots("synthref", "T",   "T", 1),
+    ]
+    (stats, total) = aggregate_locus_alleles(vars)
+    @test total == 9                         # 2+2+2+2+1, each strain once
+    @test stats[("T","C")].weight   == 4     # both chromosomes of 2 strains
+    @test stats[("TGT","T")].weight == 4
+    @test stats[("T","T")].weight   == 5     # Fried 2 + Seid 2 + synthref 1
+end
+
+@testset "aggregate: split 1/2 compound het fabricates no reference" begin
+    # LmjF.01:8962 shape — Seidman is 1/2 (TA/TAA), split into 1/. and ./1.
+    het(strain, ref, alt) = begin
+        v = Variation(); v.strain = strain; v.reference = ref; v.base = alt
+        v.ploidy = 2; v.percent = "100"; v.coverage = "12"
+        v.allele_slots = [alt]; v          # one non-missing slot, no ref
+    end
+    refstrain(strain, ploidy) = begin
+        v = Variation(); v.strain = strain; v.reference = "T"; v.base = "T"
+        v.ploidy = ploidy; v.percent = "100"; v.coverage = "20"
+        v.allele_slots = fill("T", ploidy); v
+    end
+    vars = [
+        het("Seid", "T", "TA"), het("Seid", "T", "TAA"),
+        refstrain("LV39", 2), refstrain("Fried", 2), refstrain("LV39cl5", 2),
+        refstrain("synthref", 1),
+    ]
+    (stats, total) = aggregate_locus_alleles(vars)
+    @test total == 9                          # Seid counted once as ploidy 2
+    @test stats[("T","TA")].weight  == 1
+    @test stats[("T","TAA")].weight == 1
+    @test stats[("T","T")].weight   == 7      # Seid contributes 0 reference
+    @test !("Seid" in stats[("T","T")].strains)
+end
+
 @testset "chromosome_alleles: legacy hom derives from base×ploidy" begin
     v = Variation(); v.reference = "A"; v.base = "G"; v.ploidy = 2
     @test chromosome_alleles(v) == ["G", "G"]

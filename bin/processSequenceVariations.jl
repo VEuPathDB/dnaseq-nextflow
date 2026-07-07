@@ -1512,7 +1512,7 @@ as write_allele_file did. Shared by write_snp_feature and write_allele_file.
 """
 function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tuple{String,String},AlleleStat}, Int}
     stats = Dict{Tuple{String,String},AlleleStat}()
-    total = 0
+    strain_ploidy = Dict{String,Int}()   # each strain's chromosome count, once
     add! = function(ref, allele, weight, strain, cov, pct)
         st = get!(stats, (ref, allele), AlleleStat())
         st.weight      += weight
@@ -1522,17 +1522,17 @@ function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tupl
         st.entry_count += 1
     end
     for v in variations
-        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
-        if !isempty(v.alt_allele)
-            add!(v.reference, v.reference, 1, v.strain, cov, 100.0 - pct)
-            add!(v.reference, v.alt_allele, 1, v.strain, cov, pct)
-            total += 2
-        else
-            add!(v.reference, v.base, v.ploidy, v.strain, cov, pct)
-            total += v.ploidy
+        strain_ploidy[v.strain] = max(get(strain_ploidy, v.strain, 0), v.ploidy)
+        cov     = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
+        altfrac = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
+        slots   = chromosome_alleles(v)
+        has_alt = any(a -> a != v.reference, slots)
+        for a in slots
+            pct = a == v.reference ? (has_alt ? 100.0 - altfrac : altfrac) : altfrac
+            add!(v.reference, a, 1, v.strain, cov, pct)
         end
     end
+    total = sum(values(strain_ploidy); init=0)
     (stats, total)
 end
 
