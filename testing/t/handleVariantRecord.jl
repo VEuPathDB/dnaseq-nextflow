@@ -1315,6 +1315,94 @@ end
     @test length(stats[("A","G")].strains) == 1
 end
 
+@testset "aggregate: complex decomposition counts each strain's ploidy once" begin
+    # LmjF.01:85879 shape — 2 diploid strains carry BOTH a SNP (T>C) and a
+    # deletion (TGT>T) via two 1/1 records; 2 ref strains + 1 haploid synthetic ref.
+    mkslots(strain, ref, base, ploidy) = begin
+        v = Variation(); v.strain = strain; v.reference = ref; v.base = base
+        v.ploidy = ploidy; v.percent = "100"; v.coverage = "10"
+        v.allele_slots = fill(base, ploidy); v
+    end
+    vars = [
+        mkslots("LV39",     "T",   "C", 2), mkslots("LV39",     "TGT", "T", 2),
+        mkslots("LV39cl5",  "T",   "C", 2), mkslots("LV39cl5",  "TGT", "T", 2),
+        mkslots("Fried",    "T",   "T", 2), mkslots("Seid",     "T",   "T", 2),
+        mkslots("synthref", "T",   "T", 1),
+    ]
+    (stats, total) = aggregate_locus_alleles(vars)
+    @test total == 9                         # 2+2+2+2+1, each strain once
+    @test stats[("T","C")].weight   == 4     # both chromosomes of 2 strains
+    @test stats[("TGT","T")].weight == 4
+    @test stats[("T","T")].weight   == 5     # Fried 2 + Seid 2 + synthref 1
+end
+
+@testset "aggregate: split 1/2 compound het fabricates no reference" begin
+    # LmjF.01:8962 shape — Seidman is 1/2 (TA/TAA), split into 1/. and ./1.
+    het(strain, ref, alt) = begin
+        v = Variation(); v.strain = strain; v.reference = ref; v.base = alt
+        v.ploidy = 2; v.percent = "100"; v.coverage = "12"
+        v.allele_slots = [alt]; v          # one non-missing slot, no ref
+    end
+    refstrain(strain, ploidy) = begin
+        v = Variation(); v.strain = strain; v.reference = "T"; v.base = "T"
+        v.ploidy = ploidy; v.percent = "100"; v.coverage = "20"
+        v.allele_slots = fill("T", ploidy); v
+    end
+    vars = [
+        het("Seid", "T", "TA"), het("Seid", "T", "TAA"),
+        refstrain("LV39", 2), refstrain("Fried", 2), refstrain("LV39cl5", 2),
+        refstrain("synthref", 1),
+    ]
+    (stats, total) = aggregate_locus_alleles(vars)
+    @test total == 9                          # Seid counted once as ploidy 2
+    @test stats[("T","TA")].weight  == 1
+    @test stats[("T","TAA")].weight == 1
+    @test stats[("T","T")].weight   == 7      # Seid contributes 0 reference
+    @test !("Seid" in stats[("T","T")].strains)
+end
+
+@testset "chromosome_alleles: legacy hom derives from base×ploidy" begin
+    v = Variation(); v.reference = "A"; v.base = "G"; v.ploidy = 2
+    @test chromosome_alleles(v) == ["G", "G"]
+end
+
+@testset "chromosome_alleles: legacy het derives [ref, alt]" begin
+    v = Variation(); v.reference = "A"; v.base = "R"; v.alt_allele = "G"; v.ploidy = 2
+    @test chromosome_alleles(v) == ["A", "G"]
+end
+
+@testset "chromosome_alleles: explicit allele_slots wins over legacy fields" begin
+    v = Variation(); v.reference = "T"; v.base = "TA"; v.ploidy = 2
+    v.allele_slots = ["TA"]
+    @test chromosome_alleles(v) == ["TA"]
+end
+
+@testset "gt_to_base: half-missing 1/. returns the present alt" begin
+    @test gt_to_base("1/.", "T", ["TA"]) == "TA"
+    @test gt_to_base("./1", "T", ["TA"]) == "TA"
+end
+
+@testset "nonref_alt_alleles: half-missing keeps the present alt" begin
+    @test nonref_alt_alleles("1/.", ["TA"]) == ["TA"]
+    @test nonref_alt_alleles("./1", ["TA"]) == ["TA"]
+end
+
+@testset "compute_percent: half-missing uses present alt AO" begin
+    fmt = Dict("AO" => "7", "RO" => "0")
+    @test compute_percent(fmt, "1/.") == "100.00"
+    @test compute_percent(fmt, "./1") == "100.00"
+end
+
+@testset "build_variations_from_record: 1/. yields one alt slot, no ref" begin
+    rec = make_vcf_record(pos=8962, ref="T", alts=["TA"],
+                          format_keys=["GT","AO","RO"], sample_data=["1/.:7:0"])
+    cov = make_coverage("s1", 8961, 200, 12.0)
+    vars = build_variations_from_record(rec, ["s1"], Set{String}(), cov, 2)
+    @test length(vars) == 1
+    @test vars[1].allele_slots == ["TA"]
+    @test vars[1].ploidy == 2
+end
+
 @testset "write_snp_feature emits per-class SNP+indel columns without collapse" begin
     vars = [
         mkvar(strain="S1", reference="A",   base="G", coverage="30", percent="100"),
@@ -1366,4 +1454,26 @@ end
     @test length(refr) == 1                 # reference A, matches_reference 1
     @test occursin("del", del[1][10])       # deletion has a del g.HGVS
     @test refr[1][10] == "."                # reference row g.HGVS is "."
+end
+
+@testset "remap_sample_for_split remaps half-missing GT per-slot" begin
+    # n_orig_alts=2, target_alt_i=2: slot "1" is a NON-target alt → 0; "." stays "."
+    @test remap_sample_for_split("1/.", ["GT"], 2, 2) == "0/."
+    @test remap_sample_for_split("./1", ["GT"], 2, 2) == "./0"
+    # target_alt_i=1: slot "1" IS the target alt → 1; "." stays "."
+    @test remap_sample_for_split("1/.", ["GT"], 2, 1) == "1/."
+    # full-missing GT is left as-is (guarded earlier)
+    @test remap_sample_for_split("./.", ["GT"], 2, 2) == "./."
+    # sanity: existing biallelic behavior unaffected (n_orig_alts=1 → unchanged)
+    @test remap_sample_for_split("1/2", ["GT"], 1, 1) == "1/2"
+end
+
+@testset "write_snp_feature het_strain_count counts distinct strains" begin
+    # One strain, two het records (split 1/2). het_strain_count must be 1, not 2.
+    v1 = Variation(); v1.strain="Seid"; v1.reference="T"; v1.base="TA";  v1.alt_allele="TA";  v1.ploidy=2; v1.coverage="12"; v1.percent="58"
+    v2 = Variation(); v2.strain="Seid"; v2.reference="T"; v2.base="TAA"; v2.alt_allele="TAA"; v2.ploidy=2; v2.coverage="12"; v2.percent="42"
+    buf = IOBuffer()
+    write_snp_feature(buf, [v1, v2], 0, "LmjF.01", 8962, "synthref", ["Seid"])
+    fields = split(strip(String(take!(buf))), "\t")
+    @test fields[12] == "1"   # het_strain_count (column 12)
 end

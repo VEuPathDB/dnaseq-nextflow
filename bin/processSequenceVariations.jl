@@ -471,11 +471,12 @@ mutable struct Variation
     cds_number::Int
     matches_reference::Int
     ploidy::Int
+    allele_slots::Vector{String}   # resolved allele per non-missing GT slot; empty ⇒ derive from legacy fields
 end
 
 function Variation()
     Variation("", 0, "", "", "", "", "", "", "", "", "",
-              0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 1)
+              0, 0, 0, 0, "", String[], "", "", 0, 0, 0, 1, String[])
 end
 
 # ---------------------------------------------------------------------------
@@ -958,15 +959,18 @@ function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
             sep_idx = findfirst(c -> c == '/' || c == '|', gt)
             sep = isnothing(sep_idx) ? nothing : gt[sep_idx]
             remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
+            # A '.' slot (from --multi-overlaps . on a split multiallelic) stays '.';
+            # remap numeric slots individually. Do NOT bail the whole GT on a missing
+            # slot — a non-target alt slot must remap to 0, not be left as a stale index.
+            remap_tok = function(s)
+                s == "." && return "."
+                idx = tryparse(Int, s)
+                isnothing(idx) ? s : string(remap(idx))
+            end
             if isnothing(sep_idx)
-                idx = tryparse(Int, gt)
-                isnothing(idx) && continue
-                result[fi] = string(remap(idx))
+                result[fi] = remap_tok(gt)
             else
-                a1 = tryparse(Int, gt[1:sep_idx-1])
-                a2 = tryparse(Int, gt[sep_idx+1:end])
-                (isnothing(a1) || isnothing(a2)) && continue
-                result[fi] = "$(remap(a1))$(sep)$(remap(a2))"
+                result[fi] = "$(remap_tok(gt[1:sep_idx-1]))$(sep)$(remap_tok(gt[sep_idx+1:end]))"
             end
         elseif key == "GL"
             result[fi] = "."
@@ -993,6 +997,26 @@ end
 # ---------------------------------------------------------------------------
 
 """
+    resolve_gt_slots(gt, ref, alts) -> Vector{String}
+
+Resolved allele string for each non-missing GT slot. A `.` slot is skipped
+(its allele lives in a sibling split-multiallelic record); `0` → ref; `n` → alts[n].
+"""
+function resolve_gt_slots(gt::String, ref::String, alts::Vector{String})::Vector{String}
+    result = String[]
+    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    slots = isnothing(sep_idx) ? [gt] : split(gt, r"[/|]")
+    for s in slots
+        s == "." && continue
+        # GT indices are guaranteed valid against `alts` (input is post-`bcftools norm`);
+        # a silent bounds-guard is intentionally avoided — it would undercount copies.
+        idx = parse(Int, s)
+        push!(result, idx == 0 ? ref : alts[idx])
+    end
+    result
+end
+
+"""
     gt_to_base(gt, ref, alts) -> String
 
 Converts a GT field value to a base/allele string.
@@ -1011,7 +1035,14 @@ function gt_to_base(gt::String, ref::String, alts::Vector{String})::String
     else
         a1_str = gt[1:sep_idx-1]
         a2_str = gt[sep_idx+1:end]
-        (a1_str == "." || a2_str == ".") && return ""
+
+        # Half-missing (e.g. "1/." from a split multiallelic): return the present allele.
+        if a1_str == "." || a2_str == "."
+            present = a1_str == "." ? a2_str : a1_str
+            present == "." && return ""
+            idx = parse(Int, present)
+            return idx == 0 ? ref : alts[idx]
+        end
 
         a1 = parse(Int, a1_str)
         a2 = parse(Int, a2_str)
@@ -1046,8 +1077,7 @@ function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
         [parse(Int, gt)]
     else
         a1 = gt[1:sep_idx-1]; a2 = gt[sep_idx+1:end]
-        (a1 == "." || a2 == ".") && return String[]
-        [parse(Int, a1), parse(Int, a2)]
+        collect(parse(Int, s) for s in (a1, a2) if s != ".")
     end
     seen = Set{Int}()
     result = String[]
@@ -1077,8 +1107,9 @@ function compute_percent(fmt::Dict{String,String}, gt::String)::String
         aidx = parse(Int, gt)
         aidx == 0 && return "0.0"
     else
-        a1 = parse(Int, gt[1:sep_idx-1])
-        a2 = parse(Int, gt[sep_idx+1:end])
+        a1s = gt[1:sep_idx-1]; a2s = gt[sep_idx+1:end]
+        a1 = a1s == "." ? 0 : parse(Int, a1s)
+        a2 = a2s == "." ? 0 : parse(Int, a2s)
         aidx = a1 != 0 ? a1 : a2
         aidx == 0 && return "0.0"
     end
@@ -1138,6 +1169,7 @@ function build_variations_from_record(
                 v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
                 v.matches_reference  = 1
                 v.ploidy             = ploidy
+                v.allele_slots       = fill(record.ref, ploidy)
                 push!(variations, v)
             end
             continue
@@ -1175,6 +1207,7 @@ function build_variations_from_record(
         v.snp_source_id      = "NGS_SNP.$(record.chrom).$(record.pos)"
         v.matches_reference  = (base == record.ref) ? 1 : 0
         v.ploidy             = gt_ploidy
+        v.allele_slots       = resolve_gt_slots(gt, record.ref, record.alts)
 
         push!(variations, v)
     end
@@ -1430,7 +1463,8 @@ function build_reference_variation(
         adjacent_snp_causes_product_difference,
         annotation.cds_number,
         1,   # matches_reference
-        1    # ploidy: reference genome is a single representative
+        1,   # ploidy: reference genome is a single representative
+        String[]   # allele_slots: derive from legacy fields
     )
 end
 
@@ -1458,16 +1492,41 @@ function classify_allele(ref::String, allele::String)::Symbol
 end
 
 """
-    aggregate_locus_alleles(variations) -> (Dict{Tuple{String,String},AlleleStat}, total_weight)
+    chromosome_alleles(v) -> Vector{String}
+
+The resolved allele string carried by each non-missing chromosome copy this
+variation represents. Uses `v.allele_slots` when populated (set by
+build_variations_from_record); otherwise derives from the legacy fields: a het
+(`alt_allele` set) is `[reference, alt_allele]`; a hom/ref call is `base`
+repeated `ploidy` times.
+"""
+function chromosome_alleles(v::Variation)::Vector{String}
+    isempty(v.allele_slots) || return v.allele_slots
+    isempty(v.alt_allele) ? fill(v.base, v.ploidy) : [v.reference, v.alt_allele]
+end
+
+"""
+    aggregate_locus_alleles(variations) -> (Dict{Tuple{String,String},AlleleStat}, total)
 
 Ploidy-weighted allele aggregation keyed by the (reference_span, allele) tuple, so
 a deletion product (e.g. "A" from ref "ACA") never collides with a same-string SNP
-reference. Het calls split ploidy across their reference and alt components exactly
-as write_allele_file did. Shared by write_snp_feature and write_allele_file.
+reference.
+
+Numerator: one weight unit per non-missing chromosome slot, taken from
+`chromosome_alleles(v)` (a `.` missing slot contributes to no allele, so split
+compound-het records never fabricate a reference allele).
+
+Denominator (`total`): the sum of each DISTINCT strain's ploidy, counted once —
+so a strain appearing in multiple co-located records (complex-variant
+decomposition, or a split multiallelic) is not double-counted. Because one
+chromosome can be both a SNP and an indel, per-class frequencies (reference +
+SNP alts + indel alts) may sum to more than 1.0 at complex loci by design.
+
+Shared by write_snp_feature and write_allele_file.
 """
 function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tuple{String,String},AlleleStat}, Int}
     stats = Dict{Tuple{String,String},AlleleStat}()
-    total = 0
+    strain_ploidy = Dict{String,Int}()   # each strain's chromosome count, once
     add! = function(ref, allele, weight, strain, cov, pct)
         st = get!(stats, (ref, allele), AlleleStat())
         st.weight      += weight
@@ -1477,17 +1536,17 @@ function aggregate_locus_alleles(variations::Vector{Variation})::Tuple{Dict{Tupl
         st.entry_count += 1
     end
     for v in variations
-        cov = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
-        pct = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
-        if !isempty(v.alt_allele)
-            add!(v.reference, v.reference, 1, v.strain, cov, 100.0 - pct)
-            add!(v.reference, v.alt_allele, 1, v.strain, cov, pct)
-            total += 2
-        else
-            add!(v.reference, v.base, v.ploidy, v.strain, cov, pct)
-            total += v.ploidy
+        strain_ploidy[v.strain] = max(get(strain_ploidy, v.strain, 0), v.ploidy)
+        cov     = isempty(v.coverage) ? 0.0 : parse(Float64, v.coverage)
+        altfrac = isempty(v.percent)  ? 0.0 : parse(Float64, v.percent)
+        slots   = chromosome_alleles(v)
+        has_alt = any(a -> a != v.reference, slots)
+        for a in slots
+            pct = a == v.reference ? (has_alt ? 100.0 - altfrac : altfrac) : altfrac
+            add!(v.reference, a, 1, v.strain, cov, pct)
         end
     end
+    total = sum(values(strain_ploidy); init=0)
     (stats, total)
 end
 
@@ -1528,7 +1587,7 @@ function write_snp_feature(
     no_call_strain_count  = max(0, total_sequenced - called_strain_count)
     call_rate = total_sequenced > 0 ?
         @sprintf("%.4f", called_strain_count / total_sequenced) : ""
-    het_strain_count = count(v -> !isempty(v.alt_allele), variations)
+    het_strain_count = length(Set(v.strain for v in variations if !isempty(v.alt_allele)))
     has_snp   = !isempty(snp_keys)
     has_indel = !isempty(indel_keys)
     variant_type = has_snp && has_indel ? "MIXED" : (has_indel ? "INDEL" : "SNV")
