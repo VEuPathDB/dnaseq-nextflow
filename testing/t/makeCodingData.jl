@@ -93,6 +93,29 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# strip_strain_prefix
+# ---------------------------------------------------------------------------
+
+@testset "strip_strain_prefix removes exact strain prefix" begin
+    seqs = Dict("strainA_chr1" => "AAAA", "strainA_chr2" => "CCCC")
+    stripped = strip_strain_prefix(seqs, "strainA")
+    @test stripped == Dict("chr1" => "AAAA", "chr2" => "CCCC")
+end
+
+@testset "strip_strain_prefix keeps underscores inside sequenceId" begin
+    # sequence IDs may themselves contain underscores; only the leading
+    # "<strain>_" is removed.
+    seqs = Dict("strainA_contig_00_1" => "GGGG")
+    stripped = strip_strain_prefix(seqs, "strainA")
+    @test stripped == Dict("contig_00_1" => "GGGG")
+end
+
+@testset "strip_strain_prefix leaves non-matching keys unchanged" begin
+    seqs = Dict("chr1" => "TTTT")
+    @test strip_strain_prefix(seqs, "strainA") == Dict("chr1" => "TTTT")
+end
+
+# ---------------------------------------------------------------------------
 # extract_cds_sequence
 # ---------------------------------------------------------------------------
 

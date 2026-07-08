@@ -231,3 +231,14 @@ def test_write_fasta(tmp_path):
     lines = out.read_text().splitlines()
     assert lines[0] == '>chr1'
     assert ''.join(lines[1:]) == 'ACGT' * 20
+
+
+def test_write_fasta_sample_prefixed_defline(tmp_path):
+    # main() composes the defline as "<sample>_<sequenceId>"; downstream
+    # makeCodingData.jl strips the "<strain>_" prefix to recover the bare
+    # sequenceId. Lock the convention here.
+    out = tmp_path / "out.fa"
+    sample, chrom = 'strainA', 'chr1'
+    with open(out, 'w') as fh:
+        write_fasta(fh, f'{sample}_{chrom}', 'ACGT')
+    assert out.read_text().splitlines()[0] == '>strainA_chr1'
