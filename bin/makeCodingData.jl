@@ -73,6 +73,27 @@ function read_fasta(path::String)
     seqs
 end
 
+"""
+    strip_strain_prefix(seqs, strain) -> Dict{String, String}
+
+Consensus FASTA deflines are written as "<strain>_<sequenceId>" so they are
+globally unique across strains (e.g. for DB loading / display). This strips the
+exact "<strain>_" prefix so the returned dict is keyed by the bare sequenceId,
+matching the sequence_ids used in the GTF for CDS coordinate lookups.
+
+Dropping the strain from the *key* is safe only because the strain identity is
+retained separately by the caller: `main()` derives it from the filename, passes
+it to `process_strain`, and it becomes the `strain` column (part of the primary
+key) in both output SQLite tables. Keys lacking the prefix are left unchanged.
+"""
+function strip_strain_prefix(seqs::Dict{String,String}, strain::String)
+    prefix = strain * "_"
+    Dict(
+        (startswith(k, prefix) ? k[nextind(k, lastindex(prefix)):end] : k) => v
+        for (k, v) in seqs
+    )
+end
+
 # ---------------------------------------------------------------------------
 # CDS sequence extraction
 # ---------------------------------------------------------------------------
@@ -268,7 +289,7 @@ function main()
     for fasta_path in fasta_files
         strain = replace(basename(fasta_path), "_consensus.fa.gz" => "")
         println(stderr, "Processing strain: $strain")
-        strain_seqs = read_fasta(fasta_path)
+        strain_seqs = strip_strain_prefix(read_fasta(fasta_path), strain)
         SQLite.transaction(cds_db) do
             SQLite.transaction(indels_db) do
                 process_strain(strain, strain_seqs, by_transcript, indel_src_db,

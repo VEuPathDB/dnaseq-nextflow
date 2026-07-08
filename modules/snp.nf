@@ -187,6 +187,7 @@ process makeConsensusFromVcfAndBed {
       --bed $coverageBed \\
       --ref $genomeReorderedFasta \\
       --fai $genomeReorderedFastaIndex \\
+      --sample $sampleName \\
       --output consensus.fa
     bgzip consensus.fa
     mv consensus.fa.gz ${sampleName}_consensus.fa.gz

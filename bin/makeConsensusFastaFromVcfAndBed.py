@@ -203,6 +203,9 @@ def main():
     parser.add_argument('-b', '--bed',   required=True,
                         help='BED file of covered regions (0-based, half-open)')
     parser.add_argument('-o', '--output', required=True)
+    parser.add_argument('-s', '--sample', required=True,
+                        help='Sample/strain name, prepended to each defline as '
+                             '"<sample>_<sequenceId>"')
     args = parser.parse_args()
 
     chroms = []
@@ -221,7 +224,7 @@ def main():
             ref_seq = get_chrom_seq(args.ref, chrom_name)
             intervals, starts = coverage.get(chrom_name, ([], []))
             seq = build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals, starts)
-            write_fasta(out, chrom_name, seq)
+            write_fasta(out, f'{args.sample}_{chrom_name}', seq)
 
 
 if __name__ == '__main__':
