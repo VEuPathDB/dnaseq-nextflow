@@ -637,16 +637,55 @@ def test_allele_dat_frequency_in_range(work_dirs):
     assert not bad, f"Rows with allele_frequency outside (0, 1]: {bad[:5]}"
 
 
+def _allele_ref_context(genomic_hgvs):
+    """Signature of the reference context an ALT allele occupies.
+
+    Substitutions share one context ("snp"); each indel is keyed by its
+    coordinate span, so two deletions of different length at the same
+    position (e.g. delGGGG vs delGGGGG) count as distinct contexts.
+    Returns None for reference rows (genomic_hgvs == ".").
+    """
+    m = re.search(r'g\.(.+)$', genomic_hgvs)
+    if not m:
+        return None
+    body = m.group(1)
+    if '>' in body:
+        return 'snp'
+    km = re.search(r'(del|ins|dup)', body)
+    return body[:km.start()] if km else body
+
+
 def test_allele_dat_frequencies_sum_to_one_per_position(work_dirs):
-    """Ploidy-weighted allele frequencies must sum to ~1.0 at each position."""
+    """Ploidy-weighted allele frequencies per the frequency contract.
+
+    The denominator is the distinct-strain ploidy count (spec
+    2026-07-07-complex-variant-frequency-overcount). At a locus with a single
+    reference context, frequencies sum to ~1.0. At a *complex* locus — where a
+    strain's genotype is decomposed across multiple reference contexts (a SNP
+    coexisting with an indel, or two indels of different length) — that shared
+    denominator is counted once per context, so the per-position sum
+    legitimately exceeds 1.0. Complex loci must never *under*-count.
+    """
     from collections import defaultdict
     rows = _read_allele(work_dirs)
     by_pos = defaultdict(float)
+    contexts = defaultdict(set)
     for r in rows:
-        by_pos[(r[0], r[1])] += float(r[4])
-    bad = [(pos, seq, f"{total:.4f}") for (pos, seq), total in by_pos.items()
-           if abs(total - 1.0) > 0.01]
-    assert not bad, f"Positions where allele frequencies don't sum to 1.0: {bad[:5]}"
+        key = (r[0], r[1])
+        by_pos[key] += float(r[4])
+        if r[8] == "0":  # alt allele row (matches_reference == 0)
+            sig = _allele_ref_context(r[9])
+            if sig:
+                contexts[key].add(sig)
+    bad = []
+    for (pos, seq), total in by_pos.items():
+        if len(contexts[(pos, seq)]) >= 2:
+            # Complex locus: shared denominator counted per context → sum >= 1.0.
+            if total < 1.0 - 0.01:
+                bad.append((pos, seq, f"{total:.4f}", "complex locus under-counts"))
+        elif abs(total - 1.0) > 0.01:
+            bad.append((pos, seq, f"{total:.4f}", "single-context locus != 1.0"))
+    assert not bad, f"Allele-frequency sum violations: {bad[:5]}"
 
 
 def test_allele_dat_avg_coverage_non_negative(work_dirs):
