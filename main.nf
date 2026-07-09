@@ -7,7 +7,6 @@ nextflow.enable.dsl=2
 
 include { ps } from './workflows/processSingleExperiment.nf'
 include { me } from './workflows/mergeExperiments.nf'
-include { tests } from './modules/runTests.nf'
 
 //---------------------------------------------------------------
 // processSingleExperiment
@@ -67,24 +66,6 @@ workflow mergeExperiments {
 }
 
 
-
-//---------------------------------------------------------------
-// runTests
-//---------------------------------------------------------------
-
-workflow runTests {
-
-  if(params.testDir) {
-    tests_qch = Channel.fromPath([params.testDir + '*.t'])
-  }
-  
-  else {
-    throw new Exception("Missing parameter params.testDir")
-  }
-
-  tests(tests_qch)
-  
-}
 
 //---------------------------------------------------------------
 // DEFAULT - processSingleExperiment

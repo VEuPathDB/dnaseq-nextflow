@@ -13,8 +13,9 @@ nextflow run main.nf -profile processSingleExperiment
 # Named entry points
 nextflow run main.nf -entry processSingleExperiment -profile processSingleExperiment
 nextflow run main.nf -entry mergeExperiments        -profile mergeExperiments
-nextflow run main.nf -entry runTests                -profile tests
 ```
+
+Tests are not a Nextflow workflow — see [Testing](#testing).
 
 Docker is enabled by default in all profiles.
 
@@ -28,7 +29,6 @@ Three-tier structure: `main.nf` → `workflows/` → `modules/`
 |---|---|---|
 | `processSingleExperiment` | Per-strain: FASTQ → consensus FASTA + VCF + coverage | preprocessing.nf, alignment.nf, snp.nf, cnv.nf |
 | `mergeExperiments` | Multi-strain: merge VCFs, annotate variants, generate DB load files | mergeExperiments.nf |
-| `runTests` | Test runner (`prove`s `testing/t/*.t`; see Testing) | runTests.nf |
 
 ### processSingleExperiment stages
 1. QC: FastQC, Trimmomatic
@@ -53,7 +53,7 @@ workflows/
   mergeExperiments.nf
 modules/
   preprocessing.nf alignment.nf snp.nf cnv.nf
-  mergeExperiments.nf runTests.nf
+  mergeExperiments.nf
 bin/
   processSequenceVariations.jl   # Core variation annotation (Julia)
   findValues.pl                  # Indel TSV extraction (snp.nf)
@@ -84,16 +84,20 @@ Julia deps (precompiled): `SQLite.jl`
 
 ## Testing
 
-The active tests are Julia and Python unit tests in `testing/t/`, run manually:
-```bash
-# Julia unit tests
-julia testing/t/handleVariantRecord.jl
+Tests are **not** run through Nextflow. They are Julia and Python unit tests in
+`testing/t/`, plus a bcftools characterization test, run inside the
+`veupathdb/dnaseqanalysis` image (which carries Julia + SQLite.jl, Python +
+cyvcf2 + pytest, and bcftools):
 
-# Python unit tests
-python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v
+```bash
+docker run --rm -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:1.1.1 bash -c '
+  for t in testing/t/*.jl; do julia "$t"; done   # Julia unit tests
+  python3 -m pytest testing/t/                    # Python unit tests
+  bash testing/t/mergeBoth.t.sh                   # bcftools merge -m both contract
+'
 ```
 
-> **Note:** The `runTests` entry / `tests` profile (`runTests.nf`) `prove`s
-> `testing/t/*.t`. The Perl `Test2::V0` suite has been removed, so this profile
-> currently matches no files. It still needs to be rewired to the Julia/Python
-> tests above or removed.
+Individual suites can be run the same way (e.g. `julia testing/t/handleVariantRecord.jl`
+or `python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v`). `pytest` is
+provided by the image as of the `1.1.1` rebuild; older pulls need
+`pip3 install --break-system-packages pytest` first.
