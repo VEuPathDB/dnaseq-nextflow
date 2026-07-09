@@ -79,30 +79,6 @@ end
 end
 
 # ---------------------------------------------------------------------------
-# write_cache_entries
-# ---------------------------------------------------------------------------
-
-@testset "write_cache_entries coding annotations" begin
-    buf = IOBuffer()
-    annotations = [
-        PositionAnnotation(1, "TX1", 0, 42, 0, "ATG", "M"),
-        PositionAnnotation(1, "TX2", 0, 90, 0, "TTT", "F"),
-    ]
-    write_cache_entries(buf, "chr1", 100, annotations)
-    lines = split(String(take!(buf)), '\n'; keepempty=false)
-    @test length(lines) == 2
-    @test lines[1] == "chr1\t100\tTX1\t42"
-    @test lines[2] == "chr1\t100\tTX2\t90"
-end
-
-@testset "write_cache_entries skips non-coding" begin
-    buf = IOBuffer()
-    annotations = [PositionAnnotation(0, "", 0, 0, 0, "", "")]
-    write_cache_entries(buf, "chr1", 100, annotations)
-    @test isempty(String(take!(buf)))
-end
-
-# ---------------------------------------------------------------------------
 # build_annotations_from_cache
 # ---------------------------------------------------------------------------
 
@@ -143,30 +119,4 @@ end
     @test anns[2].transcript_id == "TX2"
     @test anns[2].pos_in_cds    == 4
     @test anns[2].ref_codon     == "CCC"
-end
-
-# ---------------------------------------------------------------------------
-# Round-trip: write then read back
-# ---------------------------------------------------------------------------
-
-@testset "cache round-trip: write entries then parse them back" begin
-    buf = IOBuffer()
-    annotations = [
-        PositionAnnotation(1, "TX1", 0, 1,  0, "ATG", "M"),
-        PositionAnnotation(1, "TX1", 0, 10, 0, "TTT", "F"),
-    ]
-    write_cache_entries(buf, "chr1", 5,  [annotations[1]])
-    write_cache_entries(buf, "chr1", 20, [annotations[2]])
-
-    content = String(take!(buf))
-    lines = split(content, '\n'; keepempty=false)
-    @test length(lines) == 2
-
-    r1 = parse_cache_tsv_record(lines[1])
-    @test !isnothing(r1)
-    @test r1 == ("chr1", 5, "TX1", 1)
-
-    r2 = parse_cache_tsv_record(lines[2])
-    @test !isnothing(r2)
-    @test r2 == ("chr1", 20, "TX1", 10)
 end

@@ -13,9 +13,9 @@ nextflow run main.nf -profile processSingleExperiment
 # Named entry points
 nextflow run main.nf -entry processSingleExperiment -profile processSingleExperiment
 nextflow run main.nf -entry mergeExperiments        -profile mergeExperiments
-nextflow run main.nf -entry loadSingleExperiment    -profile loadSingleExperiment
-nextflow run main.nf -entry runTests                -profile tests
 ```
+
+Tests are not a Nextflow workflow — see [Testing](#testing).
 
 Docker is enabled by default in all profiles.
 
@@ -29,8 +29,6 @@ Three-tier structure: `main.nf` → `workflows/` → `modules/`
 |---|---|---|
 | `processSingleExperiment` | Per-strain: FASTQ → consensus FASTA + VCF + coverage | preprocessing.nf, alignment.nf, snp.nf, cnv.nf |
 | `mergeExperiments` | Multi-strain: merge VCFs, annotate variants, generate DB load files | mergeExperiments.nf |
-| `loadSingleExperiment` | Load indel/ploidy/CNV data into GUS database | loadSingleExperiment.nf |
-| `runTests` | Perl Test2::V0 test suite | runTests.nf |
 
 ### processSingleExperiment stages
 1. QC: FastQC, Trimmomatic
@@ -53,17 +51,14 @@ nextflow.config                  # All profiles and parameters
 workflows/
   processSingleExperiment.nf
   mergeExperiments.nf
-  loadSingleExperiment.nf
 modules/
   preprocessing.nf alignment.nf snp.nf cnv.nf
-  mergeExperiments.nf loadSingleExperiment.nf runTests.nf
+  mergeExperiments.nf
 bin/
   processSequenceVariations.jl   # Core variation annotation (Julia)
-  makeSnpFile.pl maskGenome.pl fixSeqId.pl
-  calculatePloidy.pl calculateGeneCNVs.pl
-  addFeatureIdsToVariation.pl addExtDbRlsIdToVariation.pl
-testing/t/                       # Perl test files
-testing/lib/                     # Test utilities
+  findValues.pl                  # Indel TSV extraction (snp.nf)
+  calculatePloidy.pl calculateGeneCNVs.pl makeTpmFromHtseqCountsCNV.pl  # CNV (cnv.nf)
+testing/t/                       # Julia (.jl) and Python (.py) tests
 ```
 
 ## Configuration
@@ -89,17 +84,32 @@ Julia deps (precompiled): `SQLite.jl`
 
 ## Testing
 
+Tests are **not** run through Nextflow. They are Julia and Python unit tests in
+`testing/t/`, plus a bcftools characterization test, run inside the
+`veupathdb/dnaseqanalysis` image (which carries Julia + SQLite.jl, Python +
+cyvcf2 + pytest, and bcftools). Use the `:latest` tag — Jenkins rebuilds it from
+this repo's `Dockerfile` on every commit to `main`, so it stays in sync with the
+code. `--pull always` refreshes any stale local copy:
+
 ```bash
-nextflow run main.nf -entry runTests -profile tests
+docker run --rm --pull always -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:latest bash -c '
+  for t in testing/t/*.jl; do julia "$t"; done   # Julia unit tests
+  python3 -m pytest testing/t/                    # Python unit tests
+  bash testing/t/mergeBoth.t.sh                   # bcftools merge -m both contract
+'
 ```
 
-Tests in `testing/t/` use Perl's `Test2::V0` framework, run via `prove`.
+Individual suites can be run the same way (e.g. `julia testing/t/handleVariantRecord.jl`
+or `python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v`).
 
-Additional tests (not wired into the Nextflow test profile — run manually):
+**If your branch edits the `Dockerfile`**, `:latest` won't reflect it until the
+branch merges to `main` and Jenkins rebuilds. Build locally and run against that
+instead: `docker build -t dnaseqanalysis:dev .` then use `dnaseqanalysis:dev` above.
+
+The 96 tests in `test_mergeExperiments_e2e.py` are end-to-end and **skip by
+default** — they assert against the output files of a real `mergeExperiments`
+run. To exercise them, point at a completed run:
+
 ```bash
-# Julia unit tests
-julia testing/t/handleVariantRecord.jl
-
-# Python unit tests
-python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v
+python3 -m pytest testing/t/test_mergeExperiments_e2e.py --run-dir /path/to/nextflow/run
 ```

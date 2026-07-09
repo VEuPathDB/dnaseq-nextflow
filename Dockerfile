@@ -23,7 +23,7 @@ RUN wget -q https://github.com/bwa-mem2/bwa-mem2/releases/download/v${BWA_MEM2_V
     && mv bwa-mem2-${BWA_MEM2_VERSION}_x64-linux/bwa-mem2* /usr/local/bin/ \
     && rm -rf bwa-mem2-${BWA_MEM2_VERSION}_x64-linux.tar.bz2 bwa-mem2-${BWA_MEM2_VERSION}_x64-linux
 
-RUN pip3 install --break-system-packages cyvcf2
+RUN pip3 install --break-system-packages cyvcf2 pytest
 
 ENV JULIA_VERSION=1.10.10
 RUN wget -q https://julialang-s3.julialang.org/bin/linux/x64/1.10/julia-${JULIA_VERSION}-linux-x86_64.tar.gz \
@@ -60,8 +60,6 @@ RUN wget https://snpeff-public.s3.amazonaws.com/versions/snpEff_latest_core.zip 
 
 ADD /bin/snpEff.config /usr/bin/snpEff/snpEff.config
 
-
-ADD /testing/lib/*.pm /usr/lib/x86_64-linux-gnu/perl5/5.30/VEuPath/
 
 ADD /bin/All_adaptors* /usr/local/bin/
 

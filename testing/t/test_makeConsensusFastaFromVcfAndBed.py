@@ -3,11 +3,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../bin'))
 
-# This import will fail until the script is created — that's expected
 from makeConsensusFastaFromVcfAndBed import (
     load_coverage_bed,
     fill_gap,
-    is_covered,
     build_consensus,
     write_fasta,
 )
@@ -37,7 +35,7 @@ def test_load_coverage_bed(tmp_path):
     bed = tmp_path / "sample.bed"
     bed.write_text("chr1\t0\t100\nchr1\t200\t300\nchr2\t50\t150\n")
     result = load_coverage_bed(str(bed))
-    assert result == {'chr1': [(0, 100), (200, 300)], 'chr2': [(50, 150)]}
+    assert result == {'chr1': ([(0, 100), (200, 300)], [0, 200]), 'chr2': ([(50, 150)], [50])}
 
 
 def test_load_coverage_bed_empty(tmp_path):
@@ -50,58 +48,36 @@ def test_load_coverage_bed_empty(tmp_path):
 
 def test_fill_gap_all_covered():
     ref_seq = 'ACGTACGT'
-    assert fill_gap(ref_seq, 0, 8, [(0, 8)]) == 'ACGTACGT'
+    assert fill_gap(ref_seq, 0, 8, [(0, 8)], [0]) == 'ACGTACGT'
 
 
 def test_fill_gap_all_uncovered():
-    assert fill_gap('ACGTACGT', 0, 8, []) == 'NNNNNNNN'
+    assert fill_gap('ACGTACGT', 0, 8, [], []) == 'NNNNNNNN'
 
 
 def test_fill_gap_partial_coverage():
     # covered [2,5), uncovered [0,2) and [5,8)
     ref_seq = 'ACGTACGT'
-    result = fill_gap(ref_seq, 0, 8, [(2, 5)])
+    result = fill_gap(ref_seq, 0, 8, [(2, 5)], [2])
     assert result == 'NN' + 'GTA' + 'NNN'
 
 
 def test_fill_gap_subrange_with_partial_overlap():
     # fill [1,6), coverage at [2,5)
     ref_seq = 'ACGTACGT'
-    result = fill_gap(ref_seq, 1, 6, [(2, 5)])
+    result = fill_gap(ref_seq, 1, 6, [(2, 5)], [2])
     assert result == 'N' + 'GTA' + 'N'
 
 
 def test_fill_gap_empty_range():
-    assert fill_gap('ACGT', 3, 3, [(0, 4)]) == ''
+    assert fill_gap('ACGT', 3, 3, [(0, 4)], [0]) == ''
 
 
 def test_fill_gap_multiple_intervals():
     # covered [0,3) and [5,8), uncovered [3,5)
     ref_seq = 'ACGTACGT'
-    result = fill_gap(ref_seq, 0, 8, [(0, 3), (5, 8)])
+    result = fill_gap(ref_seq, 0, 8, [(0, 3), (5, 8)], [0, 5])
     assert result == 'ACG' + 'NN' + 'CGT'
-
-
-# ── is_covered ────────────────────────────────────────────────────────────────
-
-def test_is_covered_inside():
-    assert is_covered([(0, 100)], 50) is True
-
-
-def test_is_covered_at_start():
-    assert is_covered([(0, 100)], 0) is True
-
-
-def test_is_covered_at_end_exclusive():
-    assert is_covered([(0, 100)], 100) is False
-
-
-def test_is_covered_before_interval():
-    assert is_covered([(50, 100)], 10) is False
-
-
-def test_is_covered_empty():
-    assert is_covered([], 0) is False
 
 
 # ── build_consensus ───────────────────────────────────────────────────────────
@@ -109,14 +85,14 @@ def test_is_covered_empty():
 def test_build_consensus_all_covered_no_variants():
     ref_seq = 'ACGTACGT'
     vcf = FakeVcf({})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert seq == 'ACGTACGT'
 
 
 def test_build_consensus_all_uncovered_no_variants():
     ref_seq = 'ACGTACGT'
     vcf = FakeVcf({})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [], [])
     assert seq == 'NNNNNNNN'
 
 
@@ -125,7 +101,7 @@ def test_build_consensus_snp_covered():
     ref_seq = 'ACGTACGT'
     record = FakeVcfRecord('chr1', 5, 'A', ['T'], 'T/T')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert seq == 'ACGT' + 'T' + 'CGT'
 
 
@@ -134,17 +110,20 @@ def test_build_consensus_snp_het_iupac():
     ref_seq = 'ACGT'
     record = FakeVcfRecord('chr1', 1, 'A', ['T'], 'A/T')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)])
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
     assert seq[0] == 'W'
     assert seq[1:] == 'CGT'
 
 
-def test_build_consensus_snp_uncovered_gives_n():
+def test_build_consensus_snp_applied_even_when_bed_uncovered():
+    # Variant positions are authoritative: FreeBayes enforces --min-coverage, so
+    # a called SNP is applied regardless of BED coverage. The empty BED masks
+    # only the non-variant gap after it. See build_consensus docstring.
     ref_seq = 'ACGT'
     record = FakeVcfRecord('chr1', 1, 'A', ['T'], 'T/T')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 4, ref_seq, vcf, [])
-    assert seq == 'NNNN'
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [], [])
+    assert seq == 'TNNN'
 
 
 def test_build_consensus_hom_insertion_covered():
@@ -152,7 +131,7 @@ def test_build_consensus_hom_insertion_covered():
     ref_seq = 'ACGTACGT'
     record = FakeVcfRecord('chr1', 3, 'G', ['GCC'], 'GCC/GCC')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert seq == 'AC' + 'GCC' + 'TACGT'
 
 
@@ -161,7 +140,7 @@ def test_build_consensus_hom_deletion_covered():
     ref_seq = 'ACGTACGT'
     record = FakeVcfRecord('chr1', 1, 'ACG', ['A'], 'A/A')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert seq == 'A' + 'TACGT'
 
 
@@ -170,7 +149,7 @@ def test_build_consensus_het_indel_01_emits_ref():
     ref_seq = 'ACGTACGT'
     record = FakeVcfRecord('chr1', 2, 'CG', ['C'], 'CG/C')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert seq == 'A' + 'CG' + 'TACGT'
 
 
@@ -179,7 +158,7 @@ def test_build_consensus_het_indel_12_emits_x_times_ref_len():
     ref_seq = 'ACGTACGT'
     record = FakeVcfRecord('chr1', 1, 'ACG', ['AC', 'A'], 'AC/A')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert seq == 'XXX' + 'TACGT'
 
 
@@ -189,7 +168,7 @@ def test_build_consensus_gap_before_variant_partially_covered():
     ref_seq = 'ACGTACGT'
     record = FakeVcfRecord('chr1', 5, 'A', ['T'], 'T/T')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(2, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(2, 8)], [2])
     assert seq == 'NN' + 'GT' + 'T' + 'CGT'
 
 
@@ -198,7 +177,7 @@ def test_build_consensus_gap_after_last_variant():
     ref_seq = 'ACGTACGT'
     record = FakeVcfRecord('chr1', 1, 'A', ['T'], 'T/T')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert seq == 'T' + 'CGTACGT'
 
 
@@ -206,7 +185,7 @@ def test_build_consensus_dot_gt_gives_n():
     ref_seq = 'ACGT'
     record = FakeVcfRecord('chr1', 1, 'A', ['T'], './.')
     vcf = FakeVcf({'chr1': [record]})
-    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)])
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
     assert seq == 'N' + 'CGT'
 
 
@@ -217,7 +196,7 @@ def test_build_consensus_overlapping_records_skipped():
     r1 = FakeVcfRecord('chr1', 1, 'ACG', ['TTT'], 'TTT/TTT')  # hom, pos 0-2
     r2 = FakeVcfRecord('chr1', 2, 'C', ['G'], 'G/G')           # overlaps — pos 1, inside r1
     vcf = FakeVcf({'chr1': [r1, r2]})
-    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)])
+    seq = build_consensus('chr1', 8, ref_seq, vcf, [(0, 8)], [0])
     assert len(seq) == 8
     assert seq == 'TTT' + 'TACGT'
 

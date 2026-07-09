@@ -14,10 +14,9 @@ nextflow run main.nf -profile processSingleExperiment
 
 # Multi-strain merge
 nextflow run main.nf -entry mergeExperiments -profile mergeExperiments
-
-# Tests
-nextflow run main.nf -entry runTests -profile tests
 ```
+
+Tests are not run through Nextflow — see [Testing](#testing).
 
 Docker is enabled by default in all profiles.
 
@@ -141,8 +140,24 @@ Takes the per-strain outputs from one or more `processSingleExperiment` runs and
 
 ## Testing
 
+Tests are Julia and Python unit tests in `testing/t/`, plus a bcftools
+characterization test. Run them inside the `veupathdb/dnaseqanalysis` image,
+which carries Julia + SQLite.jl, Python + cyvcf2 + pytest, and bcftools. The
+`:latest` tag is rebuilt by Jenkins from this repo's `Dockerfile` on every commit
+to `main`, so it tracks the code; `--pull always` refreshes a stale local copy:
+
 ```bash
-nextflow run main.nf -entry runTests -profile tests
+docker run --rm --pull always -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:latest bash -c '
+  for t in testing/t/*.jl; do julia "$t"; done   # Julia unit tests
+  python3 -m pytest testing/t/                    # Python unit tests
+  bash testing/t/mergeBoth.t.sh                   # bcftools merge -m both contract
+'
 ```
 
-Tests live in `testing/t/` and use Perl's `Test2::V0` framework, run via `prove`.
+If your branch edits the `Dockerfile`, `:latest` won't reflect it until the branch
+merges to `main`; build locally (`docker build -t dnaseqanalysis:dev .`) and run
+against `dnaseqanalysis:dev` instead.
+
+The 96 tests in `test_mergeExperiments_e2e.py` skip by default — they assert
+against the output of a real `mergeExperiments` run. Exercise them with
+`python3 -m pytest testing/t/test_mergeExperiments_e2e.py --run-dir /path/to/run`.
