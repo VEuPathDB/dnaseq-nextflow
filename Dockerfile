@@ -61,8 +61,6 @@ RUN wget https://snpeff-public.s3.amazonaws.com/versions/snpEff_latest_core.zip 
 ADD /bin/snpEff.config /usr/bin/snpEff/snpEff.config
 
 
-ADD /testing/lib/*.pm /usr/lib/x86_64-linux-gnu/perl5/5.30/VEuPath/
-
 ADD /bin/All_adaptors* /usr/local/bin/
 
 WORKDIR /work

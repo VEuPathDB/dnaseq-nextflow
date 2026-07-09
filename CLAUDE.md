@@ -13,7 +13,6 @@ nextflow run main.nf -profile processSingleExperiment
 # Named entry points
 nextflow run main.nf -entry processSingleExperiment -profile processSingleExperiment
 nextflow run main.nf -entry mergeExperiments        -profile mergeExperiments
-nextflow run main.nf -entry loadSingleExperiment    -profile loadSingleExperiment
 nextflow run main.nf -entry runTests                -profile tests
 ```
 
@@ -29,8 +28,7 @@ Three-tier structure: `main.nf` → `workflows/` → `modules/`
 |---|---|---|
 | `processSingleExperiment` | Per-strain: FASTQ → consensus FASTA + VCF + coverage | preprocessing.nf, alignment.nf, snp.nf, cnv.nf |
 | `mergeExperiments` | Multi-strain: merge VCFs, annotate variants, generate DB load files | mergeExperiments.nf |
-| `loadSingleExperiment` | Load indel/ploidy/CNV data into GUS database | loadSingleExperiment.nf |
-| `runTests` | Perl Test2::V0 test suite | runTests.nf |
+| `runTests` | Test runner (`prove`s `testing/t/*.t`; see Testing) | runTests.nf |
 
 ### processSingleExperiment stages
 1. QC: FastQC, Trimmomatic
@@ -53,17 +51,14 @@ nextflow.config                  # All profiles and parameters
 workflows/
   processSingleExperiment.nf
   mergeExperiments.nf
-  loadSingleExperiment.nf
 modules/
   preprocessing.nf alignment.nf snp.nf cnv.nf
-  mergeExperiments.nf loadSingleExperiment.nf runTests.nf
+  mergeExperiments.nf runTests.nf
 bin/
   processSequenceVariations.jl   # Core variation annotation (Julia)
-  makeSnpFile.pl maskGenome.pl fixSeqId.pl
-  calculatePloidy.pl calculateGeneCNVs.pl
-  addFeatureIdsToVariation.pl addExtDbRlsIdToVariation.pl
-testing/t/                       # Perl test files
-testing/lib/                     # Test utilities
+  findValues.pl                  # Indel TSV extraction (snp.nf)
+  calculatePloidy.pl calculateGeneCNVs.pl makeTpmFromHtseqCountsCNV.pl  # CNV (cnv.nf)
+testing/t/                       # Julia (.jl) and Python (.py) tests
 ```
 
 ## Configuration
@@ -89,13 +84,7 @@ Julia deps (precompiled): `SQLite.jl`
 
 ## Testing
 
-```bash
-nextflow run main.nf -entry runTests -profile tests
-```
-
-Tests in `testing/t/` use Perl's `Test2::V0` framework, run via `prove`.
-
-Additional tests (not wired into the Nextflow test profile — run manually):
+The active tests are Julia and Python unit tests in `testing/t/`, run manually:
 ```bash
 # Julia unit tests
 julia testing/t/handleVariantRecord.jl
@@ -103,3 +92,8 @@ julia testing/t/handleVariantRecord.jl
 # Python unit tests
 python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v
 ```
+
+> **Note:** The `runTests` entry / `tests` profile (`runTests.nf`) `prove`s
+> `testing/t/*.t`. The Perl `Test2::V0` suite has been removed, so this profile
+> currently matches no files. It still needs to be rewired to the Julia/Python
+> tests above or removed.
