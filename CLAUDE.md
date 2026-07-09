@@ -87,10 +87,12 @@ Julia deps (precompiled): `SQLite.jl`
 Tests are **not** run through Nextflow. They are Julia and Python unit tests in
 `testing/t/`, plus a bcftools characterization test, run inside the
 `veupathdb/dnaseqanalysis` image (which carries Julia + SQLite.jl, Python +
-cyvcf2 + pytest, and bcftools):
+cyvcf2 + pytest, and bcftools). Use the `:latest` tag — Jenkins rebuilds it from
+this repo's `Dockerfile` on every commit to `main`, so it stays in sync with the
+code. `--pull always` refreshes any stale local copy:
 
 ```bash
-docker run --rm -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:1.1.1 bash -c '
+docker run --rm --pull always -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:latest bash -c '
   for t in testing/t/*.jl; do julia "$t"; done   # Julia unit tests
   python3 -m pytest testing/t/                    # Python unit tests
   bash testing/t/mergeBoth.t.sh                   # bcftools merge -m both contract
@@ -98,6 +100,16 @@ docker run --rm -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:1.1.1 bash -c 
 ```
 
 Individual suites can be run the same way (e.g. `julia testing/t/handleVariantRecord.jl`
-or `python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v`). `pytest` is
-provided by the image as of the `1.1.1` rebuild; older pulls need
-`pip3 install --break-system-packages pytest` first.
+or `python3 -m pytest testing/t/test_parseSnpEffAnnotations.py -v`).
+
+**If your branch edits the `Dockerfile`**, `:latest` won't reflect it until the
+branch merges to `main` and Jenkins rebuilds. Build locally and run against that
+instead: `docker build -t dnaseqanalysis:dev .` then use `dnaseqanalysis:dev` above.
+
+The 96 tests in `test_mergeExperiments_e2e.py` are end-to-end and **skip by
+default** — they assert against the output files of a real `mergeExperiments`
+run. To exercise them, point at a completed run:
+
+```bash
+python3 -m pytest testing/t/test_mergeExperiments_e2e.py --run-dir /path/to/nextflow/run
+```
