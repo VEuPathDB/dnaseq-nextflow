@@ -584,7 +584,6 @@ end
 
 struct ProcessingContext
     reference_strain::String
-    undone_strains::Set{String}
     cds_intervals::Vector{CDSInterval}
     transcript_info::Dict{String,TranscriptInfo}
     transcript_db::SQLite.DB
@@ -1126,7 +1125,7 @@ function compute_percent(fmt::Dict{String,String}, gt::String)::String
 end
 
 """
-    build_variations_from_record(record, all_strains, undone_strains, chrom_coverage)
+    build_variations_from_record(record, all_strains, chrom_coverage)
         -> Vector{Variation}
 
 Builds per-strain Variation records from a VCF variant record.
@@ -1135,7 +1134,6 @@ For missing GTs, synthesizes a reference call if coverage.tsv shows the position
 function build_variations_from_record(
     record::VCFRecord,
     all_strains::Vector{String},
-    undone_strains::Set{String},
     chrom_coverage::Dict{String, Vector{Tuple{Int, Int, Float64}}},
     ploidy::Int=1;
     synthesize_ref::Bool=true,
@@ -1144,7 +1142,6 @@ function build_variations_from_record(
     variations = Variation[]
 
     for (i, strain) in enumerate(all_strains)
-        strain in undone_strains && continue
         i > length(record.sample_data) && continue
 
         fmt = parse_format_field(record.format_keys, record.sample_data[i])
@@ -1244,17 +1241,6 @@ end
     initialize_processing_context(args, all_strains) -> ProcessingContext
 """
 function initialize_processing_context(args, all_strains::Vector{String})
-    undone_strains = Set{String}()
-    undone_strains_file = get(args, "undone_strains_file", "")
-    if !isempty(undone_strains_file) && isfile(undone_strains_file)
-        open(undone_strains_file, "r") do fh
-            for line in eachline(fh)
-                s = strip(line)
-                !isempty(s) && push!(undone_strains, s)
-            end
-        end
-    end
-
     (cds_intervals, transcript_info) = parse_gtf(args["gtf_file"])
 
     transcript_db = SQLite.DB(args["transcript_db"])
@@ -1266,7 +1252,6 @@ function initialize_processing_context(args, all_strains::Vector{String})
 
     ProcessingContext(
         args["reference_strain"],
-        undone_strains,
         cds_intervals,
         transcript_info,
         transcript_db,
@@ -2195,7 +2180,7 @@ function handle_variant_record!(
     per_record = Tuple{VCFRecord, Vector{Variation}}[]
     for r in records
         rv = build_variations_from_record(
-            r, all_strains, ctx.undone_strains, chrom_coverage, ctx.ploidy;
+            r, all_strains, chrom_coverage, ctx.ploidy;
             synthesize_ref = (r === ref_record), no_synth_strains = real_call_strains)
         push!(per_record, (r, rv))
     end

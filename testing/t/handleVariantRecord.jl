@@ -355,7 +355,6 @@ end
         "indel_db"           => indel_db_path,
         "gtf_file"           => gtf_path,
         "reference_strain"   => "refStrain",
-        "undone_strains_file"=> "",
     )
     all_strains = ["strainA", "strainB", "strainC"]
     ctx = initialize_processing_context(args, all_strains)
@@ -1039,7 +1038,7 @@ end
 @testset "build_variations_from_record coverage variation uses ploidy=2 for diploid" begin
     record = make_vcf_record(pos=100, format_keys=["GT","DP"], sample_data=["./.:0"])
     cov    = make_coverage("s1", 99, 200, 30.0)
-    vars   = build_variations_from_record(record, ["s1"], Set{String}(), cov, 2)
+    vars   = build_variations_from_record(record, ["s1"], cov, 2)
     @test length(vars) == 1
     @test vars[1].ploidy == 2
     @test vars[1].matches_reference == 1
@@ -1048,7 +1047,7 @@ end
 @testset "build_variations_from_record coverage variation defaults to ploidy=1" begin
     record = make_vcf_record(pos=100, format_keys=["GT","DP"], sample_data=["./.:0"])
     cov    = make_coverage("s1", 99, 200, 30.0)
-    vars   = build_variations_from_record(record, ["s1"], Set{String}(), cov)
+    vars   = build_variations_from_record(record, ["s1"], cov)
     @test length(vars) == 1
     @test vars[1].ploidy == 1
 end
@@ -1074,7 +1073,6 @@ end
         "indel_db"           => indel_db_path,
         "gtf_file"           => gtf_path,
         "reference_strain"   => "refStrain",
-        "undone_strains_file"=> "",
         "ploidy"             => "2",
     )
     ctx = initialize_processing_context(args, ["strainA"])
@@ -1098,7 +1096,6 @@ end
         "indel_db"           => indel_db_path,
         "gtf_file"           => gtf_path,
         "reference_strain"   => "refStrain",
-        "undone_strains_file"=> "",
     )
     ctx = initialize_processing_context(args, ["strainA"])
     @test ctx.ploidy == 1
@@ -1126,7 +1123,7 @@ end
     indel = make_vcf_record(ref="ATG", alts=["A"],
                             format_keys=["GT","DP"], sample_data=["./.:0"])
     chrom_cov = Dict("S1" => [(1, 1000, 30.0)])
-    vars = build_variations_from_record(indel, ["S1"], Set{String}(), chrom_cov, 1;
+    vars = build_variations_from_record(indel, ["S1"], chrom_cov, 1;
                                         synthesize_ref=false)
     @test isempty(vars)
 end
@@ -1135,7 +1132,7 @@ end
     indel = make_vcf_record(ref="ATG", alts=["A"],
                             format_keys=["GT","DP"], sample_data=["./.:0"])
     chrom_cov = Dict("S1" => [(1, 1000, 30.0)])
-    vars = build_variations_from_record(indel, ["S1"], Set{String}(), chrom_cov, 1;
+    vars = build_variations_from_record(indel, ["S1"], chrom_cov, 1;
                                         synthesize_ref=true)
     @test length(vars) == 1
     @test vars[1].matches_reference == 1
@@ -1184,7 +1181,6 @@ function make_intergenic_ctx(all_strains::Vector{String}; reference_strain="ref"
         "indel_db"            => indel_db_path,
         "gtf_file"            => gtf_path,
         "reference_strain"    => reference_strain,
-        "undone_strains_file" => "",
         "ploidy"              => string(ploidy),
     )
     initialize_processing_context(args, all_strains)
@@ -1397,7 +1393,7 @@ end
     rec = make_vcf_record(pos=8962, ref="T", alts=["TA"],
                           format_keys=["GT","AO","RO"], sample_data=["1/.:7:0"])
     cov = make_coverage("s1", 8961, 200, 12.0)
-    vars = build_variations_from_record(rec, ["s1"], Set{String}(), cov, 2)
+    vars = build_variations_from_record(rec, ["s1"], cov, 2)
     @test length(vars) == 1
     @test vars[1].allele_slots == ["TA"]
     @test vars[1].ploidy == 2

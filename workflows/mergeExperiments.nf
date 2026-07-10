@@ -37,7 +37,6 @@ workflow me {
     processSeqVarsResults = processSeqVars(
       mergedVcf,
       params.cacheFile,
-      params.undoneStrains,
       params.reference_strain,
       codingData.codingSequencesDb,
       codingData.codingIndelsDb,

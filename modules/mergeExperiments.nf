@@ -160,7 +160,6 @@ process processSeqVars {
   input:
     path vcfFile
     path cacheFile  // previous run's transcript_product.dat (was cache.tsv)
-    path undoneStrainsFile
     val  reference_strain
     path transcriptDb
     path indelDb
@@ -186,7 +185,6 @@ process processSeqVars {
     processSequenceVariations.jl \\
       --vcf_file $vcfFile \\
       --cache_file $cacheFile \\
-      --undone_strains_file $undoneStrainsFile \\
       --reference_strain $reference_strain \\
       --transcript_db $transcriptDb \\
       --indel_db $indelDb \\
