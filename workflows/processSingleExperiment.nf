@@ -53,6 +53,13 @@ workflow ps {
 
     genome_fasta_file = file(params.genomeFastaFile)
 
+    // Contig-only assemblies can leave chrsForCalcFile empty (no chromosomes to
+    // normalise against), which would make ploidy/gene-CNV estimation and the
+    // normalised-coverage track fail or produce bogus output. Skip just that
+    // functionality in that case; SNP calling and density tracks are unaffected.
+    chrsForCalcFile = file(params.chrsForCalcFile)
+    runCnv = chrsForCalcFile.exists() && chrsForCalcFile.text.trim().length() > 0
+
     bwaIndexResults = bwaIndex(genome_fasta_file)
 
     // Extract is_paired and files channels separately
@@ -107,21 +114,25 @@ workflow ps {
 
     bedgraphToBigWigResults = bedGraphToBigWig(reorderFastaResults, genomecovResults)
 
-    sortForCountingResults = sortForCounting(gatkResults.bamTuple)
+    if (runCnv) {
+      sortForCountingResults = sortForCounting(gatkResults.bamTuple)
 
-    htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
+      htseqCountResults = htseqCount(sortForCountingResults, params.gtfFile)
 
-    calculateTPMResults = calculateTPM(htseqCountResults, params.footprintFile)
+      calculateTPMResults = calculateTPM(htseqCountResults, params.footprintFile)
 
-    calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
+      calculatePloidyAndGeneCNV(calculateTPMResults, params.footprintFile, params.ploidy, params.geneSourceIdOrthologFile, params.chrsForCalcFile)
+    }
 
     makeWindowFileResults = makeWindowFile(reorderFastaResults, params.winLen)
 
-    bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults.bamTuple)
+    if (runCnv) {
+      bedtoolsWindowedResults =  bedtoolsWindowed(makeWindowFileResults, gatkResults.bamTuple)
 
-    normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults, params.chrsForCalcFile, params.ploidy)
+      normaliseCoverageResults = normaliseCoverage(bedtoolsWindowedResults, params.chrsForCalcFile, params.ploidy)
 
-    normaliseCoverageToBigWigResults = normaliseCoverageToBigWig(reorderFastaResults, normaliseCoverageResults)
+      normaliseCoverageToBigWigResults = normaliseCoverageToBigWig(reorderFastaResults, normaliseCoverageResults)
+    }
 
     // CONVERT bed to bw here
 
