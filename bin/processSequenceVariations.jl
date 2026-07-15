@@ -336,7 +336,10 @@ end
 function extract_codon(sequence::String, pos_in_cds::Int)
     pic = position_in_codon(pos_in_cds)
     codon_start = pos_in_cds - pic  # 0-based index of first base
-    if codon_start + 3 > length(sequence)
+    # codon_start < 0 happens when an indel-adjusted position is <= 0, i.e. a
+    # deletion beginning upstream in genomic space extends into the CDS and the
+    # reference position no longer exists in this strain's sequence.
+    if codon_start < 0 || codon_start + 3 > length(sequence)
         return "NNN"
     end
     sequence[codon_start+1 : codon_start+3]
