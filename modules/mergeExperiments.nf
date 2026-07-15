@@ -249,7 +249,7 @@ process snpEff {
 
 
 process parseSnpEffAnnotations {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
   publishDir "$params.outputDir", mode: "copy", pattern: 'snpeff.dat'
 
   input:

@@ -77,7 +77,7 @@ Key parameters in `nextflow.config` (profile-scoped):
 ## Containers
 
 Each process declares its own Docker image. Key images:
-- `veupathdb/shortreadaligner:1.0.0` — BWA, samtools, Picard, GATK3, FreeBayes, bcftools, bedtools, Julia 1.10.10, Perl/BioPerl, SnpEff
+- `veupathdb/shortreadaligner:1.0.1` — BWA, samtools, Picard, GATK3, FreeBayes, bcftools, bedtools, Julia 1.10.10, Perl/BioPerl, SnpEff
 - `veupathdb/dnaseqanalysis:1.0.0` — Trimmomatic, htseq-count
 
 Julia deps (precompiled): `SQLite.jl`

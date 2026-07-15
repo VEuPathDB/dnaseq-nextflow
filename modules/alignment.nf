@@ -68,7 +68,7 @@ process bwaMem {
 }
 
 process reorderFasta {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
 
   input:
     tuple val(sampleName), path(resultSortedBam)

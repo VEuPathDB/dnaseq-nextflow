@@ -80,7 +80,7 @@ process normaliseCoverageToBigWig {
 
 
 process sortForCounting {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
 
     input:
     tuple val(sampleName), path(resultSortedGatkBam), path(resultSortedGatkBamIndex)
@@ -131,7 +131,7 @@ process htseqCount {
 }
 
 process calculateTPM {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
 
   input:
     tuple val(sampleName), path(counts)
@@ -157,7 +157,7 @@ process calculateTPM {
 }
 
 process makeWindowFile {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
 
   input:
     tuple path(genomeReorderedFasta), path(genomeReorderedFastaIndex)
@@ -211,7 +211,7 @@ process bedtoolsWindowed {
 }
 
 process normaliseCoverage {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
 
   //publishDir "$params.outputDir/CNVs", mode: "copy", saveAs: { filename -> "${sampleName}.bed" }
 
@@ -349,7 +349,7 @@ process makeHeterozygousDensityBed {
 }
 
 process makeHeterozygousDensityBigwig {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
 
   publishDir "$params.outputDir/${sampleName}", mode: "copy", saveAs: { filename -> "${sampleName}_LOH.bw" }
 
