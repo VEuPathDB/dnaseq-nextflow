@@ -48,6 +48,29 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# extract_codon
+# ---------------------------------------------------------------------------
+
+@testset "extract_codon returns the codon containing an in-range position" begin
+    seq = "ATGCGT"
+    @test extract_codon(seq, 1) == "ATG"   # first position of codon 1
+    @test extract_codon(seq, 3) == "ATG"   # third position of codon 1
+    @test extract_codon(seq, 4) == "CGT"   # first position of codon 2
+end
+
+@testset "extract_codon returns NNN when position runs off the top of the sequence" begin
+    @test extract_codon("ATG", 5) == "NNN"
+end
+
+@testset "extract_codon returns NNN for non-positive positions" begin
+    # An indel-adjusted position can be <= 0 when a deletion beginning upstream
+    # in genomic space extends into the CDS, so the reference position no longer
+    # exists in the strain's sequence. Must not throw a BoundsError.
+    @test extract_codon("ATGCGT", 0) == "NNN"
+    @test extract_codon("ATGCGT", -9) == "NNN"
+end
+
+# ---------------------------------------------------------------------------
 # build_ref_cann_entries
 # ---------------------------------------------------------------------------
 
