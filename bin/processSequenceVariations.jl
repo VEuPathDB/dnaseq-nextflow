@@ -485,11 +485,69 @@ function load_transcript_sequences(db::SQLite.DB, transcript_id::String)
     result
 end
 
-function get_indel_shift(db::SQLite.DB, transcript_id::String, strain::String, position::Int)
-    row = @bench "sql_get_indel_shift" first(execute(db,
-        "SELECT COALESCE(SUM(shift_amount), 0) FROM indels WHERE transcript_id = ? AND strain = ? AND position < ?",
-        [transcript_id, strain, position]))
-    row[1]::Int
+# Precomputed cumulative indel shifts, replacing a per-variation SQL aggregate.
+# For each (strain, transcript_id): parallel vectors of event positions (ascending)
+# and the running sum of shift_amount up to and including each position. A lookup
+# for `position < p` is then a binary search — no SQLite round-trip in the hot
+# path (that query fired ~O(samples) times per position; see benchmark findings).
+const IndelShiftTable = Dict{Tuple{String,String}, Tuple{Vector{Int}, Vector{Int}}}
+
+function precompute_indel_shifts(indel_db::SQLite.DB)::IndelShiftTable
+    debug_log("Precomputing indel shifts...")
+    shifts = IndelShiftTable()
+
+    current_strain = ""
+    current_tid = ""
+    positions = Int[]
+    cums = Int[]
+    cumsum = 0
+
+    function flush_current()
+        if !isempty(positions)
+            shifts[(current_strain, current_tid)] = (positions, cums)
+        end
+    end
+
+    for row in execute(indel_db,
+        "SELECT strain, transcript_id, position, shift_amount FROM indels ORDER BY strain, transcript_id, position")
+        strain = row[1]::String
+        tid = row[2]::String
+        pos = row[3]::Int
+        shift = row[4]::Int
+
+        if strain != current_strain || tid != current_tid
+            flush_current()
+            current_strain = strain
+            current_tid = tid
+            positions = Int[]
+            cums = Int[]
+            cumsum = 0
+        end
+
+        cumsum += shift
+        push!(positions, pos)
+        push!(cums, cumsum)
+    end
+    flush_current()
+
+    debug_log("Indel shift precomputation complete: ", length(shifts), " strain-transcript pairs with indels")
+    shifts
+end
+
+"""
+    lookup_indel_shift(shifts, transcript_id, strain, position) -> Int
+
+Cumulative shift_amount for all indels of (strain, transcript_id) at CDS positions
+strictly less than `position`. Replaces the old SQL
+`SUM(shift_amount) WHERE ... AND position < ?` (0 when none) with a binary search.
+"""
+function lookup_indel_shift(shifts::IndelShiftTable, transcript_id::String, strain::String, position::Int)::Int
+    entry = get(shifts, (strain, transcript_id), nothing)
+    isnothing(entry) && return 0
+    positions, cums = entry
+    # integer positions: `pos < position` ⇔ `pos <= position - 1`
+    idx = searchsortedlast(positions, position - 1)
+    idx == 0 ? 0 : cums[idx]
 end
 
 # ---------------------------------------------------------------------------
@@ -653,6 +711,7 @@ struct ProcessingContext
     transcript_db::SQLite.DB
     indel_db::SQLite.DB
     fs_info::Dict{String, Dict{String, Tuple{Bool, Int}}}
+    indel_shifts::IndelShiftTable
     all_strains::Vector{String}
     sample_id_map::Dict{String,Int}
     ploidy::Int
@@ -1311,7 +1370,8 @@ function initialize_processing_context(args, all_strains::Vector{String})
     transcript_db = SQLite.DB(args["transcript_db"])
     indel_db      = SQLite.DB(args["indel_db"])
 
-    fs_info = @bench "precompute_frameshifts" precompute_frameshifts(indel_db, transcript_info)
+    fs_info      = @bench "precompute_frameshifts" precompute_frameshifts(indel_db, transcript_info)
+    indel_shifts = @bench "precompute_indel_shifts" precompute_indel_shifts(indel_db)
 
     ploidy = haskey(args, "ploidy") ? parse(Int, args["ploidy"]) : 1
 
@@ -1322,6 +1382,7 @@ function initialize_processing_context(args, all_strains::Vector{String})
         transcript_db,
         indel_db,
         fs_info,
+        indel_shifts,
         all_strains,
         Dict{String,Int}(name => i for (i, name) in enumerate([all_strains..., args["reference_strain"]])),
         ploidy
@@ -1451,7 +1512,7 @@ function annotate_variations!(
                 v.codon   = "."
                 v.product = String[]
             else
-                shift        = get_indel_shift(ctx.indel_db, annotation.transcript_id, v.strain, annotation.pos_in_cds)
+                shift        = lookup_indel_shift(ctx.indel_shifts, annotation.transcript_id, v.strain, annotation.pos_in_cds)
                 adjusted_pos = annotation.pos_in_cds + shift
                 strain_codon = extract_codon(strain_seq, adjusted_pos)
                 v.codon   = strain_codon

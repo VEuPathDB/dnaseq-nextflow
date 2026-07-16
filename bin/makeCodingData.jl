@@ -228,6 +228,14 @@ function finalize_indels_db(db::SQLite.DB)
     execute(db, "CREATE INDEX idx_indels ON indels(transcript_id, strain, position)")
 end
 
+function finalize_cds_db(db::SQLite.DB)
+    # processSequenceVariations.jl queries coding_sequences by transcript_id alone.
+    # The PRIMARY KEY (strain, transcript_id) autoindex leads with strain, so a
+    # transcript_id-only lookup cannot use it and full-scans the (large) table.
+    # This index makes that lookup a seek.
+    execute(db, "CREATE INDEX idx_coding_sequences_transcript ON coding_sequences(transcript_id)")
+end
+
 # ---------------------------------------------------------------------------
 # Per-strain processing
 # ---------------------------------------------------------------------------
@@ -299,6 +307,7 @@ function main()
     end
 
     finalize_indels_db(indels_db)
+    finalize_cds_db(cds_db)
     println(stderr, "Done. Wrote $cds_db_out and $indels_db_out")
 end
 

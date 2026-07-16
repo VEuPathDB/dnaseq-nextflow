@@ -108,3 +108,50 @@ legible even though the local wall-clock is small.
   `dnaseqanalysis` container and confirm the report prints with sane numbers and
   the phase percentages sum to ~100%.
 - Existing Julia/Python test suites must still pass unchanged.
+
+## Findings (20-sample run, 122,530 positions)
+
+Benchmark on a real 20-sample Plasmodium dataset took **1661.84 s (~28 min)** and
+was ~95% SQLite:
+
+| bucket | time | note |
+|---|---|---|
+| `sql_load_transcript` | 931 s (56%) | only 4034 calls but **231 ms each** |
+| `sql_get_indel_shift` | 627 s (38%) | **778,513 calls** (6.35/pos, linear in samples) at ~800 µs each |
+
+Two distinct pathologies, confirmed against the actual DBs:
+
+1. `coding_sequences` has `PRIMARY KEY (strain, transcript_id)`. The query filters
+   `WHERE transcript_id = ?` only, so the autoindex (leading with `strain`) cannot
+   serve it — every call full-scans the 364 MB table.
+2. The `indels` table is tiny (5341 rows) and already indexed; the cost was purely
+   778k statement round-trips, and the call count grows with sample count.
+
+The output writers originally suspected were <2% combined.
+
+## Fixes implemented (follow-up to the measure-only scope)
+
+1. **`bin/makeCodingData.jl`** — `finalize_cds_db` adds
+   `CREATE INDEX idx_coding_sequences_transcript ON coding_sequences(transcript_id)`
+   at DB-build time. The read-only consumer is not mutated.
+2. **`bin/processSequenceVariations.jl`** — `precompute_indel_shifts` scans the
+   `indels` table once into a per-`(strain, transcript_id)` prefix-sum table;
+   `lookup_indel_shift` answers `position < p` by binary search. `get_indel_shift`
+   (the per-variation SQL query) is removed.
+3. **`testing/t/indelShiftLookup.jl`** — characterization test asserting
+   `lookup_indel_shift` equals the original SQL at every position (1755 checks + edge cases).
+
+## Verification
+
+Re-ran the fixed code against the same 20-sample inputs (with the index added to a
+copy of the DB):
+
+- **1661.84 s → 84.07 s (~20× faster).** `sql_load_transcript` 931 s → 1.9 s;
+  `sql_get_indel_shift` 627 s → eliminated (0.27 s one-time precompute).
+- **All outputs byte-identical** (variationFeature/snpFeature.dat,
+  transcript_product.dat, allele.dat, sample.dat, output.vcf, all four HSSS
+  binary dirs). Full Julia test suite passes.
+
+Both costs were O(samples), so the projected effect at 1000–2000 samples is far
+larger than 20× (the index fix removes a per-call cost that itself grew with
+table size).
