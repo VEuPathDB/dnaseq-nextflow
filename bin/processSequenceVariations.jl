@@ -12,6 +12,8 @@ using SQLite
 using SQLite.DBInterface: execute
 using Printf
 
+include("$(@__DIR__)/Benchmark.jl")
+
 # ---------------------------------------------------------------------------
 # Global debug flag
 # ---------------------------------------------------------------------------
@@ -20,67 +22,6 @@ global DEBUG = false
 
 function debug_log(msg...)
     DEBUG && println(stderr, "[DEBUG] ", msg...)
-end
-
-# ---------------------------------------------------------------------------
-# Benchmarking (enabled by --benchmark). Zero overhead when BENCHMARK is false:
-# `@bench name expr` expands to the bare `expr`. When enabled, it accumulates
-# (total_ns, count) per named bucket so the end-of-run report can attribute both
-# wall-clock time AND per-position call counts — the latter exposes O(samples)
-# hotspots even on a tiny local dataset where absolute time is small.
-# ---------------------------------------------------------------------------
-
-global BENCHMARK = false
-
-# name -> [total_ns, count]
-const BENCH_DATA = Dict{String, Vector{Int}}()
-
-function _bench_record(name::AbstractString, ns::Integer)
-    d = get!(BENCH_DATA, name, Int[0, 0])
-    d[1] += ns
-    d[2] += 1
-    nothing
-end
-
-# Bump a pure counter (no timing) — for scale metrics like variations_built.
-function bench_count!(name::AbstractString, n::Integer=1)
-    BENCHMARK || return nothing
-    d = get!(BENCH_DATA, name, Int[0, 0])
-    d[2] += n
-    nothing
-end
-
-macro bench(name, expr)
-    quote
-        if BENCHMARK
-            local t0 = time_ns()
-            local v  = $(esc(expr))
-            _bench_record($(esc(name)), Int(time_ns() - t0))
-            v
-        else
-            $(esc(expr))
-        end
-    end
-end
-
-function print_benchmark_report(io::IO, total_ns::Integer, n_seen::Integer, n_processed::Integer)
-    println(io, "")
-    println(io, "==================== BENCHMARK REPORT ====================")
-    @printf(io, "total wall-clock: %.2f s   positions seen: %d   positions with output: %d\n",
-            total_ns / 1e9, n_seen, n_processed)
-    @printf(io, "%-26s %10s %6s %12s %10s %11s\n",
-            "bucket", "total(s)", "%", "calls", "us/call", "calls/pos")
-    println(io, "-"^80)
-    rows = sort(collect(BENCH_DATA); by = r -> -r[2][1])  # by total_ns desc
-    for (name, d) in rows
-        tns, cnt = d[1], d[2]
-        pct     = total_ns > 0 ? tns / total_ns * 100 : 0.0
-        us_call = cnt > 0 ? tns / cnt / 1e3 : 0.0
-        per_pos = n_seen > 0 ? cnt / n_seen : 0.0
-        @printf(io, "%-26s %10.3f %6.1f %12d %10.2f %11.3f\n",
-                name, tns / 1e9, pct, cnt, us_call, per_pos)
-    end
-    println(io, "==========================================================")
 end
 
 # ---------------------------------------------------------------------------
@@ -2524,7 +2465,9 @@ function main()
     debug_log("Processing complete. Total positions processed: ", n_processed)
 
     if BENCHMARK
-        print_benchmark_report(stderr, time_ns() - bench_t0, n_seen, n_processed)
+        print_benchmark_report(stderr, time_ns() - bench_t0;
+            summary = "positions seen: $n_seen   positions with output: $n_processed",
+            per_label = "calls/pos", per_denom = n_seen)
     end
 
     close_peeked(vcf_pf)

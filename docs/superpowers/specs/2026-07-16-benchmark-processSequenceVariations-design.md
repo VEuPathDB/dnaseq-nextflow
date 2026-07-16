@@ -155,3 +155,24 @@ copy of the DB):
 Both costs were O(samples), so the projected effect at 1000–2000 samples is far
 larger than 20× (the index fix removes a per-call cost that itself grew with
 table size).
+
+## Extension: shared module + makeCodingData
+
+The benchmarking primitives (`BENCHMARK`, `@bench`, `bench_count!`,
+`print_benchmark_report`) were extracted to **`bin/Benchmark.jl`** and are
+`include`d by both merge Julia scripts (Nextflow stages the whole `bin/` dir, so
+sibling includes resolve at runtime — same mechanism `makeCodingData.jl` already
+uses for `GtfUtils.jl`). The report gained caller-supplied `summary` / `per_label`
+/ `per_denom` keywords so the normalization column fits each script
+(`calls/pos` vs `calls/strain`).
+
+**`makeCodingData.jl`** is instrumented across `parse_gtf`, `read_fasta`,
+`extract_cds`, `project_indels`, the two SQL calls (`sql_fasta_offset`,
+`sql_project_indels`), the inserts, and the two index builds. A 4-strain run shows
+it is SQL-bound in the same shape as the original processSeqVars problem: one
+`sql_project_indels` per (strain, transcript) and ~2 `sql_fasta_offset` per
+(strain, exon), all O(strains). No fix applied yet — instrumentation only, so the
+hotspot can be confirmed at production scale before optimizing.
+
+The Nextflow param was renamed `benchmarkVariations` → **`benchmark`** (it now
+gates both merge Julia steps) and is threaded into both process invocations.

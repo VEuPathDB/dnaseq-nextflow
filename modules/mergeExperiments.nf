@@ -102,7 +102,7 @@ process makeCodingData {
       --gtf_file $gtfFile \\
       --genome_fasta $genomeFastaFile \\
       --cds_db_out codingSequences.db \\
-      --indels_db_out codingIndels.db
+      --indels_db_out codingIndels.db ${params.benchmark ? '--benchmark' : ''}
     """
 
   stub:
@@ -191,7 +191,7 @@ process processSeqVars {
       --gtf_file $gtfFile \\
       --coverage_file $coverageFile \\
       --ploidy $params.ploidy \\
-      --output_vcf output.vcf ${params.benchmarkVariations ? '--benchmark' : ''}
+      --output_vcf output.vcf ${params.benchmark ? '--benchmark' : ''}
 
     mv snpFeature.dat variationFeature.dat
     bgzip output.vcf

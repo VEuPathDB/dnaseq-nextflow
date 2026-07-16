@@ -15,6 +15,7 @@
 #   codingIndels.db       — SQLite: indels(strain, transcript_id, position, shift_amount)
 
 include("$(@__DIR__)/GtfUtils.jl")
+include("$(@__DIR__)/Benchmark.jl")
 
 using SQLite
 using SQLite.DBInterface: execute
@@ -106,7 +107,7 @@ strictly less than `before_pos`. Used to convert a reference genomic coordinate
 to the corresponding position in a consensus FASTA that embeds genomic indels.
 """
 function fasta_offset(indel_db::SQLite.DB, strain::String, seq_id::String, before_pos::Int)
-    row = first(execute(indel_db,
+    row = @bench "sql_fasta_offset" first(execute(indel_db,
         "SELECT COALESCE(SUM(shift), 0) FROM genomic_indels
          WHERE strain = ? AND sequence_id = ? AND position < ?",
         [strain, seq_id, before_pos]))
@@ -168,14 +169,15 @@ function project_indels_to_cds(db::SQLite.DB, strain::String, exon_list::Vector{
     cds_offset = 0
 
     for e in exon_list
-        rows = execute(db,
+        # Materialize into value tuples inside the comprehension: this forces the
+        # lazy SQLite cursor (so @bench captures the full query+fetch cost) and
+        # copies the primitives out — SQLite.Row handles are invalid post-iteration.
+        rows = @bench "sql_project_indels" [(row[1], row[2]) for row in execute(db,
             "SELECT position, shift FROM genomic_indels
              WHERE strain = ? AND sequence_id = ? AND position >= ? AND position <= ?
              ORDER BY position",
-            [strain, seq_id, e.start, e.stop])
-        for row in rows
-            gpos  = row[1]
-            shift = row[2]
+            [strain, seq_id, e.start, e.stop])]
+        for (gpos, shift) in rows
             cds_pos = if e.strand == '-'
                 cds_offset + (e.stop - gpos)
             else
@@ -225,7 +227,7 @@ function create_indels_db(path::String)
 end
 
 function finalize_indels_db(db::SQLite.DB)
-    execute(db, "CREATE INDEX idx_indels ON indels(transcript_id, strain, position)")
+    @bench "finalize_indels_index" execute(db, "CREATE INDEX idx_indels ON indels(transcript_id, strain, position)")
 end
 
 function finalize_cds_db(db::SQLite.DB)
@@ -233,7 +235,7 @@ function finalize_cds_db(db::SQLite.DB)
     # The PRIMARY KEY (strain, transcript_id) autoindex leads with strain, so a
     # transcript_id-only lookup cannot use it and full-scans the (large) table.
     # This index makes that lookup a seek.
-    execute(db, "CREATE INDEX idx_coding_sequences_transcript ON coding_sequences(transcript_id)")
+    @bench "finalize_cds_index" execute(db, "CREATE INDEX idx_coding_sequences_transcript ON coding_sequences(transcript_id)")
 end
 
 # ---------------------------------------------------------------------------
@@ -244,13 +246,13 @@ function process_strain(strain, genome_seqs, by_transcript, indel_src_db,
                         cds_insert_stmt, indels_insert_stmt)
     db_for_coords = strain == "reference" ? nothing : indel_src_db
     for (transcript_id, exon_list) in by_transcript
-        seq = extract_cds_sequence(genome_seqs, exon_list, strain, db_for_coords)
+        seq = @bench "extract_cds" extract_cds_sequence(genome_seqs, exon_list, strain, db_for_coords)
         isempty(seq) && continue
-        execute(cds_insert_stmt, [strain, transcript_id, seq])
+        @bench "cds_insert" execute(cds_insert_stmt, [strain, transcript_id, seq])
 
-        cds_indels = project_indels_to_cds(indel_src_db, strain, exon_list)
+        cds_indels = @bench "project_indels" project_indels_to_cds(indel_src_db, strain, exon_list)
         for (pos, shift) in cds_indels
-            execute(indels_insert_stmt, [strain, transcript_id, pos, shift])
+            @bench "indels_insert" execute(indels_insert_stmt, [strain, transcript_id, pos, shift])
         end
     end
 end
@@ -261,6 +263,8 @@ end
 
 function main()
     args = parse_args(ARGS)
+    global BENCHMARK = haskey(args, "benchmark")
+    bench_t0 = time_ns()
 
     genomic_indel_db = args["genomic_indel_db"]
     gtf_file         = args["gtf_file"]
@@ -269,10 +273,10 @@ function main()
     indels_db_out    = args["indels_db_out"]
 
     println(stderr, "Parsing GTF: $gtf_file")
-    _, by_transcript = parse_gtf(gtf_file)
+    _, by_transcript = @bench "parse_gtf" parse_gtf(gtf_file)
 
     println(stderr, "Reading reference genome: $genome_fasta")
-    ref_seqs = read_fasta(genome_fasta)
+    ref_seqs = @bench "read_fasta" read_fasta(genome_fasta)
 
     println(stderr, "Opening genomic indels DB: $genomic_indel_db")
     indel_src_db = SQLite.DB(genomic_indel_db)
@@ -297,7 +301,7 @@ function main()
     for fasta_path in fasta_files
         strain = replace(basename(fasta_path), "_consensus.fa.gz" => "")
         println(stderr, "Processing strain: $strain")
-        strain_seqs = strip_strain_prefix(read_fasta(fasta_path), strain)
+        strain_seqs = strip_strain_prefix(@bench("read_fasta", read_fasta(fasta_path)), strain)
         SQLite.transaction(cds_db) do
             SQLite.transaction(indels_db) do
                 process_strain(strain, strain_seqs, by_transcript, indel_src_db,
@@ -309,6 +313,13 @@ function main()
     finalize_indels_db(indels_db)
     finalize_cds_db(cds_db)
     println(stderr, "Done. Wrote $cds_db_out and $indels_db_out")
+
+    if BENCHMARK
+        n_strains = 1 + length(fasta_files)   # reference + per-strain consensus FASTAs
+        print_benchmark_report(stderr, time_ns() - bench_t0;
+            summary = "strains (incl. reference): $n_strains   transcripts: $(length(by_transcript))",
+            per_label = "calls/strain", per_denom = n_strains)
+    end
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
