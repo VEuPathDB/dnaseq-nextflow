@@ -23,6 +23,67 @@ function debug_log(msg...)
 end
 
 # ---------------------------------------------------------------------------
+# Benchmarking (enabled by --benchmark). Zero overhead when BENCHMARK is false:
+# `@bench name expr` expands to the bare `expr`. When enabled, it accumulates
+# (total_ns, count) per named bucket so the end-of-run report can attribute both
+# wall-clock time AND per-position call counts — the latter exposes O(samples)
+# hotspots even on a tiny local dataset where absolute time is small.
+# ---------------------------------------------------------------------------
+
+global BENCHMARK = false
+
+# name -> [total_ns, count]
+const BENCH_DATA = Dict{String, Vector{Int}}()
+
+function _bench_record(name::AbstractString, ns::Integer)
+    d = get!(BENCH_DATA, name, Int[0, 0])
+    d[1] += ns
+    d[2] += 1
+    nothing
+end
+
+# Bump a pure counter (no timing) — for scale metrics like variations_built.
+function bench_count!(name::AbstractString, n::Integer=1)
+    BENCHMARK || return nothing
+    d = get!(BENCH_DATA, name, Int[0, 0])
+    d[2] += n
+    nothing
+end
+
+macro bench(name, expr)
+    quote
+        if BENCHMARK
+            local t0 = time_ns()
+            local v  = $(esc(expr))
+            _bench_record($(esc(name)), Int(time_ns() - t0))
+            v
+        else
+            $(esc(expr))
+        end
+    end
+end
+
+function print_benchmark_report(io::IO, total_ns::Integer, n_seen::Integer, n_processed::Integer)
+    println(io, "")
+    println(io, "==================== BENCHMARK REPORT ====================")
+    @printf(io, "total wall-clock: %.2f s   positions seen: %d   positions with output: %d\n",
+            total_ns / 1e9, n_seen, n_processed)
+    @printf(io, "%-26s %10s %6s %12s %10s %11s\n",
+            "bucket", "total(s)", "%", "calls", "us/call", "calls/pos")
+    println(io, "-"^80)
+    rows = sort(collect(BENCH_DATA); by = r -> -r[2][1])  # by total_ns desc
+    for (name, d) in rows
+        tns, cnt = d[1], d[2]
+        pct     = total_ns > 0 ? tns / total_ns * 100 : 0.0
+        us_call = cnt > 0 ? tns / cnt / 1e3 : 0.0
+        per_pos = n_seen > 0 ? cnt / n_seen : 0.0
+        @printf(io, "%-26s %10.3f %6.1f %12d %10.2f %11.3f\n",
+                name, tns / 1e9, pct, cnt, us_call, per_pos)
+    end
+    println(io, "==========================================================")
+end
+
+# ---------------------------------------------------------------------------
 # CLI argument parsing (hand-rolled, no package dependency)
 # ---------------------------------------------------------------------------
 
@@ -418,14 +479,14 @@ end
 
 function load_transcript_sequences(db::SQLite.DB, transcript_id::String)
     result = Dict{String,String}()
-    for row in execute(db, "SELECT strain, sequence FROM coding_sequences WHERE transcript_id = ?", [transcript_id])
+    @bench "sql_load_transcript" for row in execute(db, "SELECT strain, sequence FROM coding_sequences WHERE transcript_id = ?", [transcript_id])
         result[row[1]::String] = row[2]::String
     end
     result
 end
 
 function get_indel_shift(db::SQLite.DB, transcript_id::String, strain::String, position::Int)
-    row = first(execute(db,
+    row = @bench "sql_get_indel_shift" first(execute(db,
         "SELECT COALESCE(SUM(shift_amount), 0) FROM indels WHERE transcript_id = ? AND strain = ? AND position < ?",
         [transcript_id, strain, position]))
     row[1]::Int
@@ -1212,6 +1273,7 @@ function build_variations_from_record(
         push!(variations, v)
     end
 
+    bench_count!("variations_built", length(variations))
     variations
 end
 
@@ -1244,12 +1306,12 @@ end
     initialize_processing_context(args, all_strains) -> ProcessingContext
 """
 function initialize_processing_context(args, all_strains::Vector{String})
-    (cds_intervals, transcript_info) = parse_gtf(args["gtf_file"])
+    (cds_intervals, transcript_info) = @bench "parse_gtf" parse_gtf(args["gtf_file"])
 
     transcript_db = SQLite.DB(args["transcript_db"])
     indel_db      = SQLite.DB(args["indel_db"])
 
-    fs_info = precompute_frameshifts(indel_db, transcript_info)
+    fs_info = @bench "precompute_frameshifts" precompute_frameshifts(indel_db, transcript_info)
 
     ploidy = haskey(args, "ploidy") ? parse(Int, args["ploidy"]) : 1
 
@@ -2182,7 +2244,7 @@ function handle_variant_record!(
 
     per_record = Tuple{VCFRecord, Vector{Variation}}[]
     for r in records
-        rv = build_variations_from_record(
+        rv = @bench "build_variations" build_variations_from_record(
             r, all_strains, chrom_coverage, ctx.ploidy;
             synthesize_ref = (r === ref_record), no_synth_strains = real_call_strains)
         push!(per_record, (r, rv))
@@ -2191,12 +2253,12 @@ function handle_variant_record!(
     isempty(variations) && return false
 
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
-    annotations = if !isempty(cache_entries)
+    annotations = @bench "annotate" (if !isempty(cache_entries)
         debug_log("    Cache hit at ", seq_id, ":", location)
         build_annotations_from_cache(cache_entries, ctx.reference_strain, ctx.transcript_db, transcript_cache)
     else
         annotate_position_all(seq_id, location, ctx, transcript_cache)
-    end
+    end)
 
     # Accumulate per-sample CANN entries across all annotations (transcripts).
     # alt_strain_entries: alt -> strain -> [entry per transcript, in annotation order]
@@ -2216,7 +2278,7 @@ function handle_variant_record!(
     allele_written = false
 
     for annotation in annotations
-        annotate_variations!(variations, annotation, ctx, transcript_cache)
+        @bench "annotate_variations" annotate_variations!(variations, annotation, ctx, transcript_cache)
 
         for v in variations
             if !isempty(v.transcript)
@@ -2240,15 +2302,15 @@ function handle_variant_record!(
         end
 
         if !allele_written
-            write_allele_file(writers.allele_fh, all_vars, seq_id, location, ctx.sample_id_map)
+            @bench "write_allele" write_allele_file(writers.allele_fh, all_vars, seq_id, location, ctx.sample_id_map)
             allele_written = true
         end
-        write_transcript_product(writers.transcript_product_fh, all_vars, annotation, seq_id, location, ctx.sample_id_map)
+        @bench "write_transcript_product" write_transcript_product(writers.transcript_product_fh, all_vars, annotation, seq_id, location, ctx.sample_id_map)
 
         # Collect per-sample CANN entry keyed by original VCF alt allele (not IUPAC-derived base).
         # v.base may be an IUPAC ambiguity code for het calls; the VCF output write loop below
         # iterates each record's alts, so we must use the original allele strings as keys here.
-        for (rec, recvars) in per_record
+        @bench "cann_collect" for (rec, recvars) in per_record
             for (alt, smap) in collect_cann_entries_for_annotation(recvars, annotation, rec, ctx.reference_strain, all_strains, strain_idx_map)
                 for (strain, entries) in smap
                     strain_map = get!(alt_strain_entries, alt, Dict{String, Vector{String}}())
@@ -2261,7 +2323,7 @@ function handle_variant_record!(
     any_output || return false
 
     is_coding = any(a.is_coding == 1 for a in annotations) ? 1 : 0
-    write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
+    @bench "write_snp_feature" write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
                       ctx.reference_strain, ctx.all_strains)
 
     # HSSS binary files are SNP-only; skip positions where no record has a SNP-length allele.
@@ -2269,15 +2331,15 @@ function handle_variant_record!(
         unique_prods   = unique(all_annotation_products)
         hsss_prod_code = length(unique_prods) == 1 ?
             Int8(codepoint(first(only(unique_prods)))) : Int8(0)
-        write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
+        @bench "write_hsss" write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
                              seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
     end
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
-    (alt_cann_entries, alt_strain_to_ca) = assign_cann_keys(alt_strain_entries, all_strains)
+    (alt_cann_entries, alt_strain_to_ca) = @bench "cann_assign" assign_cann_keys(alt_strain_entries, all_strains)
 
     # Write one VCF output entry per unique alt per class-record (for SnpEff).
-    for (rec, recvars) in per_record
+    @bench "vcf_output_write" for (rec, recvars) in per_record
         modified_sample_data = fill_missing_coverage_gt(rec, all_strains, chrom_coverage, ctx.ploidy)
         strain_to_dfs = Dict{String,String}(v.strain => string(v.downstream_of_frameshift) for v in recvars)
         dfs_values = [get(strain_to_dfs, s, ".") for s in all_strains]
@@ -2313,11 +2375,13 @@ end
 function main()
     args = parse_args(ARGS)
     global DEBUG = haskey(args, "debug")
+    global BENCHMARK = haskey(args, "benchmark")
     debug_log("Debug mode enabled")
+    bench_t0 = time_ns()   # whole-run clock (includes setup + main loop)
 
     # Open VCF and parse header
     debug_log("Opening VCF: ", args["vcf_file"])
-    (vcf_pf, all_strains, chrom_rank, info_headers) = open_vcf_peeked(args["vcf_file"])
+    (vcf_pf, all_strains, chrom_rank, info_headers) = @bench "vcf_open_header" open_vcf_peeked(args["vcf_file"])
     debug_log("VCF: ", length(all_strains), " strains")
     write_sample_dat([all_strains..., args["reference_strain"]])
 
@@ -2346,6 +2410,7 @@ function main()
     current_chrom  = ""
 
     n_processed = 0
+    n_seen      = 0
 
     while !vcf_pf.exhausted
         vcf_start = peek_sort_key(vcf_pf.line, chrom_rank)
@@ -2365,11 +2430,13 @@ function main()
             push!(records, parse_vcf_record(vcf_pf.line, length(all_strains)))
             advance!(vcf_pf)
         end
+        n_seen += 1
+        bench_count!("records_parsed", length(records))
 
         # Load coverage intervals when the chromosome changes
         if records[1].chrom != current_chrom
             current_chrom = records[1].chrom
-            load_chrom_coverage!(coverage_fh, current_chrom, chrom_rank, chrom_coverage)
+            @bench "load_coverage" load_chrom_coverage!(coverage_fh, current_chrom, chrom_rank, chrom_coverage)
         end
 
         # Collect all cache entries at this (chrom, pos)
@@ -2394,6 +2461,10 @@ function main()
     end
 
     debug_log("Processing complete. Total positions processed: ", n_processed)
+
+    if BENCHMARK
+        print_benchmark_report(stderr, time_ns() - bench_t0, n_seen, n_processed)
+    end
 
     close_peeked(vcf_pf)
     close_peeked(cache_pf)
