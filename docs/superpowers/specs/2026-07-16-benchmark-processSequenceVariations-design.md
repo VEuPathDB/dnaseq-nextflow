@@ -167,12 +167,42 @@ uses for `GtfUtils.jl`). The report gained caller-supplied `summary` / `per_labe
 (`calls/pos` vs `calls/strain`).
 
 **`makeCodingData.jl`** is instrumented across `parse_gtf`, `read_fasta`,
-`extract_cds`, `project_indels`, the two SQL calls (`sql_fasta_offset`,
-`sql_project_indels`), the inserts, and the two index builds. A 4-strain run shows
-it is SQL-bound in the same shape as the original processSeqVars problem: one
-`sql_project_indels` per (strain, transcript) and ~2 `sql_fasta_offset` per
-(strain, exon), all O(strains). No fix applied yet — instrumentation only, so the
-hotspot can be confirmed at production scale before optimizing.
+`extract_cds`, `project_indels`, the SQL calls, the inserts, and the two index
+builds.
 
 The Nextflow param was renamed `benchmarkVariations` → **`benchmark`** (it now
 gates both merge Julia steps) and is threaded into both process invocations.
+
+### makeCodingData findings (20-sample run) + fix
+
+A from-scratch 20-sample run showed **makeCodingData at 1498 s (~25 min)**, ~99%
+SQLite — the same per-`(strain, transcript, exon)` round-trip pattern:
+
+| bucket | time | calls | note |
+|---|---|---|---|
+| `sql_project_indels` | 1033 s (69%) | 338,856 | one range query per (strain, transcript, exon) |
+| `sql_fasta_offset` | 446 s (30%) | 649,474 | ~2 per (strain, exon), all O(strains) |
+
+**Fix (in-memory index).** makeCodingData processes one strain at a time, so a
+`GenomicIndelIndex` loads that strain's genomic indels in **one** query into
+per-`sequence_id` sorted `(position, shift)` arrays plus a shift prefix-sum.
+`fasta_offset` becomes a binary search on the prefix-sum; `project_indels_to_cds`
+a binary-searched range slice. Their signatures now take the index instead of
+`(db, strain)`. ~988k queries → **24** (one per strain).
+
+`testing/t/genomicIndelIndex.jl` asserts both lookups equal the original SQL
+across every position and window (with duplicate positions, multiple sequences,
+strain isolation); existing makeCodingData tests updated to the new signatures.
+
+**Verification (same 20-sample inputs):** **1498 s → 11.5 s (~130×).** Both SQL
+hotspots eliminated; residual time is FASTA reading (44%) and CDS splicing (31%).
+`coding_sequences` and `indels` table contents **byte-identical** to the prior
+run (129,336 / 5,341 rows). Full Julia suite passes.
+
+### processSeqVars fix confirmed end-to-end
+
+The same 20-sample from-scratch run (fresh, indexed `codingSequences.db`) took
+processSeqVars from the original **1661.84 s → 52.30 s (~32×)**:
+`sql_load_transcript` 931 s → 2.0 s (index landed on the fresh build),
+`sql_get_indel_shift` eliminated. The shared `bin/Benchmark.jl` staged and ran
+correctly through Nextflow.
