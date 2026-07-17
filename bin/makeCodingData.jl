@@ -15,6 +15,7 @@
 #   codingIndels.db       — SQLite: indels(strain, transcript_id, position, shift_amount)
 
 include("$(@__DIR__)/GtfUtils.jl")
+include("$(@__DIR__)/Benchmark.jl")
 
 using SQLite
 using SQLite.DBInterface: execute
@@ -98,44 +99,91 @@ end
 # CDS sequence extraction
 # ---------------------------------------------------------------------------
 
-"""
-    fasta_offset(indel_db, strain, seq_id, before_pos) -> Int
+# ---------------------------------------------------------------------------
+# In-memory genomic-indel index (one strain at a time)
+#
+# makeCodingData processes a single strain across all transcripts, so instead of
+# issuing a SQL query per exon/transcript (fasta_offset + project_indels_to_cds
+# fired ~O(strains × transcripts × exons) queries — the makeCodingData
+# bottleneck), we pull a strain's genomic indels ONCE and answer both lookups
+# from sorted per-sequence arrays via binary search.
+# ---------------------------------------------------------------------------
 
-Return the cumulative indel shift for `strain` on `seq_id` at all positions
-strictly less than `before_pos`. Used to convert a reference genomic coordinate
-to the corresponding position in a consensus FASTA that embeds genomic indels.
-"""
-function fasta_offset(indel_db::SQLite.DB, strain::String, seq_id::String, before_pos::Int)
-    row = first(execute(indel_db,
-        "SELECT COALESCE(SUM(shift), 0) FROM genomic_indels
-         WHERE strain = ? AND sequence_id = ? AND position < ?",
-        [strain, seq_id, before_pos]))
-    row[1]
+struct GenomicIndelIndex
+    # sequence_id -> (positions, shifts, cumshifts) — all ascending by position;
+    # cumshifts is the running prefix sum of shifts.
+    byseq::Dict{String, Tuple{Vector{Int}, Vector{Int}, Vector{Int}}}
 end
 
 """
-    extract_cds_sequence(genome_seqs, exon_list, strain, indel_db) -> String
+    load_strain_genomic_indels(indel_db, strain) -> GenomicIndelIndex
+
+Load all genomic indels for `strain` in one query and build per-sequence sorted
+position/shift arrays plus a prefix sum of shifts.
+"""
+function load_strain_genomic_indels(indel_db::SQLite.DB, strain::String)::GenomicIndelIndex
+    byseq = Dict{String, Tuple{Vector{Int}, Vector{Int}, Vector{Int}}}()
+    rows = @bench "sql_load_strain_indels" [(String(r[1]), Int(r[2]), Int(r[3])) for r in execute(indel_db,
+        "SELECT sequence_id, position, shift FROM genomic_indels
+         WHERE strain = ? ORDER BY sequence_id, position",
+        [strain])]
+    for (seq_id, pos, shift) in rows
+        entry = get(byseq, seq_id, nothing)
+        if entry === nothing
+            entry = (Int[], Int[], Int[])
+            byseq[seq_id] = entry
+        end
+        push!(entry[1], pos)
+        push!(entry[2], shift)
+    end
+    for (_, (positions, shifts, cums)) in byseq
+        c = 0
+        for s in shifts
+            c += s
+            push!(cums, c)
+        end
+    end
+    GenomicIndelIndex(byseq)
+end
+
+"""
+    fasta_offset(idx, seq_id, before_pos) -> Int
+
+Cumulative indel shift on `seq_id` at all positions strictly less than
+`before_pos`. Converts a reference genomic coordinate to the corresponding
+position in a consensus FASTA that embeds genomic indels. Matches the old SQL
+`SUM(shift) WHERE ... AND position < ?` (0 when none) via binary search.
+"""
+function fasta_offset(idx::GenomicIndelIndex, seq_id::String, before_pos::Int)::Int
+    entry = get(idx.byseq, seq_id, nothing)
+    entry === nothing && return 0
+    positions, _, cums = entry
+    i = searchsortedlast(positions, before_pos - 1)  # position < before_pos
+    i == 0 ? 0 : cums[i]
+end
+
+"""
+    extract_cds_sequence(genome_seqs, exon_list, indel_idx) -> String
 
 Splice and return the CDS sequence for a transcript from genome sequences.
 `exon_list` must be in 5'→3' order (as returned by parse_gtf).
 Reverse-complements minus-strand transcripts using IUPAC-aware complement.
 Returns "" if any exon's seq_id is missing from genome_seqs.
 
-For non-reference strains, pass `strain` and `indel_db` so that exon slice
-coordinates are adjusted for upstream genomic indels embedded in the consensus
-FASTA.
+For non-reference strains, pass the strain's `indel_idx` (a GenomicIndelIndex) so
+exon slice coordinates are adjusted for upstream genomic indels embedded in the
+consensus FASTA. Pass `nothing` for the reference (coordinates used as-is).
 """
 function extract_cds_sequence(genome_seqs::Dict{String,String}, exon_list::Vector{CdsExon},
-                               strain::String="reference",
-                               indel_db::Union{SQLite.DB,Nothing}=nothing)
+                               indel_idx::Union{GenomicIndelIndex,Nothing}=nothing)
     isempty(exon_list) && return ""
     parts = String[]
     for e in exon_list
         seq = get(genome_seqs, e.seq_id, nothing)
         seq === nothing && return ""
-        if indel_db !== nothing
-            fstart = e.start + fasta_offset(indel_db, strain, e.seq_id, e.start)
-            fstop  = e.stop  + fasta_offset(indel_db, strain, e.seq_id, e.stop + 1)
+        if indel_idx !== nothing
+            fstart = e.start + fasta_offset(indel_idx, e.seq_id, e.start)
+            fstop  = e.stop  + fasta_offset(indel_idx, e.seq_id, e.stop + 1)
         else
             fstart, fstop = e.start, e.stop
         end
@@ -154,28 +202,30 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    project_indels_to_cds(db, strain, exon_list) -> Vector{Tuple{Int,Int}}
+    project_indels_to_cds(indel_idx, exon_list) -> Vector{Tuple{Int,Int}}
 
-Query genomic indels for `strain` that fall within the exons of a transcript,
-convert each to a 0-based CDS-space position, and return
+Find the strain's genomic indels (from `indel_idx`) that fall within the exons of
+a transcript, convert each to a 0-based CDS-space position, and return
 [(cds_position, shift_amount), ...] sorted in 5'→3' order.
 """
-function project_indels_to_cds(db::SQLite.DB, strain::String, exon_list::Vector{CdsExon})
+function project_indels_to_cds(indel_idx::GenomicIndelIndex, exon_list::Vector{CdsExon})
     result = Tuple{Int,Int}[]
     isempty(exon_list) && return result
 
     seq_id     = exon_list[1].seq_id
     cds_offset = 0
 
+    entry = get(indel_idx.byseq, seq_id, nothing)
+    positions, shifts = entry === nothing ? (Int[], Int[]) : (entry[1], entry[2])
+
     for e in exon_list
-        rows = execute(db,
-            "SELECT position, shift FROM genomic_indels
-             WHERE strain = ? AND sequence_id = ? AND position >= ? AND position <= ?
-             ORDER BY position",
-            [strain, seq_id, e.start, e.stop])
-        for row in rows
-            gpos  = row[1]
-            shift = row[2]
+        # In-memory equivalent of the old
+        #   WHERE position >= e.start AND position <= e.stop ORDER BY position
+        lo = searchsortedfirst(positions, e.start)
+        hi = searchsortedlast(positions, e.stop)
+        for i in lo:hi
+            gpos  = positions[i]
+            shift = shifts[i]
             cds_pos = if e.strand == '-'
                 cds_offset + (e.stop - gpos)
             else
@@ -225,7 +275,15 @@ function create_indels_db(path::String)
 end
 
 function finalize_indels_db(db::SQLite.DB)
-    execute(db, "CREATE INDEX idx_indels ON indels(transcript_id, strain, position)")
+    @bench "finalize_indels_index" execute(db, "CREATE INDEX idx_indels ON indels(transcript_id, strain, position)")
+end
+
+function finalize_cds_db(db::SQLite.DB)
+    # processSequenceVariations.jl queries coding_sequences by transcript_id alone.
+    # The PRIMARY KEY (strain, transcript_id) autoindex leads with strain, so a
+    # transcript_id-only lookup cannot use it and full-scans the (large) table.
+    # This index makes that lookup a seek.
+    @bench "finalize_cds_index" execute(db, "CREATE INDEX idx_coding_sequences_transcript ON coding_sequences(transcript_id)")
 end
 
 # ---------------------------------------------------------------------------
@@ -234,15 +292,19 @@ end
 
 function process_strain(strain, genome_seqs, by_transcript, indel_src_db,
                         cds_insert_stmt, indels_insert_stmt)
-    db_for_coords = strain == "reference" ? nothing : indel_src_db
+    # One query per strain instead of per (transcript, exon). The reference gets no
+    # coordinate offset in extract_cds (indel_idx=nothing), matching prior behavior;
+    # project_indels still uses the loaded index (empty for the reference).
+    indel_idx  = load_strain_genomic_indels(indel_src_db, strain)
+    extract_idx = strain == "reference" ? nothing : indel_idx
     for (transcript_id, exon_list) in by_transcript
-        seq = extract_cds_sequence(genome_seqs, exon_list, strain, db_for_coords)
+        seq = @bench "extract_cds" extract_cds_sequence(genome_seqs, exon_list, extract_idx)
         isempty(seq) && continue
-        execute(cds_insert_stmt, [strain, transcript_id, seq])
+        @bench "cds_insert" execute(cds_insert_stmt, [strain, transcript_id, seq])
 
-        cds_indels = project_indels_to_cds(indel_src_db, strain, exon_list)
+        cds_indels = @bench "project_indels" project_indels_to_cds(indel_idx, exon_list)
         for (pos, shift) in cds_indels
-            execute(indels_insert_stmt, [strain, transcript_id, pos, shift])
+            @bench "indels_insert" execute(indels_insert_stmt, [strain, transcript_id, pos, shift])
         end
     end
 end
@@ -253,6 +315,8 @@ end
 
 function main()
     args = parse_args(ARGS)
+    global BENCHMARK = haskey(args, "benchmark")
+    bench_t0 = time_ns()
 
     genomic_indel_db = args["genomic_indel_db"]
     gtf_file         = args["gtf_file"]
@@ -261,10 +325,10 @@ function main()
     indels_db_out    = args["indels_db_out"]
 
     println(stderr, "Parsing GTF: $gtf_file")
-    _, by_transcript = parse_gtf(gtf_file)
+    _, by_transcript = @bench "parse_gtf" parse_gtf(gtf_file)
 
     println(stderr, "Reading reference genome: $genome_fasta")
-    ref_seqs = read_fasta(genome_fasta)
+    ref_seqs = @bench "read_fasta" read_fasta(genome_fasta)
 
     println(stderr, "Opening genomic indels DB: $genomic_indel_db")
     indel_src_db = SQLite.DB(genomic_indel_db)
@@ -289,7 +353,7 @@ function main()
     for fasta_path in fasta_files
         strain = replace(basename(fasta_path), "_consensus.fa.gz" => "")
         println(stderr, "Processing strain: $strain")
-        strain_seqs = strip_strain_prefix(read_fasta(fasta_path), strain)
+        strain_seqs = strip_strain_prefix(@bench("read_fasta", read_fasta(fasta_path)), strain)
         SQLite.transaction(cds_db) do
             SQLite.transaction(indels_db) do
                 process_strain(strain, strain_seqs, by_transcript, indel_src_db,
@@ -299,7 +363,15 @@ function main()
     end
 
     finalize_indels_db(indels_db)
+    finalize_cds_db(cds_db)
     println(stderr, "Done. Wrote $cds_db_out and $indels_db_out")
+
+    if BENCHMARK
+        n_strains = 1 + length(fasta_files)   # reference + per-strain consensus FASTAs
+        print_benchmark_report(stderr, time_ns() - bench_t0;
+            summary = "strains (incl. reference): $n_strains   transcripts: $(length(by_transcript))",
+            per_label = "calls/strain", per_denom = n_strains)
+    end
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
