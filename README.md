@@ -133,7 +133,7 @@ Takes the per-strain outputs from one or more `processSingleExperiment` runs and
 
 | Image | Used by |
 |---|---|
-| `veupathdb/shortreadaligner:1.0.0` | BWA, samtools, Picard, GATK3, FreeBayes, bcftools, bedtools, Julia 1.10, Perl/BioPerl, SnpEff |
+| `veupathdb/shortreadaligner:1.0.1` | BWA, samtools, Picard, GATK3, FreeBayes, bcftools, bedtools, Julia 1.10, Perl/BioPerl, SnpEff |
 | `veupathdb/dnaseqanalysis:1.0.0` | Trimmomatic, htseq-count |
 
 ---
