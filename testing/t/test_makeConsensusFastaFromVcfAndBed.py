@@ -12,13 +12,33 @@ from makeConsensusFastaFromVcfAndBed import (
 
 
 class FakeVcfRecord:
+    """Mimics the cyvcf2 Variant API used by build_consensus.
+
+    Constructed from a base-string genotype (e.g. 'A/T', or triploid 'A/A/G')
+    for test convenience, but internally exposes cyvcf2's real `.genotypes`
+    (per-sample list of allele indices + trailing phased flag; missing = -1).
+    The `.gt_bases` property reproduces cyvcf2's actual behaviour of RAISING
+    for ploidy > 2 — so this mock can no longer hide that limitation.
+    """
     def __init__(self, chrom, pos, ref, alts, gt_bases_str):
         self.CHROM = chrom
         self.POS = pos        # 1-based
         self.REF = ref
         self.ALT = alts       # list of strings
-        self.gt_bases = [gt_bases_str]  # single sample, e.g. 'A/T'
         self.FORMAT = 'GT'
+        self._phased = '|' in gt_bases_str
+        pool = [ref] + list(alts)
+        toks = gt_bases_str.replace('|', '/').split('/')
+        self._idxs = [-1 if t == '.' else pool.index(t) for t in toks]
+        self.genotypes = [self._idxs + [self._phased]]
+
+    @property
+    def gt_bases(self):
+        if len(self._idxs) > 2:
+            raise Exception("gt_bases not implemented for ploidy > 2")
+        pool = [self.REF] + list(self.ALT)
+        sep = '|' if self._phased else '/'
+        return [sep.join('.' if i < 0 else pool[i] for i in self._idxs)]
 
 
 class FakeVcf:
@@ -184,6 +204,53 @@ def test_build_consensus_gap_after_last_variant():
 def test_build_consensus_dot_gt_gives_n():
     ref_seq = 'ACGT'
     record = FakeVcfRecord('chr1', 1, 'A', ['T'], './.')
+    vcf = FakeVcf({'chr1': [record]})
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
+    assert seq == 'N' + 'CGT'
+
+
+def test_build_consensus_triploid_hom_snp():
+    # 1/1/1 hom-alt triploid SNP → the alt base (cyvcf2 gt_bases would crash here)
+    ref_seq = 'ACGT'
+    record = FakeVcfRecord('chr1', 1, 'A', ['G'], 'G/G/G')
+    vcf = FakeVcf({'chr1': [record]})
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
+    assert seq == 'G' + 'CGT'
+
+
+def test_build_consensus_triploid_het_snp_iupac():
+    # 0/0/1 (A,A,G) → two distinct SNP alleles → IUPAC R
+    ref_seq = 'ACGT'
+    record = FakeVcfRecord('chr1', 1, 'A', ['G'], 'A/A/G')
+    vcf = FakeVcf({'chr1': [record]})
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
+    assert seq[0] == 'R'
+    assert seq[1:] == 'CGT'
+
+
+def test_build_consensus_triploid_three_distinct_snp_iupac():
+    # 0/1/2 (A,G,T) → three distinct SNP alleles → IUPAC D
+    ref_seq = 'ACGT'
+    record = FakeVcfRecord('chr1', 1, 'A', ['G', 'T'], 'A/G/T')
+    vcf = FakeVcf({'chr1': [record]})
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
+    assert seq[0] == 'D'
+    assert seq[1:] == 'CGT'
+
+
+def test_build_consensus_triploid_all_missing_gives_n():
+    # ././. all-missing triploid → N × len(REF); reproduces the cyvcf2 crash
+    ref_seq = 'ACGT'
+    record = FakeVcfRecord('chr1', 1, 'A', ['G'], './.' + '/.')  # "././." (triploid)
+    vcf = FakeVcf({'chr1': [record]})
+    seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
+    assert seq == 'N' + 'CGT'
+
+
+def test_build_consensus_triploid_partial_missing_gives_n():
+    # 1/./. — any missing slot makes the whole GT missing → N (matches diploid rule)
+    ref_seq = 'ACGT'
+    record = FakeVcfRecord('chr1', 1, 'A', ['G'], 'G/./.')
     vcf = FakeVcf({'chr1': [record]})
     seq = build_consensus('chr1', 4, ref_seq, vcf, [(0, 4)], [0])
     assert seq == 'N' + 'CGT'
