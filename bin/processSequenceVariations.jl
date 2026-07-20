@@ -1018,23 +1018,13 @@ function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
         fi > length(result) && break
         if key == "GT"
             gt = result[fi]
-            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
-            sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-            sep = isnothing(sep_idx) ? nothing : gt[sep_idx]
+            is_missing_gt(gt) && continue
             remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
-            # A '.' slot (from --multi-overlaps . on a split multiallelic) stays '.';
-            # remap numeric slots individually. Do NOT bail the whole GT on a missing
-            # slot — a non-target alt slot must remap to 0, not be left as a stale index.
-            remap_tok = function(s)
-                s == "." && return "."
-                idx = tryparse(Int, s)
-                isnothing(idx) ? s : string(remap(idx))
-            end
-            if isnothing(sep_idx)
-                result[fi] = remap_tok(gt)
-            else
-                result[fi] = "$(remap_tok(gt[1:sep_idx-1]))$(sep)$(remap_tok(gt[sep_idx+1:end]))"
-            end
+            # Remap every numeric allele index in place: target alt → 1, ref/other → 0.
+            # '.' slots (from --multi-overlaps . on a split multiallelic) and the
+            # separators (/ or |) are preserved verbatim, so this is ploidy-agnostic
+            # — a triploid "./2/." remaps each index without leaving stale ones.
+            result[fi] = replace(gt, r"\d+" => m -> string(remap(parse(Int, m))))
         elseif key == "GL"
             result[fi] = "."
         end
@@ -1060,6 +1050,28 @@ end
 # ---------------------------------------------------------------------------
 
 """
+    gt_slots(gt) -> Vector{SubString}
+
+Splits a genotype string into its allele slots on either separator (`/` or `|`).
+Ploidy-agnostic: haploid GTs (no separator) yield a single slot, diploid two,
+triploid three, etc. Aneuploid tritryp/fungal strains and bcftools-merged VCFs
+routinely carry mixed ploidy, so never assume two slots.
+"""
+gt_slots(gt::AbstractString) = split(gt, r"[/|]")
+
+"""
+    is_missing_gt(gt) -> Bool
+
+True when the genotype is entirely absent — empty, or every slot is `.` — at any
+ploidy (`.`, `./.`, `././.`, `.|.|.`, …). Replaces the diploid-only string
+comparisons (`gt == "./."`) that crashed on higher-ploidy missing calls.
+"""
+function is_missing_gt(gt::AbstractString)::Bool
+    isempty(gt) && return true
+    all(s -> s == ".", gt_slots(gt))
+end
+
+"""
     resolve_gt_slots(gt, ref, alts) -> Vector{String}
 
 Resolved allele string for each non-missing GT slot. A `.` slot is skipped
@@ -1067,9 +1079,7 @@ Resolved allele string for each non-missing GT slot. A `.` slot is skipped
 """
 function resolve_gt_slots(gt::String, ref::String, alts::Vector{String})::Vector{String}
     result = String[]
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-    slots = isnothing(sep_idx) ? [gt] : split(gt, r"[/|]")
-    for s in slots
+    for s in gt_slots(gt)
         s == "." && continue
         # GT indices are guaranteed valid against `alts` (input is post-`bcftools norm`);
         # a silent bounds-guard is intentionally avoided — it would undercount copies.
@@ -1087,43 +1097,33 @@ Returns "" for missing genotypes.
 For diploid hets with SNP alleles, returns IUPAC ambiguity code.
 """
 function gt_to_base(gt::String, ref::String, alts::Vector{String})::String
-    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return ""
+    is_missing_gt(gt) && return ""
 
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-
-    if isnothing(sep_idx)
-        # Haploid
-        idx = parse(Int, gt)
-        return idx == 0 ? ref : alts[idx]
-    else
-        a1_str = gt[1:sep_idx-1]
-        a2_str = gt[sep_idx+1:end]
-
-        # Half-missing (e.g. "1/." from a split multiallelic): return the present allele.
-        if a1_str == "." || a2_str == "."
-            present = a1_str == "." ? a2_str : a1_str
-            present == "." && return ""
-            idx = parse(Int, present)
-            return idx == 0 ? ref : alts[idx]
-        end
-
-        a1 = parse(Int, a1_str)
-        a2 = parse(Int, a2_str)
-
-        b1 = a1 == 0 ? ref : alts[a1]
-        b2 = a2 == 0 ? ref : alts[a2]
-
-        b1 == b2 && return b1  # homozygous
-
-        # Het: IUPAC for single-char SNPs
-        if length(b1) == 1 && length(b2) == 1
-            iupac = get(IUPAC_COMPRESS, Set([b1[1], b2[1]]), nothing)
-            !isnothing(iupac) && return string(iupac)
-        end
-
-        # Complex het: return the non-ref allele
-        return a1 != 0 ? b1 : b2
+    # Resolve every present (non-".") slot to its allele string. Missing slots
+    # (e.g. "1/." from a split multiallelic, or "1/./." from a triploid call)
+    # contribute nothing — their allele lives in a sibling record.
+    bases = String[]
+    for s in gt_slots(gt)
+        s == "." && continue
+        idx = parse(Int, s)
+        push!(bases, idx == 0 ? ref : alts[idx])
     end
+    isempty(bases) && return ""
+
+    distinct = unique(bases)
+    length(distinct) == 1 && return distinct[1]   # homozygous or single present allele
+
+    # Het of exactly two single-char SNP alleles → IUPAC ambiguity code
+    if length(distinct) == 2 && all(b -> length(b) == 1, distinct)
+        iupac = get(IUPAC_COMPRESS, Set([distinct[1][1], distinct[2][1]]), nothing)
+        !isnothing(iupac) && return string(iupac)
+    end
+
+    # Complex / higher-order het: return the first non-ref allele
+    for b in bases
+        b != ref && return b
+    end
+    return bases[1]
 end
 
 """
@@ -1134,17 +1134,12 @@ For GT="0/1" returns [alts[1]]; for GT="1/1" returns [alts[1]]; for GT="1/2"
 returns [alts[1], alts[2]].  Returns [] for missing or ref-only GTs.
 """
 function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
-    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return String[]
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-    idxs = if isnothing(sep_idx)
-        [parse(Int, gt)]
-    else
-        a1 = gt[1:sep_idx-1]; a2 = gt[sep_idx+1:end]
-        collect(parse(Int, s) for s in (a1, a2) if s != ".")
-    end
+    is_missing_gt(gt) && return String[]
     seen = Set{Int}()
     result = String[]
-    for i in idxs
+    for s in gt_slots(gt)
+        s == "." && continue
+        i = parse(Int, s)
         i == 0 && continue
         i in seen && continue
         push!(seen, i)
@@ -1164,18 +1159,19 @@ function compute_percent(fmt::Dict{String,String}, gt::String)::String
     ao_str = get(fmt, "AO", "")
     ro_str = get(fmt, "RO", "0")
     isempty(ao_str) && return "0.0"
+    is_missing_gt(gt) && return "0.0"
 
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-    if isnothing(sep_idx)
-        aidx = parse(Int, gt)
-        aidx == 0 && return "0.0"
-    else
-        a1s = gt[1:sep_idx-1]; a2s = gt[sep_idx+1:end]
-        a1 = a1s == "." ? 0 : parse(Int, a1s)
-        a2 = a2s == "." ? 0 : parse(Int, a2s)
-        aidx = a1 != 0 ? a1 : a2
-        aidx == 0 && return "0.0"
+    # First non-ref slot across any ploidy; ref-only (0/0, 0/0/0) → 0.0.
+    aidx = 0
+    for s in gt_slots(gt)
+        s == "." && continue
+        i = parse(Int, s)
+        if i != 0
+            aidx = i
+            break
+        end
     end
+    aidx == 0 && return "0.0"
 
     ao_values = split(ao_str, ',')
     aidx > length(ao_values) && return "0.0"
@@ -1211,7 +1207,7 @@ function build_variations_from_record(
         fmt = parse_format_field(record.format_keys, record.sample_data[i])
 
         gt = get(fmt, "GT", "")
-        if isempty(gt) || gt == "." || gt == "./." || gt == ".|."
+        if is_missing_gt(gt)
             synthesize_ref || continue
             strain in no_synth_strains && continue
             # No call: synthesize a reference Variation if position is covered
@@ -1248,11 +1244,13 @@ function build_variations_from_record(
         pct  = compute_percent(fmt, gt)
         gq   = get(fmt, "GQ", "0")
 
-        # Detect het call: GT has separator and both alleles differ (e.g. 0/1)
-        sep_idx  = findfirst(c -> c == '/' || c == '|', gt)
-        is_het   = !isnothing(sep_idx) && gt[1:sep_idx-1] != gt[sep_idx+1:end]
+        # Het call: more than one distinct slot (e.g. 0/1, 1/2, half-called 1/.).
+        # Ploidy-agnostic — hom calls (1/1, 1/1/1) collapse to a single distinct
+        # slot and are not het; matches diploid behaviour exactly.
+        slots    = gt_slots(gt)
+        is_het   = length(unique(slots)) > 1
         alt_alts = is_het ? nonref_alt_alleles(gt, record.alts) : String[]
-        gt_ploidy = 1 + count(c -> c == '/' || c == '|', gt)
+        gt_ploidy = length(slots)
 
         v = Variation()
         v.sequence_source_id = record.chrom
@@ -1788,12 +1786,10 @@ Preserves the phasing separator ('/' or '|') from the original GT.
 """
 function gt_to_ca(gt::String, this_alt_idx::Union{Int,Nothing},
                   this_alt_keys::Vector{String}, ref_keys::Vector{String})::String
-    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return "."
+    is_missing_gt(gt) && return "."
 
     alt_key_str = isempty(this_alt_keys) ? "." : join(this_alt_keys, ';')
     ref_key_str = isempty(ref_keys)      ? "r" : join(ref_keys, ';')
-
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
 
     allele_to_ca(a_str) = begin
         idx = tryparse(Int, a_str)
@@ -1802,14 +1798,16 @@ function gt_to_ca(gt::String, this_alt_idx::Union{Int,Nothing},
         (this_alt_idx !== nothing && idx == this_alt_idx) ? alt_key_str : "."
     end
 
-    if isnothing(sep_idx)
-        return allele_to_ca(gt)
-    else
-        sep_char = gt[sep_idx]
-        ca1 = allele_to_ca(gt[1:sep_idx-1])
-        ca2 = allele_to_ca(gt[sep_idx+1:end])
-        return "$(ca1)$(sep_char)$(ca2)"
+    # One CA per slot, at any ploidy. Interleave the resolved slots with the
+    # original separator chars (in order) so phasing / vs | is preserved verbatim.
+    slots = gt_slots(gt)
+    seps  = [c for c in gt if c == '/' || c == '|']
+    io = IOBuffer()
+    for (i, s) in enumerate(slots)
+        print(io, allele_to_ca(String(s)))
+        i <= length(seps) && print(io, seps[i])
     end
+    String(take!(io))
 end
 
 """
@@ -2110,7 +2108,7 @@ function fill_missing_coverage_gt(
         i > length(modified) && continue
         fmt = parse_format_field(record.format_keys, modified[i])
         gt = get(fmt, "GT", "")
-        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
+        is_missing_gt(gt) || continue
         (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
         covered || continue
         fields = fill(".", length(record.format_keys))
@@ -2239,7 +2237,7 @@ function handle_variant_record!(
         for (i, strain) in enumerate(all_strains)
             i > length(r.sample_data) && continue
             gt = get(parse_format_field(r.format_keys, r.sample_data[i]), "GT", "")
-            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+            is_missing_gt(gt) && continue
             push!(real_call_strains, strain)
         end
     end
