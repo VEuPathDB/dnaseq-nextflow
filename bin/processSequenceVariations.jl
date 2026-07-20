@@ -1018,23 +1018,13 @@ function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
         fi > length(result) && break
         if key == "GT"
             gt = result[fi]
-            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
-            sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-            sep = isnothing(sep_idx) ? nothing : gt[sep_idx]
+            is_missing_gt(gt) && continue
             remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
             # A '.' slot (from --multi-overlaps . on a split multiallelic) stays '.';
-            # remap numeric slots individually. Do NOT bail the whole GT on a missing
-            # slot — a non-target alt slot must remap to 0, not be left as a stale index.
-            remap_tok = function(s)
-                s == "." && return "."
-                idx = tryparse(Int, s)
-                isnothing(idx) ? s : string(remap(idx))
-            end
-            if isnothing(sep_idx)
-                result[fi] = remap_tok(gt)
-            else
-                result[fi] = "$(remap_tok(gt[1:sep_idx-1]))$(sep)$(remap_tok(gt[sep_idx+1:end]))"
-            end
+            # remap numeric slots individually, for ANY ploidy — do NOT bail the whole
+            # GT on a missing slot, and do NOT assume only two slots are present (e.g.
+            # CNV/duplicated-region calls can carry 3+ slots).
+            result[fi] = replace(gt, r"[0-9]+" => tok -> string(remap(parse(Int, tok))))
         elseif key == "GL"
             result[fi] = "."
         end
@@ -1080,50 +1070,51 @@ function resolve_gt_slots(gt::String, ref::String, alts::Vector{String})::Vector
 end
 
 """
+    is_missing_gt(gt) -> Bool
+
+True if every allele slot in `gt` is missing ("."), for ANY ploidy
+(e.g. ".", "./.", ".|.", "././.", ".|.|.|.", ...). Unlike checking against
+a fixed set of literal strings, this generalizes to haploid, diploid, and
+higher-ploidy (e.g. CNV/duplicated-region) genotypes alike.
+"""
+function is_missing_gt(gt::AbstractString)::Bool
+    isempty(gt) && return true
+    all(s -> s == ".", split(gt, r"[/|]"))
+end
+
+"""
     gt_to_base(gt, ref, alts) -> String
 
 Converts a GT field value to a base/allele string.
-Returns "" for missing genotypes.
+Returns "" for missing genotypes (any ploidy).
 For diploid hets with SNP alleles, returns IUPAC ambiguity code.
+For higher-ploidy or complex hets, returns the first non-ref allele.
 """
 function gt_to_base(gt::String, ref::String, alts::Vector{String})::String
-    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return ""
+    is_missing_gt(gt) && return ""
 
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
+    slots = split(gt, r"[/|]")
+    present = filter(s -> s != ".", slots)
+    isempty(present) && return ""  # defensive; is_missing_gt should already catch this
 
-    if isnothing(sep_idx)
-        # Haploid
-        idx = parse(Int, gt)
-        return idx == 0 ? ref : alts[idx]
-    else
-        a1_str = gt[1:sep_idx-1]
-        a2_str = gt[sep_idx+1:end]
+    idxs  = [parse(Int, s) for s in present]
+    bases = [i == 0 ? ref : alts[i] for i in idxs]
 
-        # Half-missing (e.g. "1/." from a split multiallelic): return the present allele.
-        if a1_str == "." || a2_str == "."
-            present = a1_str == "." ? a2_str : a1_str
-            present == "." && return ""
-            idx = parse(Int, present)
-            return idx == 0 ? ref : alts[idx]
-        end
-
-        a1 = parse(Int, a1_str)
-        a2 = parse(Int, a2_str)
-
-        b1 = a1 == 0 ? ref : alts[a1]
-        b2 = a2 == 0 ? ref : alts[a2]
-
-        b1 == b2 && return b1  # homozygous
-
-        # Het: IUPAC for single-char SNPs
-        if length(b1) == 1 && length(b2) == 1
-            iupac = get(IUPAC_COMPRESS, Set([b1[1], b2[1]]), nothing)
-            !isnothing(iupac) && return string(iupac)
-        end
-
-        # Complex het: return the non-ref allele
-        return a1 != 0 ? b1 : b2
+    if length(bases) == 1
+        return bases[1]
     end
+
+    all(b -> b == bases[1], bases) && return bases[1]  # homozygous / all-same
+
+    # Het: IUPAC for exactly two distinct single-char SNP alleles
+    if length(bases) == 2 && length(bases[1]) == 1 && length(bases[2]) == 1
+        iupac = get(IUPAC_COMPRESS, Set([bases[1][1], bases[2][1]]), nothing)
+        !isnothing(iupac) && return string(iupac)
+    end
+
+    # Complex/polyploid het: return the first non-ref allele present
+    nonref_pos = findfirst(i -> i != 0, idxs)
+    return isnothing(nonref_pos) ? ref : bases[nonref_pos]
 end
 
 """
@@ -1134,14 +1125,8 @@ For GT="0/1" returns [alts[1]]; for GT="1/1" returns [alts[1]]; for GT="1/2"
 returns [alts[1], alts[2]].  Returns [] for missing or ref-only GTs.
 """
 function nonref_alt_alleles(gt::String, alts::Vector{String})::Vector{String}
-    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return String[]
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-    idxs = if isnothing(sep_idx)
-        [parse(Int, gt)]
-    else
-        a1 = gt[1:sep_idx-1]; a2 = gt[sep_idx+1:end]
-        collect(parse(Int, s) for s in (a1, a2) if s != ".")
-    end
+    is_missing_gt(gt) && return String[]
+    idxs = collect(parse(Int, s) for s in split(gt, r"[/|]") if s != ".")
     seen = Set{Int}()
     result = String[]
     for i in idxs
@@ -1165,17 +1150,11 @@ function compute_percent(fmt::Dict{String,String}, gt::String)::String
     ro_str = get(fmt, "RO", "0")
     isempty(ao_str) && return "0.0"
 
-    sep_idx = findfirst(c -> c == '/' || c == '|', gt)
-    if isnothing(sep_idx)
-        aidx = parse(Int, gt)
-        aidx == 0 && return "0.0"
-    else
-        a1s = gt[1:sep_idx-1]; a2s = gt[sep_idx+1:end]
-        a1 = a1s == "." ? 0 : parse(Int, a1s)
-        a2 = a2s == "." ? 0 : parse(Int, a2s)
-        aidx = a1 != 0 ? a1 : a2
-        aidx == 0 && return "0.0"
-    end
+    is_missing_gt(gt) && return "0.0"
+    idxs = [s == "." ? 0 : parse(Int, s) for s in split(gt, r"[/|]")]
+    nonref_pos = findfirst(i -> i != 0, idxs)
+    aidx = isnothing(nonref_pos) ? 0 : idxs[nonref_pos]
+    aidx == 0 && return "0.0"
 
     ao_values = split(ao_str, ',')
     aidx > length(ao_values) && return "0.0"
@@ -1211,7 +1190,7 @@ function build_variations_from_record(
         fmt = parse_format_field(record.format_keys, record.sample_data[i])
 
         gt = get(fmt, "GT", "")
-        if isempty(gt) || gt == "." || gt == "./." || gt == ".|."
+        if is_missing_gt(gt)
             synthesize_ref || continue
             strain in no_synth_strains && continue
             # No call: synthesize a reference Variation if position is covered
@@ -1788,7 +1767,7 @@ Preserves the phasing separator ('/' or '|') from the original GT.
 """
 function gt_to_ca(gt::String, this_alt_idx::Union{Int,Nothing},
                   this_alt_keys::Vector{String}, ref_keys::Vector{String})::String
-    (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && return "."
+    is_missing_gt(gt) && return "."
 
     alt_key_str = isempty(this_alt_keys) ? "." : join(this_alt_keys, ';')
     ref_key_str = isempty(ref_keys)      ? "r" : join(ref_keys, ';')
@@ -2110,7 +2089,7 @@ function fill_missing_coverage_gt(
         i > length(modified) && continue
         fmt = parse_format_field(record.format_keys, modified[i])
         gt = get(fmt, "GT", "")
-        (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") || continue
+        is_missing_gt(gt) || continue
         (covered, dp) = get_coverage(chrom_coverage, strain, record.pos - 1)
         covered || continue
         fields = fill(".", length(record.format_keys))
@@ -2239,7 +2218,7 @@ function handle_variant_record!(
         for (i, strain) in enumerate(all_strains)
             i > length(r.sample_data) && continue
             gt = get(parse_format_field(r.format_keys, r.sample_data[i]), "GT", "")
-            (isempty(gt) || gt == "." || gt == "./." || gt == ".|.") && continue
+            is_missing_gt(gt) && continue
             push!(real_call_strains, strain)
         end
     end
