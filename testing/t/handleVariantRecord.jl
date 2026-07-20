@@ -1422,6 +1422,109 @@ end
     @test vars[1].ploidy == 2
 end
 
+# ---------------------------------------------------------------------------
+# n-ploidy genotypes (e.g. triploid GTs from aneuploid tritryp/fungal strains,
+# preserved by bcftools merge). See merged VCF Chr1_A_fumigatus_Af293:12263,
+# which mixes diploid 1/1 with triploid ././., 1/./., ./1/., ././1 in one record.
+# ---------------------------------------------------------------------------
+
+@testset "is_missing_gt: true only when every slot is missing, any ploidy" begin
+    @test is_missing_gt("")       == true
+    @test is_missing_gt(".")      == true
+    @test is_missing_gt("./.")    == true
+    @test is_missing_gt(".|.")    == true
+    @test is_missing_gt("././.")  == true
+    @test is_missing_gt(".|.|.")  == true
+    @test is_missing_gt("1/./.")  == false
+    @test is_missing_gt("./1/.")  == false
+    @test is_missing_gt("0/0/0")  == false
+    @test is_missing_gt("1/1")    == false
+end
+
+@testset "gt_to_base: triploid all-missing is empty" begin
+    @test gt_to_base("././.", "T", ["TA"]) == ""
+    @test gt_to_base(".|.|.", "T", ["TA"]) == ""
+end
+
+@testset "gt_to_base: triploid with one present allele returns that allele" begin
+    @test gt_to_base("1/./.", "T", ["TA"]) == "TA"
+    @test gt_to_base("./1/.", "T", ["TA"]) == "TA"
+    @test gt_to_base("././1", "T", ["TA"]) == "TA"
+end
+
+@testset "gt_to_base: homozygous triploid returns the single allele" begin
+    @test gt_to_base("1/1/1", "T", ["TA"]) == "TA"   # hom-alt
+    @test gt_to_base("0/0/0", "A", ["G"])  == "A"    # hom-ref
+end
+
+@testset "gt_to_base: triploid het of two single-char SNP alleles → IUPAC" begin
+    @test gt_to_base("0/0/1", "A", ["G"]) == "R"     # {A,G} → R, ref-heavy
+    @test gt_to_base("0/1/1", "A", ["G"]) == "R"     # {A,G} → R, alt-heavy
+end
+
+@testset "nonref_alt_alleles: n-ploidy" begin
+    @test nonref_alt_alleles("././.", ["TA"]) == String[]
+    @test nonref_alt_alleles("1/./.", ["TA"]) == ["TA"]
+    @test nonref_alt_alleles("1/1/1", ["TA"]) == ["TA"]
+    @test nonref_alt_alleles("1/2/.", ["TA","TAA"]) == ["TA","TAA"]
+end
+
+@testset "compute_percent: n-ploidy" begin
+    fmt = Dict("AO" => "68", "RO" => "0")
+    @test compute_percent(fmt, "1/./.") == "100.00"
+    @test compute_percent(fmt, "././.") == "0.0"
+    @test compute_percent(fmt, "0/0/0") == "0.0"
+end
+
+@testset "build_variations_from_record: triploid 1/./. yields one alt slot, ploidy 3" begin
+    # Real-data shape: GT:DP:AD:RO:QR:AO:QA with a triploid partial-missing call
+    rec = make_vcf_record(pos=12263, ref="G", alts=["A"],
+                          format_keys=["GT","DP","AD","RO","QR","AO","QA"],
+                          sample_data=["1/./.:128:0,68:0:0:68:2529"])
+    cov = make_coverage("s1", 12262, 200, 128.0)
+    vars = build_variations_from_record(rec, ["s1"], cov, 2)
+    @test length(vars) == 1
+    @test vars[1].allele_slots == ["A"]
+    @test vars[1].ploidy == 3
+end
+
+@testset "build_variations_from_record: triploid all-missing does not crash, synthesizes ref when covered" begin
+    rec = make_vcf_record(pos=12263, ref="G", alts=["A"],
+                          format_keys=["GT","DP","AD","RO","QR","AO","QA"],
+                          sample_data=["././.:.:.:.:.:.:."])
+    cov = make_coverage("s1", 12000, 13000, 40.0)
+    vars = build_variations_from_record(rec, ["s1"], cov, 3)
+    @test length(vars) == 1
+    @test vars[1].matches_reference == 1
+    @test vars[1].base == "G"
+    @test vars[1].ploidy == 3           # from --ploidy default, no GT to read
+end
+
+@testset "build_variations_from_record: homozygous triploid is not treated as het" begin
+    # 1/1/1 is hom-alt, not het — must behave like diploid 1/1 (alt_allele empty).
+    rec = make_vcf_record(pos=12263, ref="G", alts=["A"],
+                          format_keys=["GT","DP","AD","RO","QR","AO","QA"],
+                          sample_data=["1/1/1:90:0,90:0:0:90:3000"])
+    cov = make_coverage("s1", 12000, 13000, 90.0)
+    vars = build_variations_from_record(rec, ["s1"], cov, 2)
+    @test length(vars) == 1
+    @test vars[1].base == "A"
+    @test vars[1].ploidy == 3
+    @test vars[1].allele_slots == ["A","A","A"]
+    @test vars[1].alt_allele == ""          # hom-alt ⇒ no het alt component
+end
+
+@testset "gt_to_ca: emits one CA slot per GT slot at any ploidy" begin
+    # diploid baseline (locks existing behavior)
+    @test gt_to_ca("0/1", 1, ["k0"], ["r0"]) == "r0/k0"
+    @test gt_to_ca("./.", 1, ["k0"], ["r0"]) == "."          # missing → single dot
+    @test gt_to_ca("0|1", 1, ["k0"], ["r0"]) == "r0|k0"      # phased separator preserved
+    # triploid: every slot must appear, separators preserved, '.' slot stays '.'
+    @test gt_to_ca("0/1/.", 1, ["k0"], ["r0"]) == "r0/k0/."
+    @test gt_to_ca("1/1/1", 1, ["k0"], ["r0"]) == "k0/k0/k0"
+    @test gt_to_ca("0/0/0", 1, ["k0"], ["r0"]) == "r0/r0/r0"
+end
+
 @testset "write_snp_feature emits per-class SNP+indel columns without collapse" begin
     vars = [
         mkvar(strain="S1", reference="A",   base="G", coverage="30", percent="100"),
@@ -1485,6 +1588,16 @@ end
     @test remap_sample_for_split("./.", ["GT"], 2, 2) == "./."
     # sanity: existing biallelic behavior unaffected (n_orig_alts=1 → unchanged)
     @test remap_sample_for_split("1/2", ["GT"], 1, 1) == "1/2"
+end
+
+@testset "remap_sample_for_split remaps triploid GTs per-slot" begin
+    # Triploid split multiallelic (see Chr1_A_fumigatus_Af293:12263). Every index
+    # must be remapped; '.' slots and both separators are preserved.
+    @test remap_sample_for_split("./2/.", ["GT"], 3, 2) == "./1/."   # target alt → 1
+    @test remap_sample_for_split("./2/.", ["GT"], 3, 1) == "./0/."   # non-target alt → 0
+    @test remap_sample_for_split("1/./.", ["GT"], 3, 1) == "1/./."   # target alt → 1
+    @test remap_sample_for_split("1/2/3", ["GT"], 3, 2) == "0/1/0"   # only target survives
+    @test remap_sample_for_split("././.", ["GT"], 3, 2) == "././."   # full-missing untouched
 end
 
 @testset "write_snp_feature het_strain_count counts distinct strains" begin

@@ -126,15 +126,21 @@ def build_consensus(chrom_name, chrom_len, ref_seq, vcf, intervals, starts):
             segments.append(fill_gap(ref_seq, ref_pos, pos, intervals, starts))
             ref_pos = pos
 
-        # GT string for the single sample
-        gt_str = v.gt_bases[0] if v.gt_bases else './.'
+        # Resolve the single sample's alleles from GT indices. We use v.genotypes
+        # (allele indices + trailing phased flag; missing = -1) rather than
+        # v.gt_bases, because cyvcf2's gt_bases raises "not implemented for
+        # ploidy > 2" — and FreeBayes emits ploidy > 2 on aneuploid / CNV
+        # regions. Any missing slot makes the whole GT missing → N.
+        gts = v.genotypes
+        allele_idxs = gts[0][:-1] if gts else [-1]
 
-        if '.' in gt_str:
+        if any(i is None or i < 0 for i in allele_idxs):
             segments.append('N' * len(v.REF))
             ref_pos = pos + len(v.REF)
             continue
 
-        alleles = list(dict.fromkeys(gt_str.replace('|', '/').split('/')))  # unique, ordered
+        pool = [v.REF] + list(v.ALT)
+        alleles = list(dict.fromkeys(pool[i] for i in allele_idxs))  # unique, ordered
 
         is_indel = len(v.REF) > 1 or any(len(a) > 1 for a in alleles)
 
