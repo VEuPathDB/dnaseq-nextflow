@@ -24,7 +24,7 @@ process fastqc {
 }
 
 process fastqc_check {
-  container 'veupathdb/shortreadaligner:1.0.0'
+  container 'veupathdb/shortreadaligner:1.0.1'
 
   input:
     tuple val(sampleName), path(sampleFile), path(fastqc_output)
