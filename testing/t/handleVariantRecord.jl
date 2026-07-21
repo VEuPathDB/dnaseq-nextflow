@@ -1607,25 +1607,30 @@ end
     @test refr[1][10] == "."                # reference row g.HGVS is "."
 end
 
-@testset "remap_sample_for_split remaps half-missing GT per-slot" begin
-    # n_orig_alts=2, target_alt_i=2: slot "1" is a NON-target alt → 0; "." stays "."
-    @test remap_sample_for_split("1/.", ["GT"], 2, 2) == "0/."
-    @test remap_sample_for_split("./1", ["GT"], 2, 2) == "./0"
+@testset "remap_sample_for_split marks other-alt slots missing, not reference" begin
+    # n_orig_alts=2, target_alt_i=2: slot "1" is a NON-target alt → "." (its call
+    # lives in the sibling split record); "." stays "."
+    @test remap_sample_for_split("1/.", ["GT"], 2, 2) == "./."
+    @test remap_sample_for_split("./1", ["GT"], 2, 2) == "./."
     # target_alt_i=1: slot "1" IS the target alt → 1; "." stays "."
     @test remap_sample_for_split("1/.", ["GT"], 2, 1) == "1/."
+    # reference slot stays reference
+    @test remap_sample_for_split("0/1", ["GT"], 2, 1) == "0/1"
+    @test remap_sample_for_split("0/1", ["GT"], 2, 2) == "0/."
     # full-missing GT is left as-is (guarded earlier)
     @test remap_sample_for_split("./.", ["GT"], 2, 2) == "./."
     # sanity: existing biallelic behavior unaffected (n_orig_alts=1 → unchanged)
     @test remap_sample_for_split("1/2", ["GT"], 1, 1) == "1/2"
 end
 
-@testset "remap_sample_for_split remaps triploid GTs per-slot" begin
-    # Triploid split multiallelic (see Chr1_A_fumigatus_Af293:12263). Every index
-    # must be remapped; '.' slots and both separators are preserved.
+@testset "remap_sample_for_split remaps triploid GTs, other-alt → missing" begin
+    # Triploid split multiallelic. Target alt → 1, reference (0) stays 0,
+    # every other alt index → "." ; '.' slots and both separators preserved.
     @test remap_sample_for_split("./2/.", ["GT"], 3, 2) == "./1/."   # target alt → 1
-    @test remap_sample_for_split("./2/.", ["GT"], 3, 1) == "./0/."   # non-target alt → 0
+    @test remap_sample_for_split("./2/.", ["GT"], 3, 1) == "././."   # non-target alt → .
     @test remap_sample_for_split("1/./.", ["GT"], 3, 1) == "1/./."   # target alt → 1
-    @test remap_sample_for_split("1/2/3", ["GT"], 3, 2) == "0/1/0"   # only target survives
+    @test remap_sample_for_split("1/2/3", ["GT"], 3, 2) == "./1/."   # only target survives
+    @test remap_sample_for_split("0/2/0", ["GT"], 3, 2) == "0/1/0"   # ref slots stay ref
     @test remap_sample_for_split("././.", ["GT"], 3, 2) == "././."   # full-missing untouched
 end
 

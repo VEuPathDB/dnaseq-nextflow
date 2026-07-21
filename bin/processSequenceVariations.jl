@@ -1005,7 +1005,7 @@ When a multi-allelic record is split into one record per ALT, remap each sample'
 string so that GT allele indices are valid for a 1-ALT record:
   - target alt index (target_alt_i, 1-based in original) → 1
   - ref (0) → 0
-  - any other alt index → 0 (treated as ref in this split record)
+  - any other alt index → "." (missing; its call lives in the sibling split record)
 Also replaces GL with "." because GL has n*(n+1)/2 values for n alleles and SnpEff will
 reject split records whose GL length no longer matches the single-ALT allele count.
 """
@@ -1019,12 +1019,14 @@ function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
         if key == "GT"
             gt = result[fi]
             is_missing_gt(gt) && continue
-            remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
-            # Remap every numeric allele index in place: target alt → 1, ref/other → 0.
-            # '.' slots (from --multi-overlaps . on a split multiallelic) and the
+            remap = idx -> idx == 0 ? "0" : (idx == target_alt_i ? "1" : ".")
+            # Remap every numeric allele index in place: target alt → 1, ref (0) → 0,
+            # any OTHER alt → "." (missing) — the sample's real call for that allele
+            # lives in the sibling split record, so it must not be fabricated as
+            # reference here (the --multi-overlaps . convention). '.' slots and the
             # separators (/ or |) are preserved verbatim, so this is ploidy-agnostic
             # — a triploid "./2/." remaps each index without leaving stale ones.
-            result[fi] = replace(gt, r"\d+" => m -> string(remap(parse(Int, m))))
+            result[fi] = replace(gt, r"\d+" => m -> remap(parse(Int, m)))
         elseif key == "GL"
             result[fi] = "."
         end
