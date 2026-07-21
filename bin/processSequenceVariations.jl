@@ -1663,8 +1663,10 @@ function write_snp_feature(
     (sr, smaj, smajf, smajc, smin, sminf, sminc, smajh, sminh) = class_fields(snp_keys)
     (ir, imaj, imajf, imajc, imin, iminf, iminc, imajh, iminh) = class_fields(indel_keys)
 
+    # Frameshift/inframe classification only applies inside a CDS; leave the
+    # field blank for indels that fall outside all CDS boundaries.
     indel_frame_effect = ""
-    if has_indel
+    if has_indel && is_coding == 1
         d = length(imaj) - length(ir)
         indel_frame_effect = d % 3 != 0 ? "frameshift" :
                              (d > 0 ? "inframe_insertion" : "inframe_deletion")

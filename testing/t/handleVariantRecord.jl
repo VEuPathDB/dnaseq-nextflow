@@ -885,6 +885,35 @@ end
     @test fields[5] == "INDEL"
 end
 
+@testset "write_snp_feature indel_frame_effect empty for non-coding indel" begin
+    # Deletion CA>C (len_diff = -1) at a non-coding position (is_coding=0).
+    # Frameshift/inframe classification is only meaningful inside a CDS, so the
+    # frame effect must be blank when the indel is outside CDS boundaries.
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "CA"; v_ref.reference = "CA"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "C";  v_s1.reference  = "CA"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CA"; v_s2.reference  = "CA"; v_s2.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 0, "LmjF.01", 1000, "ref", ["s1", "s2"])
+    fields = split(chomp(String(take!(buf))), '\t')
+
+    @test fields[5]  == "INDEL"
+    @test fields[31] == ""            # indel_frame_effect blank when non-coding
+end
+
+@testset "write_snp_feature indel_frame_effect frameshift for coding indel" begin
+    # Same deletion but at a coding position (is_coding=1) → frameshift.
+    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "CA"; v_ref.reference = "CA"; v_ref.ploidy = 1
+    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "C";  v_s1.reference  = "CA"; v_s1.ploidy = 1
+    v_s2  = Variation(); v_s2.strain  = "s2";  v_s2.base  = "CA"; v_s2.reference  = "CA"; v_s2.ploidy = 1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [v_ref, v_s1, v_s2], 1, "LmjF.01", 1000, "ref", ["s1", "s2"])
+    fields = split(chomp(String(take!(buf))), '\t')
+
+    @test fields[31] == "frameshift"
+end
+
 @testset "write_snp_feature variant_type MIXED when both snp and indel alleles present" begin
     v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "C";   v_ref.reference = "C"; v_ref.ploidy = 1
     v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "G";   v_s1.reference  = "C"; v_s1.ploidy = 1  # SNP
