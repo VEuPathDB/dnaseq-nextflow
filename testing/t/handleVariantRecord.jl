@@ -784,8 +784,10 @@ end
     @test fields[3]  == "ref"       # reference_strain
     @test fields[4]  == "1"         # is_coding
     @test fields[13] == "A"                    # snp_ref_allele
-    @test fields[14] == "T"                    # snp_major_allele
-    @test fields[20] == "LmjF.01:g.500A>T"     # snp_major_genomic_hgvs
+    @test fields[14] == "A"                    # snp_major_allele = reference (weight 2)
+    @test fields[20] == ""                     # snp_major_genomic_hgvs blank for ref slot
+    @test fields[17] == "T"                    # snp_minor_allele = the alt
+    @test fields[21] == "LmjF.01:g.500A>T"     # snp_minor_genomic_hgvs
 end
 
 @testset "write_snp_feature indel major_genomic_hgvs for a deletion" begin
@@ -799,8 +801,10 @@ end
     fields = split(chomp(String(take!(buf))), '\t')
     @test fields[5]  == "INDEL"                    # variant_type
     @test fields[22] == "CA"                       # indel_ref_allele
-    @test fields[23] == "C"                        # indel_major_allele
-    @test fields[29] == "LmjF.01:g.2532delA"       # indel_major_genomic_hgvs
+    @test fields[23] == "CA"                       # indel_major_allele = reference span (weight 2)
+    @test fields[29] == ""                         # indel_major_genomic_hgvs blank for ref slot
+    @test fields[26] == "C"                        # indel_minor_allele = deletion
+    @test fields[30] == "LmjF.01:g.2532delA"       # indel_minor_genomic_hgvs
 end
 
 @testset "write_snp_feature allele families empty when locus is monoallelic" begin
@@ -924,6 +928,87 @@ end
     fields = split(chomp(String(take!(buf))), '\t')
 
     @test fields[5] == "MIXED"
+end
+
+@testset "write_snp_feature: reference wins minor when it outranks a rarer alt" begin
+    # T=3 strains, C=1 strain, ref G=2 strains (incl. synthetic ref).
+    # Ranking over {ref,alts}: major=T(3), minor=ref G(2), C(1) dropped.
+    vT1 = Variation(); vT1.strain="s1"; vT1.base="T"; vT1.reference="G"; vT1.ploidy=1
+    vT2 = Variation(); vT2.strain="s2"; vT2.base="T"; vT2.reference="G"; vT2.ploidy=1
+    vT3 = Variation(); vT3.strain="s3"; vT3.base="T"; vT3.reference="G"; vT3.ploidy=1
+    vC  = Variation(); vC.strain="s4";  vC.base="C"; vC.reference="G"; vC.ploidy=1
+    vR1 = Variation(); vR1.strain="s5"; vR1.base="G"; vR1.reference="G"; vR1.ploidy=1
+    vRef= Variation(); vRef.strain="ref"; vRef.base="G"; vRef.reference="G"; vRef.ploidy=1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [vT1,vT2,vT3,vC,vR1,vRef], 1, "Pf3D7_01_v3", 481838, "ref",
+                      ["s1","s2","s3","s4","s5"])
+    f = split(chomp(String(take!(buf))), '\t')
+    @test f[13] == "G"                              # snp_ref_allele
+    @test f[14] == "T"                              # snp_major_allele (weight 3)
+    @test f[16] == "3"                              # snp_major_allele_strain_count
+    @test f[20] == "Pf3D7_01_v3:g.481838G>T"        # snp_major_genomic_hgvs
+    @test f[17] == "G"                              # snp_minor_allele = REFERENCE
+    @test f[19] == "2"                              # snp_minor_allele_strain_count (s5 + ref)
+    @test f[21] == ""                               # snp_minor_genomic_hgvs blank for ref slot
+end
+
+@testset "write_snp_feature: reference is major at a typical ref-majority SNP" begin
+    # ref C: 3 strains (incl. synthetic ref) ; alt T: 1 strain. major=ref, minor=alt.
+    vR1 = Variation(); vR1.strain="s1"; vR1.base="C"; vR1.reference="C"; vR1.ploidy=1
+    vR2 = Variation(); vR2.strain="s2"; vR2.base="C"; vR2.reference="C"; vR2.ploidy=1
+    vT  = Variation(); vT.strain="s3";  vT.base="T"; vT.reference="C"; vT.ploidy=1
+    vRef= Variation(); vRef.strain="ref"; vRef.base="C"; vRef.reference="C"; vRef.ploidy=1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [vR1,vR2,vT,vRef], 0, "chr1", 50, "ref", ["s1","s2","s3"])
+    f = split(chomp(String(take!(buf))), '\t')
+    @test f[14] == "C"                 # snp_major_allele = reference
+    @test f[16] == "3"                 # major strain count (s1,s2,ref)
+    @test f[20] == ""                  # major hgvs blank for ref slot
+    @test f[17] == "T"                 # snp_minor_allele = the alt
+    @test f[19] == "1"                 # minor strain count
+    @test f[21] == "chr1:g.50C>T"      # minor hgvs
+end
+
+@testset "write_snp_feature: indel reference competes for indel major/minor" begin
+    # ref span ACA: 2 strains (incl synthetic ref); deletion A: 1 strain.
+    vR1 = Variation(); vR1.strain="s1"; vR1.base="ACA"; vR1.reference="ACA"; vR1.ploidy=1
+    vD  = Variation(); vD.strain="s2";  vD.base="A";   vD.reference="ACA"; vD.ploidy=1
+    vRef= Variation(); vRef.strain="ref"; vRef.base="ACA"; vRef.reference="ACA"; vRef.ploidy=1
+
+    buf = IOBuffer()
+    write_snp_feature(buf, [vR1,vD,vRef], 0, "chr1", 200, "ref", ["s1","s2"])
+    f = split(chomp(String(take!(buf))), '\t')
+    @test f[22] == "ACA"               # indel_ref_allele
+    @test f[23] == "ACA"               # indel_major_allele = reference span
+    @test f[29] == ""                  # indel major hgvs blank for ref slot
+    @test f[26] == "A"                 # indel_minor_allele = deletion
+    @test occursin("del", f[30])       # indel minor hgvs is a deletion
+end
+
+@testset "write_snp_feature: class with no alts stays empty (monoallelic)" begin
+    vR1 = Variation(); vR1.strain="s1"; vR1.base="A"; vR1.reference="A"; vR1.ploidy=1
+    vRef= Variation(); vRef.strain="ref"; vRef.base="A"; vRef.reference="A"; vRef.ploidy=1
+    buf = IOBuffer()
+    write_snp_feature(buf, [vR1,vRef], 0, "chr1", 10, "ref", ["s1"])
+    f = split(chomp(String(take!(buf))), '\t')
+    @test f[14] == ""                  # snp_major_allele empty (no snp alt)
+    @test f[17] == ""                  # snp_minor_allele empty
+    @test f[23] == ""                  # indel_major_allele empty
+end
+
+@testset "write_snp_feature: indel_frame_effect reflects the alt even when reference is indel-major" begin
+    # ref span CA wins indel-major (weight 2), deletion C is minor (weight 1).
+    # Frame effect must still report the deletion's frameshift (len C - len CA = -1).
+    vR1 = Variation(); vR1.strain="s1"; vR1.base="CA"; vR1.reference="CA"; vR1.ploidy=1
+    vD  = Variation(); vD.strain="s2";  vD.base="C";  vD.reference="CA"; vD.ploidy=1
+    vRef= Variation(); vRef.strain="ref"; vRef.base="CA"; vRef.reference="CA"; vRef.ploidy=1
+    buf = IOBuffer()
+    write_snp_feature(buf, [vR1,vD,vRef], 1, "LmjF.01", 2531, "ref", ["s1","s2"])
+    f = split(chomp(String(take!(buf))), '\t')
+    @test f[23] == "CA"           # indel_major_allele = reference span
+    @test f[31] == "frameshift"   # frame effect still from the deletion alt
 end
 
 # ---------------------------------------------------------------------------
@@ -1567,13 +1652,14 @@ end
     @test cols[1] == "13850"
     @test cols[5] == "MIXED"
     @test cols[13] == "A"                       # snp_ref_allele
-    @test cols[14] == "G"                       # snp_major_allele
-    @test cols[20] == "LmjF.01:g.13850A>G"      # snp_major_genomic_hgvs
+    @test cols[14] == "A"                       # snp_major_allele = reference (tie, "A"<"G")
+    @test cols[20] == ""                        # snp_major_genomic_hgvs blank for ref slot
+    @test cols[17] == "G"                       # snp_minor_allele = the SNP alt
+    @test cols[21] == "LmjF.01:g.13850A>G"      # snp_minor_genomic_hgvs
     @test cols[22] == "ACA"                     # indel_ref_allele
-    @test cols[23] == "A"                       # indel_major_allele
+    @test cols[23] == "A"                       # indel_major_allele = deletion (no indel ref key present)
     @test occursin("del", cols[29])             # indel_major_genomic_hgvs
     @test cols[31] == "frameshift"              # indel_frame_effect (1-3=-2)
-    @test cols[14] != "A"                       # deletion did not collapse into SNP major
 end
 
 @testset "write_snp_feature SNP-only locus leaves indel family empty" begin
