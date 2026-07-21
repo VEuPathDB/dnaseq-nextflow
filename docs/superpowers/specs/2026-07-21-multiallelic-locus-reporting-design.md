@@ -134,6 +134,18 @@ tied with SNP alt `G` (weight 1), `snp_major = A` (reference), `snp_minor = G`.
   versus a pure sample count; accepted for consistency with the existing
   `ref_allele_frequency` column and the frequency contract.)
 
+### `indel_frame_effect` derives from the indel ALT, not the major slot
+
+`indel_frame_effect` describes the frameshift/inframe nature of the indel
+**variant**. It must be computed from the most-common indel **ALT** allele, not
+from `indel_major_allele` — because once the reference can win the indel-major
+slot, `indel_major_allele == indel_ref_allele` gives a length delta of 0 and
+would wrongly report `inframe_deletion` for a genuine frameshift. Compute the
+delta from the top-ranked indel ALT key (excluding the reference); this matches
+the pre-change behavior, where `indel_major_allele` was always the top indel
+alt. (When several indel alts differ in frame effect, only the most common is
+described, exactly as before.)
+
 ### Unchanged
 
 `ref_allele_frequency` (aggregate reference over the whole position),
