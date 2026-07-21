@@ -110,6 +110,17 @@ Rank the pool by the existing key `(-weight, allele, ref)`. `major` = pool[1],
 `minor` = pool[2]. Top-2 only: a third allele (e.g. `C` at 481838) drops off the
 summary row but is still fully represented in `allele.dat`.
 
+**The reference joins a class's pool only when that class has at least one ALT
+allele.** A class with no alts stays empty (both major and minor blank) — a
+locus with only the reference allele of a class produces no major/minor for that
+class, exactly as today. This also keeps `variant_type` keyed on alt presence.
+
+**Tie-break:** the existing sort key `(-weight, allele_string, ref_span)` is
+applied to the combined pool. When the reference and an alt have equal weight,
+the one whose allele string sorts first wins the higher slot (deterministic,
+matches current behavior). Example: at a MIXED locus with SNP ref `A` (weight 1)
+tied with SNP alt `G` (weight 1), `snp_major = A` (reference), `snp_minor = G`.
+
 ### Reference-wins-a-slot handling
 
 - `snp_ref_allele` / `indel_ref_allele` columns are unchanged — always the
