@@ -41,12 +41,26 @@ process bwaMem {
       set -euo pipefail
 
       if [ "$isPaired" = true ]; then
+          # Guard the positional-pairing assumption: normalizeReadNames strips mate
+          # suffixes so bwa sees identical names, which is only valid if the two files
+          # are the same length and in lockstep. Fail loud early if they are not,
+          # rather than producing silently mispaired alignments.
+          c1=\$(zcat -f $sample_1p | wc -l)
+          c2=\$(zcat -f $sample_2p | wc -l)
+          if [ "\$c1" -ne "\$c2" ]; then
+              echo "ERROR: mate files for ${sampleName} differ in length (\$c1 vs \$c2 lines); cannot positionally pair reads." >&2
+              exit 1
+          fi
+
+          # bwa-mem2 pairs mates by IDENTICAL read name (it only auto-strips /1,/2).
+          # Strip .1/.2 (SRA) and :a/:b (legacy Illumina) suffixes on the fly so
+          # mem_sam_pe does not abort with "paired reads have different names".
           bwa-mem2 mem \\
               -t $params.bwaThreads \\
               -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
               genomeIndex \\
-              $sample_1p \\
-              $sample_2p \\
+              <(zcat -f $sample_1p | normalizeReadNames.sh) \\
+              <(zcat -f $sample_2p | normalizeReadNames.sh) \\
               | samtools collate -o output.bam - && \
               samtools fixmate -m output.bam fix.bam && \
               samtools sort -o sort.bam fix.bam && \
