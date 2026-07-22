@@ -41,16 +41,44 @@ process bwaMem {
       set -euo pipefail
 
       if [ "$isPaired" = true ]; then
-          bwa-mem2 mem \\
-              -t $params.bwaThreads \\
-              -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
-              genomeIndex \\
-              $sample_1p \\
-              $sample_2p \\
-              | samtools collate -o output.bam - && \
-              samtools fixmate -m output.bam fix.bam && \
-              samtools sort -o sort.bam fix.bam && \
-              samtools markdup -r sort.bam result_sorted.bam
+          if zcat -f $sample_1p | normalizeReadNames.sh needs-normalizing \\
+             || zcat -f $sample_2p | normalizeReadNames.sh needs-normalizing; then
+              # Read names carry a mate suffix bwa-mem2 cannot auto-strip
+              # (.1/.2 from SRA, :a/:b from legacy Illumina; bwa only handles /1,/2).
+              # Strip them on the fly so mem_sam_pe does not abort with
+              # "paired reads have different names". Stripping forces bwa to pair
+              # positionally, so first guard that the mate files are in lockstep;
+              # fail loud rather than silently mispair.
+              c1=\$(zcat -f $sample_1p | wc -l)
+              c2=\$(zcat -f $sample_2p | wc -l)
+              if [ "\$c1" -ne "\$c2" ]; then
+                  echo "ERROR: mate files for ${sampleName} differ in length (\$c1 vs \$c2 lines); cannot positionally pair reads." >&2
+                  exit 1
+              fi
+              bwa-mem2 mem \\
+                  -t $params.bwaThreads \\
+                  -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
+                  genomeIndex \\
+                  <(zcat -f $sample_1p | normalizeReadNames.sh) \\
+                  <(zcat -f $sample_2p | normalizeReadNames.sh) \\
+                  | samtools collate -o output.bam - && \
+                  samtools fixmate -m output.bam fix.bam && \
+                  samtools sort -o sort.bam fix.bam && \
+                  samtools markdup -r sort.bam result_sorted.bam
+          else
+              # Read names already conform (identical, or standard /1,/2 that bwa
+              # auto-strips); hand the raw files straight to bwa untouched.
+              bwa-mem2 mem \\
+                  -t $params.bwaThreads \\
+                  -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
+                  genomeIndex \\
+                  $sample_1p \\
+                  $sample_2p \\
+                  | samtools collate -o output.bam - && \
+                  samtools fixmate -m output.bam fix.bam && \
+                  samtools sort -o sort.bam fix.bam && \
+                  samtools markdup -r sort.bam result_sorted.bam
+          fi
       else
           bwa-mem2 mem \\
               -t $params.bwaThreads \\
