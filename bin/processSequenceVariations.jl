@@ -1005,7 +1005,7 @@ When a multi-allelic record is split into one record per ALT, remap each sample'
 string so that GT allele indices are valid for a 1-ALT record:
   - target alt index (target_alt_i, 1-based in original) → 1
   - ref (0) → 0
-  - any other alt index → 0 (treated as ref in this split record)
+  - any other alt index → "." (missing; its call lives in the sibling split record)
 Also replaces GL with "." because GL has n*(n+1)/2 values for n alleles and SnpEff will
 reject split records whose GL length no longer matches the single-ALT allele count.
 """
@@ -1019,12 +1019,14 @@ function remap_sample_for_split(sample_str::String, format_keys::Vector{String},
         if key == "GT"
             gt = result[fi]
             is_missing_gt(gt) && continue
-            remap = idx -> idx == 0 ? 0 : (idx == target_alt_i ? 1 : 0)
-            # Remap every numeric allele index in place: target alt → 1, ref/other → 0.
-            # '.' slots (from --multi-overlaps . on a split multiallelic) and the
+            remap = idx -> idx == 0 ? "0" : (idx == target_alt_i ? "1" : ".")
+            # Remap every numeric allele index in place: target alt → 1, ref (0) → 0,
+            # any OTHER alt → "." (missing) — the sample's real call for that allele
+            # lives in the sibling split record, so it must not be fabricated as
+            # reference here (the --multi-overlaps . convention). '.' slots and the
             # separators (/ or |) are preserved verbatim, so this is ploidy-agnostic
             # — a triploid "./2/." remaps each index without leaving stale ones.
-            result[fi] = replace(gt, r"\d+" => m -> string(remap(parse(Int, m))))
+            result[fi] = replace(gt, r"\d+" => m -> remap(parse(Int, m)))
         elseif key == "GL"
             result[fi] = "."
         end
@@ -1611,21 +1613,33 @@ function write_snp_feature(
 )
     (stats, total_weight) = aggregate_locus_alleles(variations)
 
-    ref_weight = 0
-    snp_keys   = Tuple{String,String}[]
-    indel_keys = Tuple{String,String}[]
+    ref_weight   = 0
+    snp_alts     = Tuple{String,String}[]
+    indel_alts   = Tuple{String,String}[]
+    ref_keys     = Tuple{String,String}[]
     for (key, st) in stats
         c = classify_allele(key[1], key[2])
         if c == :reference
             ref_weight += st.weight
+            push!(ref_keys, key)
         elseif c == :snp
-            push!(snp_keys, key)
+            push!(snp_alts, key)
         else
-            push!(indel_keys, key)
+            push!(indel_alts, key)
         end
     end
-    # tie-break: weight desc, then allele string, then ref span — the last key
-    # keeps ordering deterministic for same-string alleles from different refs
+    # The reference competes for a class's major/minor slot, but only when that
+    # class actually has an alt allele. Match the reference key to a class by its
+    # ref-string (so an MNP's multi-base reference stays in the SNP class, and an
+    # indel's ref span stays in the indel class).
+    snp_refstrings   = Set(k[1] for k in snp_alts)
+    indel_refstrings = Set(k[1] for k in indel_alts)
+    snp_keys   = isempty(snp_alts)   ? Tuple{String,String}[] :
+                 vcat(snp_alts,   [k for k in ref_keys if k[1] in snp_refstrings])
+    indel_keys = isempty(indel_alts) ? Tuple{String,String}[] :
+                 vcat(indel_alts, [k for k in ref_keys if k[1] in indel_refstrings])
+    # tie-break: weight desc, then allele string, then ref span — deterministic for
+    # same-string alleles from different refs; the reference sorts by its own allele.
     rank(ks) = sort(ks; by = k -> (-stats[k].weight, k[2], k[1]))
     snp_keys   = rank(snp_keys)
     indel_keys = rank(indel_keys)
@@ -1638,8 +1652,8 @@ function write_snp_feature(
     call_rate = total_sequenced > 0 ?
         @sprintf("%.4f", called_strain_count / total_sequenced) : ""
     het_strain_count = length(Set(v.strain for v in variations if !isempty(v.alt_allele)))
-    has_snp   = !isempty(snp_keys)
-    has_indel = !isempty(indel_keys)
+    has_snp   = !isempty(snp_alts)
+    has_indel = !isempty(indel_alts)
     variant_type = has_snp && has_indel ? "MIXED" : (has_indel ? "INDEL" : "SNV")
     ref_allele_frequency = @sprintf("%.4f", ref_weight / total_weight)
 
@@ -1649,12 +1663,12 @@ function write_snp_feature(
         maj  = keys[1][2]
         majf = @sprintf("%.4f", stats[keys[1]].weight / total_weight)
         majc = string(length(stats[keys[1]].strains))
-        majh = genomic_hgvs(seq_id, location, ref, maj)
+        majh = maj == ref ? "" : genomic_hgvs(seq_id, location, ref, maj)
         if length(keys) > 1
             mn   = keys[2][2]
             mnf  = @sprintf("%.4f", stats[keys[2]].weight / total_weight)
             mnc  = string(length(stats[keys[2]].strains))
-            mnh  = genomic_hgvs(seq_id, location, keys[2][1], mn)
+            mnh  = mn == keys[2][1] ? "" : genomic_hgvs(seq_id, location, keys[2][1], mn)
         else
             mn = ""; mnf = ""; mnc = ""; mnh = ""
         end
@@ -1667,7 +1681,11 @@ function write_snp_feature(
     # field blank for indels that fall outside all CDS boundaries.
     indel_frame_effect = ""
     if has_indel && is_coding == 1
-        d = length(imaj) - length(ir)
+        # Frame effect describes the indel VARIANT, so measure the top-ranked indel
+        # ALT allele (ref excluded) — not indel_major_allele, which may now be the
+        # reference and would give a spurious length delta of 0.
+        top_indel_alt = rank(indel_alts)[1]
+        d = length(top_indel_alt[2]) - length(top_indel_alt[1])
         indel_frame_effect = d % 3 != 0 ? "frameshift" :
                              (d > 0 ? "inframe_insertion" : "inframe_deletion")
     end
