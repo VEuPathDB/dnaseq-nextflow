@@ -139,7 +139,7 @@ process picard {
     tuple val(sampleName), path('summaryMetrics.txt'), emit: metrics
 
   script:
-    def jvmMem = (task.memory.toGiga() - 1) as int
+    def jvmMem = (task.ext.memGb - 1) as int
     """
     set -euo pipefail
     JARPATH="/usr/picard/picard.jar"
@@ -178,7 +178,7 @@ process gatk {
     path("${sampleName}.bam"), emit: bamFiles
 
   script:
-    def jvmMem = (task.memory.toGiga() - 1) as int
+    def jvmMem = (task.ext.memGb - 1) as int
     """
     set -euo pipefail
     JARPATH="/usr/GenomeAnalysisTK.jar"
