@@ -95,7 +95,7 @@ code. `--pull always` refreshes any stale local copy:
 docker run --rm --pull always -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:latest bash -c '
   for t in testing/t/*.jl; do julia "$t"; done   # Julia unit tests
   python3 -m pytest testing/t/                    # Python unit tests
-  bash testing/t/mergeBoth.t.sh                   # bcftools merge -m both contract
+  for t in testing/t/*.t.sh; do bash "$t"; done    # bash suites (bcftools merge contract, read-name normalization)
 '
 ```
 

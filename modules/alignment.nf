@@ -41,44 +41,54 @@ process bwaMem {
       set -euo pipefail
 
       if [ "$isPaired" = true ]; then
-          if zcat -f $sample_1p | normalizeReadNames.sh needs-normalizing \\
-             || zcat -f $sample_2p | normalizeReadNames.sh needs-normalizing; then
-              # Read names carry a mate suffix bwa-mem2 cannot auto-strip
-              # (.1/.2 from SRA, :a/:b from legacy Illumina; bwa only handles /1,/2).
-              # Strip them on the fly so mem_sam_pe does not abort with
-              # "paired reads have different names". Stripping forces bwa to pair
-              # positionally, so first guard that the mate files are in lockstep;
-              # fail loud rather than silently mispair.
-              c1=\$(zcat -f $sample_1p | wc -l)
-              c2=\$(zcat -f $sample_2p | wc -l)
-              if [ "\$c1" -ne "\$c2" ]; then
-                  echo "ERROR: mate files for ${sampleName} differ in length (\$c1 vs \$c2 lines); cannot positionally pair reads." >&2
+          # bwa-mem2 pairs mates by read-name equality (auto-stripping only a
+          # trailing /1,/2) and samtools fixmate groups mates by QNAME. Mate
+          # suffixes in our source data break both: .1/.2 from SRA fastq-dump
+          # --readids, :a/:b from legacy Illumina. Stream both mates through the
+          # pairwise normalizer, which asserts name equality per read pair and
+          # aborts rather than emit mispaired reads. FIFOs keep it a pure stream:
+          # one pass, no temp copies of the FASTQs.
+          #
+          # Pre-flight the index because the normalizer blocks on opening its
+          # output FIFOs until bwa opens them for reading; a bwa that dies before
+          # that (missing/empty index) would hang the task instead of failing it.
+          for indexFile in genomeIndex.amb genomeIndex.ann genomeIndex.bwt.2bit.64 genomeIndex.pac genomeIndex.0123; do
+              if [ ! -s "\$indexFile" ]; then
+                  echo "ERROR: bwa-mem2 index file \$indexFile is missing or empty." >&2
                   exit 1
               fi
-              bwa-mem2 mem \\
-                  -t $params.bwaThreads \\
-                  -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
-                  genomeIndex \\
-                  <(zcat -f $sample_1p | normalizeReadNames.sh) \\
-                  <(zcat -f $sample_2p | normalizeReadNames.sh) \\
-                  | samtools collate -o output.bam - && \
-                  samtools fixmate -m output.bam fix.bam && \
-                  samtools sort -o sort.bam fix.bam && \
-                  samtools markdup -r sort.bam result_sorted.bam
-          else
-              # Read names already conform (identical, or standard /1,/2 that bwa
-              # auto-strips); hand the raw files straight to bwa untouched.
-              bwa-mem2 mem \\
-                  -t $params.bwaThreads \\
-                  -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
-                  genomeIndex \\
-                  $sample_1p \\
-                  $sample_2p \\
-                  | samtools collate -o output.bam - && \
-                  samtools fixmate -m output.bam fix.bam && \
-                  samtools sort -o sort.bam fix.bam && \
-                  samtools markdup -r sort.bam result_sorted.bam
+          done
+
+          mkfifo mate1.fifo mate2.fifo
+          normalizePairedReadNames.sh \\
+              <(zcat -f $sample_1p) <(zcat -f $sample_2p) \\
+              mate1.fifo mate2.fifo &
+          normalizerPid=\$!
+
+          bwaStatus=0
+          bwa-mem2 mem \\
+              -t $params.bwaThreads \\
+              -R '@RG\\tID:${sampleName}\\tSM:${sampleName}\\tPL:ILLUMINA' \\
+              genomeIndex \\
+              mate1.fifo \\
+              mate2.fifo \\
+              | samtools collate -o output.bam - || bwaStatus=\$?
+
+          # A normalizer that aborts mid-stream leaves bwa with truncated input it
+          # will happily align and exit 0 on, so its status is checked explicitly.
+          normalizerStatus=0
+          wait \$normalizerPid || normalizerStatus=\$?
+          if [ "\$normalizerStatus" -ne 0 ]; then
+              echo "ERROR: read-name normalization failed for ${sampleName} (exit \$normalizerStatus); alignment input was incomplete." >&2
+              exit "\$normalizerStatus"
           fi
+          if [ "\$bwaStatus" -ne 0 ]; then
+              exit "\$bwaStatus"
+          fi
+
+          samtools fixmate -m output.bam fix.bam
+          samtools sort -o sort.bam fix.bam
+          samtools markdup -r sort.bam result_sorted.bam
       else
           bwa-mem2 mem \\
               -t $params.bwaThreads \\
