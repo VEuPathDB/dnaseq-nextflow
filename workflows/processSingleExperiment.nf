@@ -53,12 +53,29 @@ workflow ps {
 
     genome_fasta_file = file(params.genomeFastaFile)
 
-    // Contig-only assemblies can leave chrsForCalcFile empty (no chromosomes to
-    // normalise against), which would make ploidy/gene-CNV estimation and the
-    // normalised-coverage track fail or produce bogus output. Skip just that
-    // functionality in that case; SNP calling and density tracks are unaffected.
+    // CNV/ploidy work has two independent preconditions, and either one can be
+    // missing for a given organism:
+    //   - chrsForCalcFile: contig-only assemblies leave it empty (no chromosomes
+    //     to normalise against), making ploidy estimates and the normalised
+    //     coverage track fail or produce bogus output.
+    //   - geneSourceIdOrthologFile: empty when the organism's proteins have no
+    //     ortholog group assignments, which calculateGeneCNVs.pl treats as fatal.
+    // Skip just that functionality when either is missing; SNP calling and the
+    // density tracks are unaffected.
     chrsForCalcFile = file(params.chrsForCalcFile)
-    runCnv = chrsForCalcFile.exists() && chrsForCalcFile.text.trim().length() > 0
+    hasChrsForCalc = chrsForCalcFile.exists() && chrsForCalcFile.text.trim().length() > 0
+
+    geneSourceIdOrthologFile = file(params.geneSourceIdOrthologFile)
+    hasOrthologs = geneSourceIdOrthologFile.exists() && geneSourceIdOrthologFile.text.trim().length() > 0
+
+    runCnv = hasChrsForCalc && hasOrthologs
+
+    if (!runCnv) {
+      log.warn "Skipping CNV/ploidy analysis: " +
+        (hasChrsForCalc ? "" : "no chromosomes in ${params.chrsForCalcFile}; ") +
+        (hasOrthologs ? "" : "no ortholog groups in ${params.geneSourceIdOrthologFile}; ") +
+        "SNP calling and density tracks will still run."
+    }
 
     bwaIndexResults = bwaIndex(genome_fasta_file)
 
