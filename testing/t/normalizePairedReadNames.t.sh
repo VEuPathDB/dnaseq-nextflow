@@ -71,6 +71,22 @@ run "$(rec '@read')" "$(rec '@read')"
 [ "$rc" -eq 0 ] && [ "${OUT1%%$'\n'*}" = '@read' ] \
   || fail "identical bare names: rc=$rc '${OUT1%%$'\n'*}' ($ERR)"
 
+# --- conventions present in the local test corpus (~/dnaseq_test) -------------
+# WhitePaper: Casava name ending in a barcode, then /1,/2 IN the name field
+run "$(rec '@HWI-EAS231_106291285:8:78:16752:18169#TAGCTT/1')" \
+    "$(rec '@HWI-EAS231_106291285:8:78:16752:18169#TAGCTT/2')"
+[ "$rc" -eq 0 ] && [ "${OUT1%%$'\n'*}" = '@HWI-EAS231_106291285:8:78:16752:18169#TAGCTT' ] \
+  || fail "barcode+/1: rc=$rc '${OUT1%%$'\n'*}' ($ERR)"
+
+# Mottran: names identical, /1,/2 living in the COMMENT. Nothing to repair, and
+# the comment is not ours to touch -- bwa and fixmate only look at the name.
+m1="$(rec '@ERR013299.1 IL39_3264:6:1:0:1958/1')"
+m2="$(rec '@ERR013299.1 IL39_3264:6:1:0:1958/2')"
+run "$m1" "$m2"
+[ "$rc" -eq 0 ] || fail "mate suffix in comment: exit $rc ($ERR)"
+[ "$OUT1" = "${m1%$'\n'}" ] && [ "$OUT2" = "${m2%$'\n'}" ] \
+  || fail "mate suffix in comment was rewritten: '${OUT1%%$'\n'*}' / '${OUT2%%$'\n'*}'"
+
 # --- only the ID line is rewritten -------------------------------------------
 run "$(recq '@x.1')" "$(recq '@x.2')"
 [ "$rc" -eq 0 ] || fail "recq: exit $rc ($ERR)"
