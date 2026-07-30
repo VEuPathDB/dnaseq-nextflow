@@ -138,6 +138,13 @@ function open_hsss_writers(reference_strain::String, all_strains::Vector{String}
         push!(contig_fhs, open(joinpath(dir, "contigIdToSourceId.dat"), "w"))
 
         sfhs = Dict{Int,IO}()
+        # The reference is a selectable sample, so it needs a file of its own at
+        # index 1. It stays empty by construction — the reference matches itself
+        # at every position, so it has no records, and hsssFindPolymorphic folds
+        # it back in via ref_count = strainCount - nonRefStrainsCount. Writing
+        # "unknown" records here instead would make it an all-unknown strain and
+        # skew the isolate-call percentages.
+        sfhs[1] = open(joinpath(dir, "1"), "w")
         for (i, s) in enumerate(non_ref)
             sfhs[i + 1] = open(joinpath(dir, string(i + 1)), "w")
         end
@@ -184,6 +191,42 @@ end
 
 function translate_codon(codon::String)
     get(CODON_TABLE, uppercase(codon), "X")
+end
+
+"""
+    product_for_allele(codon, pos_in_codon, allele) -> String
+
+Amino acid this strain's codon translates to *for one specific allele*.
+
+HSSS carries one product byte per record, and `hsssFindPolymorphic` detects
+non-synonymy solely by that byte differing between records at a position. So the
+product must be resolved per allele, not per position: substitute the concrete
+allele into the strain codon at the SNP's position and translate.
+
+Returns `""` when there is no codon (non-coding), and `"X"` (unknown) when a
+*second* ambiguous site in the same codon leaves the amino acid undetermined even
+after the SNP slot is resolved — that is the only genuinely unpairable case.
+`X` is transparent on the strain side of the C (it normalizes it to -1).
+"""
+function product_for_allele(codon::AbstractString, pos_in_codon::Int, allele::AbstractString)
+    length(codon) == 3 || return ""
+    (1 <= pos_in_codon <= 3) || return ""
+    length(allele) == 1 || return ""
+
+    c = collect(uppercase(String(codon)))
+    c[pos_in_codon] = uppercase(String(allele))[1]
+    prods = unique(translate_codon(x) for x in expand_codon(String(c)))
+    length(prods) == 1 ? prods[1] : "X"
+end
+
+"""
+    hsss_product_code(product) -> Int8
+
+ASCII code of the (single-character) product, or 0 for "no product" / non-coding.
+"""
+function hsss_product_code(product::AbstractString)
+    isempty(product) && return Int8(0)
+    Int8(codepoint(product[1]))
 end
 
 # ---------------------------------------------------------------------------
@@ -550,14 +593,31 @@ end
 # rather than a raw VCF record.
 is_snp_variation(v::Variation) = length(v.reference) == length(v.base)
 
+"""
+    hsss_alleles_for(v) -> Vector{String}
+
+The distinct single-base alleles a Variation contributes to the HSSS files.
+
+Uses the resolved GT slots when present: a diploid het 0/1 yields both bases, so
+it becomes two records with real allele codes. Collapsing it to `v.base` instead
+would give an IUPAC ambiguity code, which is absent from HSSS_ALLELE_CODE and so
+would be written as allele 0 — silently turning every het into an unknown call.
+A homozygous 1/1 resolves to a single distinct allele, so it stays one record and
+is not double-counted in the C's alleleCount.
+"""
+function hsss_alleles_for(v::Variation)
+    slots = isempty(v.allele_slots) ? [v.base] : v.allele_slots
+    unique(a for a in slots if length(a) == 1)
+end
+
 function write_hsss_position!(
     state::HsssState,
     variations::Vector{Variation},
-    reference_strain::String,
+    ref_allele::AbstractString,
+    ref_product::AbstractString,
     seq_id::String,
     location::Int,
-    all_strains::Vector{String},
-    product_code::Int8
+    all_strains::Vector{String}
 )
     # Update sequence index when chromosome changes
     if seq_id != state.current_seq_id
@@ -569,21 +629,22 @@ function write_hsss_position!(
     end
     seq_idx = state.seq_index
 
-    # Index variations by strain
+    # Index variations by strain (callers pass non-reference strains only)
     found = Dict{String, Vector{Variation}}()
     for v in variations
         push!(get!(found, v.strain, Variation[]), v)
     end
 
-    ref_vars     = get(found, reference_strain, Variation[])
-    ref_base     = isempty(ref_vars) ? "" : ref_vars[1].base
-    ref_allele_c = get(HSSS_ALLELE_CODE, isempty(ref_base) ? ' ' : ref_base[1], Int8(0))
+    ref_allele_c = get(HSSS_ALLELE_CODE, isempty(ref_allele) ? ' ' : ref_allele[1], Int8(0))
+    # hsssFindPolymorphic.c normalizes 'X' to -1 on the strain path but NOT on the
+    # reference path, where 'X' (88) would read as a real amino acid and fire a
+    # spurious non-syn against every strain with a genuine product. Write 0.
+    ref_product_c = ref_product == "X" ? Int8(0) : hsss_product_code(ref_product)
 
     for (ci, cutoff) in enumerate(HSSS_CUTOFFS)
-        # Determine which non-ref strains pass the cutoff
+        # Determine which strains pass the cutoff
         passing = Set{String}()
         for (strain, svars) in found
-            strain == reference_strain && continue
             if any(v -> !isempty(v.percent) && parse(Float64, v.percent) >= cutoff, svars)
                 push!(passing, strain)
             end
@@ -596,11 +657,10 @@ function write_hsss_position!(
         has_notable || continue
 
         # Write reference genome record
-        write_hsss_record(state.ref_fhs[ci], seq_idx, location, ref_allele_c, product_code)
+        write_hsss_record(state.ref_fhs[ci], seq_idx, location, ref_allele_c, ref_product_c)
 
         # Write per-strain records
         for strain in all_strains
-            strain == reference_strain && continue
             sidx = get(state.strain_index, strain, 0)
             sidx == 0 && continue
             sfh = get(state.strain_fhs[ci], sidx, nothing)
@@ -629,13 +689,33 @@ function write_hsss_position!(
                 continue
             end
 
-            # Het strains write one record per allele (including ref-matching); matches Perl hsssCreateStrainFiles behavior
-            is_het = length(snp_svars) > 1
+            # One record per distinct allele the strain carries, each with the
+            # product THAT allele codes for. Het strains therefore contribute one
+            # record per allele including a reference-matching one, matching Perl
+            # hsssCreateStrainFiles' `if($foundStrains{$strain} > 1)` branch.
+            pairs = Tuple{String,String}[]   # (allele, product)
             for sv in snp_svars
-                # Skip non-het, reference-matching variations
-                !is_het && sv.matches_reference == 1 && continue
-                allele_c = get(HSSS_ALLELE_CODE, isempty(sv.base) ? ' ' : sv.base[1], Int8(0))
-                write_hsss_record(sfh, seq_idx, location, allele_c, product_code)
+                for a in hsss_alleles_for(sv)
+                    push!(pairs, (a, product_for_allele(sv.codon, sv.position_in_codon, a)))
+                end
+            end
+            unique!(pairs)
+
+            if isempty(pairs)
+                write_hsss_record(sfh, seq_idx, location, Int8(0), Int8(0))
+                continue
+            end
+
+            is_het = length(pairs) > 1
+            for (allele, product) in pairs
+                # Skip a non-het, reference-matching allele — unless its product
+                # differs from the reference's, which is how an overlapping
+                # reading frame shows up (same base, different amino acid).
+                if !is_het && allele == ref_allele && product == ref_product
+                    continue
+                end
+                allele_c = get(HSSS_ALLELE_CODE, allele[1], Int8(0))
+                write_hsss_record(sfh, seq_idx, location, allele_c, hsss_product_code(product))
             end
         end
     end
@@ -687,6 +767,41 @@ end
 
 mutable struct TranscriptSequenceCache
     seqs::Dict{String, Dict{String,String}}   # transcript_id -> strain -> sequence
+end
+
+"""
+    select_hsss_annotation(annotations, transcript_info) -> PositionAnnotation
+
+Pick the single transcript whose product calls represent this position in the
+HSSS files, which carry one product byte per record and so cannot hold more than
+one reading frame.
+
+Prefers a coding annotation, then the longest CDS, then the lowest transcript id
+for determinism. Alternative transcripts of one gene translate a given position
+identically, so the choice only has consequences where distinct genes overlap —
+and there "longest CDS per gene" and "longest CDS overall" pick the same
+transcript once the output is a single record. What matters is that this never
+falls back to the old behaviour of emitting 0 (non-coding) whenever two
+annotations disagreed, which discarded exactly the non-synonymous positions.
+"""
+function select_hsss_annotation(annotations::Vector{PositionAnnotation},
+                                transcript_info::Dict{String,TranscriptInfo})
+    isempty(annotations) && return nothing
+
+    cds_length(tid) = haskey(transcript_info, tid) ?
+        sum(e.end_pos - e.start_pos + 1 for e in transcript_info[tid].exons; init=0) : 0
+
+    coding = filter(a -> a.is_coding == 1, annotations)
+    candidates = isempty(coding) ? annotations : coding
+
+    best = candidates[1]
+    for a in candidates[2:end]
+        la, lb = cds_length(a.transcript_id), cds_length(best.transcript_id)
+        if la > lb || (la == lb && a.transcript_id < best.transcript_id)
+            best = a
+        end
+    end
+    best
 end
 
 function load_transcript_if_needed!(cache::TranscriptSequenceCache, db::SQLite.DB, transcript_id::String)
@@ -2286,10 +2401,13 @@ function handle_variant_record!(
     first_annotation   = annotations[1]
     any_output         = false
     first_all_vars        = nothing
-    # Collect products from non-ref strain variations across all transcript annotations.
-    # Reference strain product (annotation.ref_product) is intentionally excluded —
-    # product_code reflects what the non-ref variants encode.
-    all_annotation_products = String[]
+
+    # HSSS carries one product byte per record, so it is written from exactly one
+    # transcript. Choose it up front and write during that annotation's pass, when
+    # each Variation already holds that transcript's codon.
+    # HSSS binary files are SNP-only; skip positions where no record has a SNP-length allele.
+    hsss_annotation = select_hsss_annotation(annotations, ctx.transcript_info)
+    write_hsss      = any(has_snp_allele, records)
 
     # Map strain name -> sample index for GT lookup when keying CANN entries by original alt allele
     strain_idx_map = Dict{String, Int}(s => i for (i, s) in enumerate(all_strains))
@@ -2317,8 +2435,10 @@ function handle_variant_record!(
             first_all_vars = all_vars
         end
 
-        for v in variations
-            append!(all_annotation_products, v.product)
+        if write_hsss && annotation === hsss_annotation
+            @bench "write_hsss" write_hsss_position!(
+                writers.hsss, variations, ref_variation.base, annotation.ref_product,
+                seq_id, location, ctx.all_strains)   # ctx.all_strains is non-ref only
         end
 
         if !allele_written
@@ -2345,15 +2465,6 @@ function handle_variant_record!(
     is_coding = any(a.is_coding == 1 for a in annotations) ? 1 : 0
     @bench "write_snp_feature" write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
                       ctx.reference_strain, ctx.all_strains)
-
-    # HSSS binary files are SNP-only; skip positions where no record has a SNP-length allele.
-    if any(has_snp_allele, records)
-        unique_prods   = unique(all_annotation_products)
-        hsss_prod_code = length(unique_prods) == 1 ?
-            Int8(codepoint(first(only(unique_prods)))) : Int8(0)
-        @bench "write_hsss" write_hsss_position!(writers.hsss, first_all_vars, ctx.reference_strain,
-                             seq_id, location, ctx.all_strains, hsss_prod_code)  # ctx.all_strains is non-ref only; ref handled via ref_vars inside write_hsss_position!
-    end
 
     (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
     (alt_cann_entries, alt_strain_to_ca) = @bench "cann_assign" assign_cann_keys(alt_strain_entries, all_strains)

@@ -1011,11 +1011,41 @@ end
     @test f[31] == "frameshift"   # frame effect still from the deletion alt
 end
 
+
 # ---------------------------------------------------------------------------
 # HSSS binary strain files
 # ---------------------------------------------------------------------------
 
-@testset "open_hsss_writers creates directories and strainIdToName.dat" begin
+# Helper: read the 8-byte HSSS records out of a file as (seq, loc, allele, product).
+function read_hsss(path)
+    bytes = read(path)
+    @assert length(bytes) % 8 == 0 "HSSS file $(path) is not a whole number of 8-byte records"
+    [(ltoh(reinterpret(Int16, bytes[i+1:i+2])[1]),
+      ltoh(reinterpret(Int32, bytes[i+3:i+6])[1]),
+      reinterpret(Int8, bytes[i+7:i+7])[1],
+      reinterpret(Int8, bytes[i+8:i+8])[1])
+     for i in 0:8:(length(bytes)-8)]
+end
+
+hsss_alleles_of(path)  = [r[3] for r in read_hsss(path)]
+hsss_products_of(path) = [r[4] for r in read_hsss(path)]
+
+# Build a non-reference Variation with resolved GT slots.
+function hsss_var(strain, slots; reference="A", codon="", pic=2, percent="100")
+    v = Variation()
+    v.strain = strain
+    v.reference = reference
+    v.base = length(unique(slots)) == 1 ? slots[1] : "N"
+    v.allele_slots = slots
+    v.percent = percent
+    v.matches_reference = all(==(reference), slots) ? 1 : 0
+    v.codon = codon
+    v.position_in_codon = pic
+    v.is_coding = isempty(codon) ? 0 : 1
+    v
+end
+
+@testset "open_hsss_writers creates a file for the reference strain too" begin
     base = mktempdir()
     state = open_hsss_writers("ref", ["s1", "s2"], base)
     close_hsss_writers(state)
@@ -1027,121 +1057,167 @@ end
         @test lines[1] == "1\tref"
         @test lines[2] == "2\ts1"
         @test lines[3] == "3\ts2"
+
+        # The reference IS a selectable sample, so file "1" must exist. It stays
+        # empty: the reference matches itself everywhere, so it has zero records,
+        # and hsssFindPolymorphic folds it in via ref_count.
+        @test isfile(joinpath(dir, "1"))
+        @test filesize(joinpath(dir, "1")) == 0
     end
 end
 
-@testset "write_hsss_position writes binary record and contigIdToSourceId" begin
-    base = mktempdir()
-    state = open_hsss_writers("ref", ["s1"], base)
-
-    # ref: A, s1: T (passes all cutoffs)
-    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
-    v_ref.percent = "100"; v_ref.matches_reference = 1
-    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"
-    v_s1.percent = "75"; v_s1.matches_reference = 0
-
-    write_hsss_position!(state, [v_ref, v_s1], "ref", "LmjF.01", 200, ["s1"], Int8(77))
-    close_hsss_writers(state)
-
-    # Verify contig map written to all 4 dirs
-    for cutoff in [20, 40, 60, 80]
-        dir = joinpath(base, "hsss_readFreq$(cutoff)")
-        contig_lines = readlines(joinpath(dir, "contigIdToSourceId.dat"))
-        @test contig_lines[1] == "1\tLmjF.01"
-    end
-
-    # Verify binary record in readFreq20/referenceGenome.dat
-    ref_bytes = read(joinpath(base, "hsss_readFreq20", "referenceGenome.dat"))
-    @test length(ref_bytes) == 8
-    @test ltoh(reinterpret(Int16, ref_bytes[1:2])[1]) == Int16(1)   # seq_index
-    @test ltoh(reinterpret(Int32, ref_bytes[3:6])[1]) == Int32(200) # location
-    @test reinterpret(Int8, ref_bytes[7:7])[1] == Int8(1)           # A = 1
-    @test reinterpret(Int8, ref_bytes[8:8])[1] == Int8(77)          # product_code
-
-    # Verify binary record for s1 (index 2)
-    s1_bytes = read(joinpath(base, "hsss_readFreq20", "2"))
-    @test length(s1_bytes) == 8
-    @test reinterpret(Int8, s1_bytes[7:7])[1] == Int8(4)   # T = 4
-    @test reinterpret(Int8, s1_bytes[8:8])[1] == Int8(77)
+@testset "product_for_allele resolves the SNP slot against the strain codon" begin
+    # Codon ARG with the ambiguity at position 2: allele A -> AAG (K), allele G -> AGG (R)
+    @test product_for_allele("ARG", 2, "A") == "K"
+    @test product_for_allele("ARG", 2, "G") == "R"
+    # Unambiguous codon: substitution still applies
+    @test product_for_allele("AAG", 2, "G") == "R"
+    # Non-coding / no codon
+    @test product_for_allele("", 2, "A") == ""
 end
 
-@testset "write_hsss_position skips position if only ref-matching strains at cutoff" begin
+@testset "product_for_allele returns X when a second site in the codon is ambiguous" begin
+    # RRG: resolving position 2 still leaves position 1 ambiguous -> AAG(K) vs GAG(E)
+    @test product_for_allele("RRG", 2, "A") == "X"
+end
+
+@testset "hsss_product_code encodes ascii, empty as 0" begin
+    @test hsss_product_code("K") == Int8(75)
+    @test hsss_product_code("*") == Int8(42)
+    @test hsss_product_code("")  == Int8(0)
+end
+
+@testset "write_hsss_position gives each strain its own product byte" begin
+    # THE core regression for the collapsed-product bug: two strains whose codons
+    # translate differently must NOT share a product byte, or hsssFindPolymorphic
+    # can never report non-syn (it detects it only by the byte differing).
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1", "s2"], base)
+
+    s1 = hsss_var("s1", ["G"]; codon="AGG", pic=2)   # -> R
+    s2 = hsss_var("s2", ["T"]; codon="ATG", pic=2)   # -> M
+
+    write_hsss_position!(state, [s1, s2], "A", "K", "chr1", 100, ["s1", "s2"])
+    close_hsss_writers(state)
+
+    d = joinpath(base, "hsss_readFreq20")
+    @test hsss_products_of(joinpath(d, "2")) == [Int8(codepoint('R'))]
+    @test hsss_products_of(joinpath(d, "3")) == [Int8(codepoint('M'))]
+    @test hsss_products_of(joinpath(d, "referenceGenome.dat")) == [Int8(codepoint('K'))]
+end
+
+@testset "write_hsss_position never writes X into referenceGenome.dat" begin
+    # refProduct is NOT X-normalized in hsssFindPolymorphic.c (unlike the strain
+    # path), so 'X'=88 there reads as a real amino acid and fires a spurious
+    # non-syn. An unknown reference product must be written as 0 (non-coding).
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1"], base)
+    s1 = hsss_var("s1", ["G"]; codon="AGG", pic=2)
+    write_hsss_position!(state, [s1], "A", "X", "chr1", 100, ["s1"])
+    close_hsss_writers(state)
+
+    d = joinpath(base, "hsss_readFreq20")
+    @test hsss_products_of(joinpath(d, "referenceGenome.dat")) == [Int8(0)]
+end
+
+@testset "write_hsss_position writes one record per allele for a diploid het" begin
+    # Regression for IUPAC compression: a het must NOT collapse to a single
+    # record with an ambiguity base (which maps to allele code 0 = unknown).
     base = mktempdir()
     state = open_hsss_writers("ref", ["s1"], base)
 
-    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
-    v_ref.percent = "100"; v_ref.matches_reference = 1
-    # s1 matches reference
-    v_s1 = Variation(); v_s1.strain = "s1"; v_s1.base = "A"; v_s1.reference = "A"
-    v_s1.percent = "100"; v_s1.matches_reference = 1
-
-    write_hsss_position!(state, [v_ref, v_s1], "ref", "chr1", 100, ["s1"], Int8(77))
+    s1 = hsss_var("s1", ["A", "G"]; codon="ARG", pic=2)   # het A/G, ref A
+    write_hsss_position!(state, [s1], "A", "K", "chr1", 100, ["s1"])
     close_hsss_writers(state)
 
-    # No records written anywhere
+    d = joinpath(base, "hsss_readFreq20")
+    recs = read_hsss(joinpath(d, "2"))
+    @test length(recs) == 2
+    # Real allele codes, not 0/unknown. Ref-matching slot included, per the Perl.
+    @test Set(r[3] for r in recs) == Set([Int8(1), Int8(3)])   # A=1, G=3
+    # Each allele carries its own product: A->K, G->R
+    byallele = Dict(r[3] => r[4] for r in recs)
+    @test byallele[Int8(1)] == Int8(codepoint('K'))
+    @test byallele[Int8(3)] == Int8(codepoint('R'))
+end
+
+@testset "write_hsss_position writes one record for a homozygous diploid call" begin
+    # 1/1 resolves to ["G","G"] — that is one allele, not two, and must not be
+    # double-counted in the C's alleleCount.
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1"], base)
+    s1 = hsss_var("s1", ["G", "G"]; codon="AGG", pic=2)
+    write_hsss_position!(state, [s1], "A", "K", "chr1", 100, ["s1"])
+    close_hsss_writers(state)
+
+    @test length(read_hsss(joinpath(base, "hsss_readFreq20", "2"))) == 1
+end
+
+@testset "write_hsss_position skips position when no strain differs from reference" begin
+    base = mktempdir()
+    state = open_hsss_writers("ref", ["s1"], base)
+    s1 = hsss_var("s1", ["A"]; codon="AAG", pic=2)   # matches reference
+    write_hsss_position!(state, [s1], "A", "K", "chr1", 100, ["s1"])
+    close_hsss_writers(state)
+
     @test filesize(joinpath(base, "hsss_readFreq20", "referenceGenome.dat")) == 0
     @test filesize(joinpath(base, "hsss_readFreq20", "2")) == 0
 end
 
-@testset "write_hsss_position writes unknown record for absent strain" begin
+@testset "write_hsss_position writes contigIdToSourceId and unknown for absent strain" begin
     base = mktempdir()
     state = open_hsss_writers("ref", ["s1", "s2"], base)
-
-    # Only ref and s1 present; s2 is absent
-    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
-    v_ref.percent = "100"; v_ref.matches_reference = 1
-    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"
-    v_s1.percent = "60"; v_s1.matches_reference = 0
-
-    write_hsss_position!(state, [v_ref, v_s1], "ref", "chr1", 50, ["s1", "s2"], Int8(0))
+    s1 = hsss_var("s1", ["T"]; codon="ATG", pic=2, percent="60")
+    write_hsss_position!(state, [s1], "A", "K", "LmjF.01", 50, ["s1", "s2"])
     close_hsss_writers(state)
 
-    # s2 (index 3) gets unknown record
-    s2_bytes = read(joinpath(base, "hsss_readFreq20", "3"))
-    @test length(s2_bytes) == 8
-    @test reinterpret(Int8, s2_bytes[7:7])[1] == Int8(0)  # unknown allele
-    @test reinterpret(Int8, s2_bytes[8:8])[1] == Int8(0)  # unknown product
+    for cutoff in [20, 40, 60, 80]
+        d = joinpath(base, "hsss_readFreq$(cutoff)")
+        @test readlines(joinpath(d, "contigIdToSourceId.dat"))[1] == "1\tLmjF.01"
+    end
+
+    # s2 absent -> unknown allele and unknown product
+    recs = read_hsss(joinpath(base, "hsss_readFreq20", "3"))
+    @test length(recs) == 1
+    @test recs[1][3] == Int8(0)
+    @test recs[1][4] == Int8(0)
 end
 
-@testset "write_hsss_position filters by cutoff: s1 at 35% skips readFreq40" begin
+@testset "write_hsss_position filters by cutoff: 35% passes 20 but not 40" begin
     base = mktempdir()
     state = open_hsss_writers("ref", ["s1"], base)
-
-    v_ref = Variation(); v_ref.strain = "ref"; v_ref.base = "A"; v_ref.reference = "A"
-    v_ref.percent = "100"; v_ref.matches_reference = 1
-    v_s1  = Variation(); v_s1.strain  = "s1";  v_s1.base  = "T"; v_s1.reference  = "A"
-    v_s1.percent = "35"; v_s1.matches_reference = 0   # passes 20, fails 40
-
-    write_hsss_position!(state, [v_ref, v_s1], "ref", "chr1", 100, ["s1"], Int8(0))
+    s1 = hsss_var("s1", ["T"]; codon="ATG", pic=2, percent="35")
+    write_hsss_position!(state, [s1], "A", "K", "chr1", 100, ["s1"])
     close_hsss_writers(state)
 
-    # readFreq20: s1 passes → record written
     @test filesize(joinpath(base, "hsss_readFreq20", "2")) == 8
-    # readFreq40: s1 fails → position skipped (no record, not even unknown)
     @test filesize(joinpath(base, "hsss_readFreq40", "2")) == 0
 end
 
-@testset "write_hsss_position writes two records for het strain (one per allele)" begin
-    base = mktempdir()
-    state = open_hsss_writers("ref", ["s1"], base)
+@testset "select_hsss_annotation picks the transcript with the longest CDS" begin
+    # Alternative transcripts of one gene give the same amino acid at a position,
+    # so this only bites for overlapping genes — but it must be deterministic and
+    # must never fall back to "disagreement => non-coding".
+    tinfo = Dict(
+        "short" => TranscriptInfo("chr1", 1, [CDSInterval("chr1", 1, 30, 1, "short", 1)]),
+        "long"  => TranscriptInfo("chr1", 1, [CDSInterval("chr1", 1, 60, 1, "long", 1)]),
+    )
+    anns = [make_annotation(transcript_id="short", ref_product="K"),
+            make_annotation(transcript_id="long",  ref_product="M")]
 
-    v_ref  = Variation(); v_ref.strain  = "ref"; v_ref.base  = "A"; v_ref.reference = "A"
-    v_ref.percent = "100"; v_ref.matches_reference = 1
-    # s1 is het: has both A and T alleles above threshold
-    v_s1a  = Variation(); v_s1a.strain = "s1"; v_s1a.base = "A"; v_s1a.reference = "A"
-    v_s1a.percent = "50"; v_s1a.matches_reference = 1
-    v_s1t  = Variation(); v_s1t.strain = "s1"; v_s1t.base = "T"; v_s1t.reference = "A"
-    v_s1t.percent = "50"; v_s1t.matches_reference = 0
+    @test select_hsss_annotation(anns, tinfo).transcript_id == "long"
+    # Order-independent
+    @test select_hsss_annotation(reverse(anns), tinfo).transcript_id == "long"
+end
 
-    write_hsss_position!(state, [v_ref, v_s1a, v_s1t], "ref", "chr1", 100, ["s1"], Int8(0))
-    close_hsss_writers(state)
-
-    s1_bytes = read(joinpath(base, "hsss_readFreq20", "2"))
-    # Two records: one for A allele (ref-matching, included because het), one for T allele
-    @test length(s1_bytes) == 16
-    allele1 = reinterpret(Int8, s1_bytes[7:7])[1]
-    allele2 = reinterpret(Int8, s1_bytes[15:15])[1]
-    @test Set([allele1, allele2]) == Set([Int8(1), Int8(4)])  # A=1, T=4
+@testset "select_hsss_annotation prefers a coding annotation over non-coding" begin
+    tinfo = Dict(
+        "nc" => TranscriptInfo("chr1", 1, [CDSInterval("chr1", 1, 90, 1, "nc", 1)]),
+        "c"  => TranscriptInfo("chr1", 1, [CDSInterval("chr1", 1, 30, 1, "c", 1)]),
+    )
+    anns = [make_annotation(transcript_id="nc", is_coding=0),
+            make_annotation(transcript_id="c",  is_coding=1)]
+    @test select_hsss_annotation(anns, tinfo).transcript_id == "c"
 end
 
 # ---------------------------------------------------------------------------
