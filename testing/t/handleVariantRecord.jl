@@ -1242,6 +1242,30 @@ end
     @test any(startswith(e, "r2|CAG|Q|") for e in entries)
 end
 
+@testset "assign_ref_cann_keys emits dot, not r0, when the product is unstatable" begin
+    # A strain whose codon differs but whose product cannot be called must not
+    # inherit the shared reference entry — that would assert the REFERENCE product
+    # for an unknown one, disagreeing with HSSS (which reports X). It gets "." and
+    # costs no dictionary entry.
+    ann = make_annotation(is_coding=1, transcript_id="T1", ref_codon="CAA", ref_product="Q")
+    vn = Variation(); vn.codon="CNN"; vn.product=[translate_codon(c) for c in expand_codon("CNN")]
+    blank = build_strain_ref_cann_entry("r0", ann, vn)
+    @test split(blank, "|")[3] == "."          # unstatable, as built
+
+    vp = Variation(); vp.codon="CCA"; vp.product=["P"]
+    good = build_strain_ref_cann_entry("r0", ann, vp)
+
+    (ref_keys, entries, s2r) = assign_ref_cann_keys(
+        [ann], Dict("s1"=>[blank], "s2"=>[good]), ["s1","s2"])
+
+    @test ref_keys == ["r0"]
+    @test length(entries) == 2                 # r0 + s2's entry only; s1 adds none
+    @test s2r["s1"] == ["."]                   # no annotation, NOT "r0"
+    @test s2r["s2"] == ["r1"]
+    @test any(startswith(e, "r1|CCA|P|") for e in entries)
+    @test !any(occursin("CNN", e) for e in entries)
+end
+
 @testset "assign_ref_cann_keys leaves reference-codon strains on the shared entry" begin
     ann = make_annotation(is_coding=1, ref_codon="AAG", ref_product="K")
     (ref_keys, entries, s2r) = assign_ref_cann_keys([ann], Dict{String,Vector{String}}(), ["s1"])

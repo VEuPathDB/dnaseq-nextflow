@@ -2371,6 +2371,21 @@ function assign_ref_cann_keys(
         keys_for_strain = String[]
         for entry in strain_entries
             entry == "." && continue
+
+            # Codon differs from the reference but the product cannot be stated
+            # (low-coverage N codons like CNN/CNA/CAN, or a genuinely ambiguous
+            # translation). Emit "." — no annotation — rather than allocating a
+            # dictionary entry that says nothing. Crucially this must NOT fall
+            # through to the shared r0: that would assert the REFERENCE product
+            # for a strain whose product is unknown, which is exactly the
+            # disagreement with the HSSS files (they report X) that per-strain
+            # entries exist to remove. On the 217-strain set these were 72% of the
+            # per-strain entries and accounted for the whole VCF size increase.
+            if split(entry, "|")[3] == "."
+                push!(keys_for_strain, ".")
+                continue
+            end
+
             if !haskey(entry_to_key, entry)
                 key = "r$(base + length(entry_to_key))"
                 entry_to_key[entry] = key
