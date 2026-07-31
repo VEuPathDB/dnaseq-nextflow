@@ -1042,6 +1042,10 @@ function hsss_var(strain, slots; reference="A", codon="", pic=2, percent="100")
     v.codon = codon
     v.position_in_codon = pic
     v.is_coding = isempty(codon) ? 0 : 1
+    # Mirror annotate_variations!: product is derived from the strain's consensus
+    # codon, expanded over any IUPAC ambiguity. HSSS reads this field, so the
+    # fixture has to populate it the same way the pipeline does.
+    v.product = isempty(codon) ? String[] : [translate_codon(c) for c in expand_codon(codon)]
     v
 end
 
@@ -1112,39 +1116,108 @@ end
     # allele maps to translate_codon(codon) and no substitution happens — so a
     # codon whose bases disagree with the VCF genotype (consensus filtering,
     # indel shift) can no longer invent an amino acid no strain actually has.
-    @test products_for_alleles("AGG", 2, ["G"], 1)  == ["R"]
-    @test products_for_alleles("AGG", 2, ["G"], -1) == ["R"]
+    @test products_for_alleles(["R"], "AGG", 2, ["G"], 1)  == ["R"]
+    @test products_for_alleles(["R"], "AGG", 2, ["G"], -1) == ["R"]
 
     # Deliberately inconsistent input: allele "A" does not match the codon's base.
     # Old behaviour substituted anyway and returned a fabricated product; now the
     # codon wins on both strands and for any position.
     for pic in 1:3, strand in (1, -1), allele in ["A","C","G","T"]
-        @test products_for_alleles("TAT", pic, [allele], strand) == [translate_codon("TAT")]
+        @test products_for_alleles(["Y"], "TAT", pic, [allele], strand) == [translate_codon("TAT")]
     end
 
     # Specifically: TAT + allele A at position 3 used to fabricate TAA (a stop).
-    @test products_for_alleles("TAT", 3, ["A"], 1) == ["Y"]
+    @test products_for_alleles(["Y"], "TAT", 3, ["A"], 1) == ["Y"]
     @test product_for_allele("TAT", 3, "A", 1)     == "*"   # the raw substitution still would
 end
 
 @testset "products_for_alleles resolves each allele when the codon is ambiguous" begin
     # Het: codon carries an IUPAC code, so the alleles genuinely differ and
     # substitution is the only way to tell them apart.
-    @test products_for_alleles("ARG", 2, ["A", "G"], 1) == ["K", "R"]
+    @test products_for_alleles(["K","R"], "ARG", 2, ["A", "G"], 1) == ["K", "R"]
     # Minus strand: genomic A/G complement to T/C -> ATG(M), ACG(T)
-    @test products_for_alleles("AYG", 2, ["A", "G"], -1) == ["M", "T"]
+    @test products_for_alleles(["M","T"], "AYG", 2, ["A", "G"], -1) == ["M", "T"]
 end
 
 @testset "products_for_alleles handles missing and frameshifted codons" begin
     # No strain sequence: coding, but the amino acid is unknown -> X, which the C
     # normalizes to -1 and ignores on the strain side.
-    @test products_for_alleles("NNN", 2, ["A"], 1) == ["X"]
+    @test products_for_alleles(["X"], "NNN", 2, ["A"], 1) == ["X"]
     # Downstream of a frameshift, and non-coding: no product at all -> "" -> byte 0.
     # Deliberately NOT "X", which would assert "coding but unknown".
-    @test products_for_alleles(".",   2, ["A"], 1) == [""]
-    @test products_for_alleles("",    2, ["A"], 1) == [""]
+    @test products_for_alleles(String[], ".", 2, ["A"], 1) == [""]
+    @test products_for_alleles(String[], "", 2, ["A"], 1) == [""]
     @test hsss_product_code("")  == Int8(0)
-    @test products_for_alleles("AGG", 2, String[], 1) == String[]
+    @test products_for_alleles(["R"], "AGG", 2, String[], 1) == String[]
+end
+
+@testset "products_for_alleles reads Variation.product, not the codon" begin
+    # Variation.product is the single source of truth — the VEuPath product call,
+    # computed once from the strain's consensus codon. products_for_alleles must
+    # report it rather than re-deriving from the codon, so the three consumers
+    # (transcript_product.dat, CANN, HSSS) cannot drift apart. Here the product
+    # list deliberately disagrees with the codon: the product wins.
+    @test products_for_alleles(["W"], "AGG", 2, ["G"], 1) == ["W"]
+end
+
+# ---------------------------------------------------------------------------
+# CANN reference entries: per-strain when the consensus codon differs
+# ---------------------------------------------------------------------------
+
+@testset "build_strain_ref_cann_entry reports the strain's own product" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=42,
+                          pos_in_codon_val=2, ref_codon="AAG", ref_product="K")
+    # Strain carries the REFERENCE allele here but another variant in the same
+    # codon, so its consensus codon (GAG -> E) differs from the reference (AAG -> K).
+    v = Variation(); v.strain="s1"; v.codon="GAG"; v.product=["E"]; v.matches_reference=1
+    f = split(build_strain_ref_cann_entry("r0", ann, v), "|")
+    @test f[1] == "r0"
+    @test f[2] == "GAG"          # the strain's codon, not AAG
+    @test f[3] == "E"            # the strain's product, not K
+    @test f[4] == "reference"
+    @test f[5] == "T1"
+
+    # Ambiguous codon reports no product, mirroring the alt-entry rule.
+    vn = Variation(); vn.strain="s2"; vn.codon="NNN"; vn.product=["X"]; vn.matches_reference=1
+    @test split(build_strain_ref_cann_entry("r0", ann, vn), "|")[3] == "."
+end
+
+@testset "assign_ref_cann_keys appends per-strain entries and dedupes them" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", ref_codon="AAG", ref_product="K")
+    v1 = Variation(); v1.codon="GAG"; v1.product=["E"]
+    v2 = Variation(); v2.codon="CAG"; v2.product=["Q"]
+    e1 = build_strain_ref_cann_entry("r0", ann, v1)
+    e2 = build_strain_ref_cann_entry("r0", ann, v2)
+
+    # s1 and s3 share a codon so must share a key; s2 gets its own.
+    refents = Dict("s1"=>[e1], "s2"=>[e2], "s3"=>[e1])
+    (ref_keys, entries, s2r) = assign_ref_cann_keys([ann], refents, ["s1","s2","s3"])
+
+    @test ref_keys == ["r0"]                 # the shared reference entry
+    @test length(entries) == 3               # r0 + two distinct strain entries
+    @test s2r["s1"] == ["r1"]
+    @test s2r["s3"] == ["r1"]                # deduplicated onto the same key
+    @test s2r["s2"] == ["r2"]
+    @test any(startswith(e, "r1|GAG|E|") for e in entries)
+    @test any(startswith(e, "r2|CAG|Q|") for e in entries)
+end
+
+@testset "assign_ref_cann_keys leaves reference-codon strains on the shared entry" begin
+    ann = make_annotation(is_coding=1, ref_codon="AAG", ref_product="K")
+    (ref_keys, entries, s2r) = assign_ref_cann_keys([ann], Dict{String,Vector{String}}(), ["s1"])
+    @test ref_keys == ["r0"]
+    @test length(entries) == 1
+    @test isempty(s2r)
+end
+
+@testset "build_ca_values gives a strain its own r-key when it has one" begin
+    rec = make_vcf_record(pos=100, format_keys=["GT","DP"], sample_data=["0:30", "0:30"])
+    ca = build_ca_values(rec.format_keys, rec.sample_data, rec.alts, "T",
+                         ["r0"], ["s1","s2"],
+                         Dict{String,Vector{String}}(),
+                         Dict("s1"=>["r1"]))
+    @test ca[1] == "r1"    # s1 -> its own product
+    @test ca[2] == "r0"    # s2 -> shared reference product
 end
 
 @testset "hsss_product_code encodes ascii, empty as 0" begin

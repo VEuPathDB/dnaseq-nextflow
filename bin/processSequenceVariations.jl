@@ -255,11 +255,27 @@ Substitution is reserved for the one case that needs it: an ambiguous codon, i.e
 a het call, where the alleles genuinely translate differently and the whole point
 is to tell them apart.
 """
-function products_for_alleles(codon::AbstractString, pos_in_codon::Int,
-                              alleles::Vector{String}, strand::Int=1)
+function products_for_alleles(products::Vector{String}, codon::AbstractString,
+                              pos_in_codon::Int, alleles::Vector{String}, strand::Int=1)
     isempty(alleles) && return String[]
-    prods = unique(translate_codon(c) for c in expand_codon(String(codon)))
+
+    # `products` is Variation.product — the VEuPath product call, already computed
+    # from this strain's consensus codon in annotate_variations!. Read it rather
+    # than re-deriving: every re-derivation is a chance to disagree, which is how
+    # the strand and pos_in_codon defects got in.
+    prods = unique(products)
+
+    # No product at all: non-coding, or downstream of a frameshift where the
+    # reading frame is destroyed (v.product == String[]). Encodes as byte 0.
+    isempty(prods) && return fill("", length(alleles))
+
+    # One product for the whole codon — covers every homozygous/haploid call, and
+    # "X" where the strain has no CDS sequence. No substitution, so nothing here
+    # can be thrown off by a codon that disagrees with the VCF genotype.
     length(prods) == 1 && return fill(prods[1], length(alleles))
+
+    # Ambiguous codon (het): the alleles genuinely translate differently, and
+    # telling them apart is the entire reason to substitute.
     [product_for_allele(codon, pos_in_codon, a, strand) for a in alleles]
 end
 
@@ -741,7 +757,7 @@ function write_hsss_position!(
             pairs = Tuple{String,String}[]   # (allele, product)
             for sv in snp_svars
                 alleles = hsss_alleles_for(sv)
-                prods   = products_for_alleles(sv.codon, sv.position_in_codon, alleles, strand)
+                prods   = products_for_alleles(sv.product, sv.codon, sv.position_in_codon, alleles, strand)
                 for (a, p) in zip(alleles, prods)
                     push!(pairs, (a, p))
                 end
@@ -2024,7 +2040,8 @@ function build_ca_values(
     this_alt::String,
     ref_keys::Vector{String},
     all_strains::Vector{String},
-    strain_to_alt_keys::Dict{String, Vector{String}}
+    strain_to_alt_keys::Dict{String, Vector{String}},
+    strain_to_ref_keys::Dict{String, Vector{String}}=Dict{String, Vector{String}}()
 )::Vector{String}
     this_alt_idx = findfirst(==(this_alt), all_alts)
     result = String[]
@@ -2032,7 +2049,10 @@ function build_ca_values(
         strain = i <= length(all_strains) ? all_strains[i] : ""
         gt     = get(parse_format_field(format_keys, sd), "GT", ".")
         per_sample_keys = get(strain_to_alt_keys, strain, String[])
-        push!(result, gt_to_ca(gt, this_alt_idx, per_sample_keys, ref_keys))
+        # A strain whose consensus codon differs from the reference codon gets its
+        # own r-key; everyone else shares the per-transcript reference entries.
+        per_sample_ref  = get(strain_to_ref_keys, strain, ref_keys)
+        push!(result, gt_to_ca(gt, this_alt_idx, per_sample_keys, per_sample_ref))
     end
     result
 end
@@ -2152,6 +2172,32 @@ function build_ref_cann_entry(key::String, annotation::PositionAnnotation)::Stri
     annotation.is_coding != 1 && return "."
     codon = isempty(annotation.ref_codon)   ? "." : annotation.ref_codon
     aa    = isempty(annotation.ref_product) ? "." : annotation.ref_product
+    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
+end
+
+"""
+    build_strain_ref_cann_entry(key, annotation, v) -> String
+
+CANN entry for a strain that carries the REFERENCE allele at this position but
+whose consensus codon still differs from the reference codon — because it carries
+another variant elsewhere in the same codon.
+
+Without this, such a strain is pointed at the shared reference entry, which
+reports the reference codon's amino acid rather than the strain's own. That makes
+CANN disagree with `transcript_product.dat` and the HSSS files, both of which use
+the per-strain consensus codon. The product call is meant to be per strain
+everywhere; this closes the one path that wasn't.
+"""
+function build_strain_ref_cann_entry(key::String, annotation::PositionAnnotation, v::Variation)::String
+    annotation.is_coding != 1 && return "."
+    isempty(v.codon) && return "."
+    codon = v.codon
+    # Mirror the alt-entry rule: an ambiguous codon reports no product.
+    if occursin(r"[NnXx.]", codon)
+        return "$(key)|$(codon)|.|.|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
+    end
+    prods = unique(v.product)
+    aa    = isempty(prods) ? "." : join(prods, "/")
     "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
 end
 
@@ -2286,6 +2332,48 @@ function build_ref_cann_entries(annotations::Vector{PositionAnnotation})::Tuple{
         push!(ref_cann_entries, entry)
     end
     (ref_keys, ref_cann_entries)
+end
+
+"""
+    assign_ref_cann_keys(annotations, ref_strain_entries, all_strains)
+        -> (ref_keys, ref_cann_entries, strain_to_ref_keys)
+
+Builds the reference-allele CANN dictionary.
+
+`ref_keys` / `ref_cann_entries` are the shared per-transcript reference entries,
+used by every strain whose consensus codon equals the reference codon. Strains
+whose codon differs (another variant in the same codon) get their own entries
+appended, deduplicated by content, and `strain_to_ref_keys` maps those strains to
+them so `CA` points at the strain's own product rather than the reference's.
+"""
+function assign_ref_cann_keys(
+    annotations::Vector{PositionAnnotation},
+    ref_strain_entries::Dict{String, Vector{String}},
+    all_strains::Vector{String}
+)::Tuple{Vector{String}, Vector{String}, Dict{String, Vector{String}}}
+    (ref_keys, entries) = build_ref_cann_entries(annotations)
+
+    entry_to_key       = Dict{String, String}()
+    strain_to_ref_keys = Dict{String, Vector{String}}()
+    base               = length(ref_keys)
+
+    for strain in all_strains
+        strain_entries = get(ref_strain_entries, strain, nothing)
+        isnothing(strain_entries) && continue
+        keys_for_strain = String[]
+        for entry in strain_entries
+            entry == "." && continue
+            if !haskey(entry_to_key, entry)
+                key = "r$(base + length(entry_to_key))"
+                entry_to_key[entry] = key
+                push!(entries, replace(entry, r"^r0\|" => "$(key)|", count=1))
+            end
+            push!(keys_for_strain, entry_to_key[entry])
+        end
+        isempty(keys_for_strain) || (strain_to_ref_keys[strain] = keys_for_strain)
+    end
+
+    (ref_keys, entries, strain_to_ref_keys)
 end
 
 """
@@ -2463,6 +2551,9 @@ function handle_variant_record!(
     # Accumulate per-sample CANN entries across all annotations (transcripts).
     # alt_strain_entries: alt -> strain -> [entry per transcript, in annotation order]
     alt_strain_entries = Dict{String, Dict{String, Vector{String}}}()
+    # Reference-allele strains whose consensus codon differs from the reference
+    # codon, so they need their own r-entry: strain -> [entry per transcript].
+    ref_strain_entries = Dict{String, Vector{String}}()
     first_annotation   = annotations[1]
     any_output         = false
     first_all_vars        = nothing
@@ -2500,6 +2591,19 @@ function handle_variant_record!(
             first_all_vars = all_vars
         end
 
+        # A strain carrying the reference allele still needs its own product when
+        # its consensus codon differs from the reference codon.
+        if annotation.is_coding == 1
+            for v in variations
+                v.strain == ctx.reference_strain && continue
+                v.matches_reference == 1 || continue
+                (isempty(v.codon) || v.codon == annotation.ref_codon) && continue
+                entry = build_strain_ref_cann_entry("r0", annotation, v)
+                entry == "." && continue
+                push!(get!(ref_strain_entries, v.strain, String[]), entry)
+            end
+        end
+
         if write_hsss && annotation === hsss_annotation
             @bench "write_hsss" write_hsss_position!(
                 writers.hsss, variations, ref_variation.base, annotation.ref_product,
@@ -2531,7 +2635,8 @@ function handle_variant_record!(
     @bench "write_snp_feature" write_snp_feature(writers.snp_fh, first_all_vars, is_coding, seq_id, location,
                       ctx.reference_strain, ctx.all_strains)
 
-    (ref_keys, ref_cann_entries) = build_ref_cann_entries(annotations)
+    (ref_keys, ref_cann_entries, strain_to_ref_keys) =
+        assign_ref_cann_keys(annotations, ref_strain_entries, all_strains)
     (alt_cann_entries, alt_strain_to_ca) = @bench "cann_assign" assign_cann_keys(alt_strain_entries, all_strains)
 
     # Write one VCF output entry per unique alt per class-record (for SnpEff).
@@ -2553,7 +2658,7 @@ function handle_variant_record!(
 
             strain_to_alt_keys = get(alt_strain_to_ca, alt, Dict{String, Vector{String}}())
             ca_values = build_ca_values(rec.format_keys, modified_sample_data, rec.alts, alt,
-                                        ref_keys, all_strains, strain_to_alt_keys)
+                                        ref_keys, all_strains, strain_to_alt_keys, strain_to_ref_keys)
             write_vcf_entry(writers.vcf_fh, seq_id, location, rec.ref, alt,
                             full_cann, rec.info, rec.format_keys,
                             modified_sample_data, ca_values, dfs_values,
