@@ -2192,13 +2192,14 @@ function build_strain_ref_cann_entry(key::String, annotation::PositionAnnotation
     annotation.is_coding != 1 && return "."
     isempty(v.codon) && return "."
     codon = v.codon
-    # Mirror the alt-entry rule: an ambiguous codon reports no product.
-    if occursin(r"[NnXx.]", codon)
+    prods = unique(v.product)
+    # Same rule as the alt entries: suppress only when the TRANSLATION is
+    # undetermined, not merely because a base is ambiguous. "X" (unknown amino
+    # acid) counts as undetermined.
+    if length(prods) != 1 || prods[1] == "X"
         return "$(key)|$(codon)|.|.|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
     end
-    prods = unique(v.product)
-    aa    = isempty(prods) ? "." : join(prods, "/")
-    "$(key)|$(codon)|$(aa)|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
+    "$(key)|$(codon)|$(prods[1])|reference|$(annotation.transcript_id)|$(annotation.pos_in_cds)|$(annotation.pos_in_codon_val)|.|."
 end
 
 """
@@ -2265,8 +2266,15 @@ function build_cann_string(
         return "k0|.|.|downstream_frameshift|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 
-    # Codon contains ambiguous base(s) — skip product and effect
-    if occursin(r"[NnXx]", codon)
+    # Suppress product and effect only when the TRANSLATION is undetermined, not
+    # merely because a base is ambiguous. CGN, GGN, CTN and every other degenerate
+    # box translates determinately, and unique(v.product) already says so; testing
+    # the base instead threw away products the product call had resolved, which is
+    # what made CANN disagree with the HSSS files and transcript_product.dat.
+    # "X" is excluded deliberately — it means the amino acid is unknown, and
+    # letting it through would make the effect below read "missense" for a product
+    # we cannot actually call.
+    if length(unique_prods) != 1 || unique_prods[1] == "X"
         return "k0|$(codon)|.|.|$(tid)|$(pos_in_cds)|$(pic)|.|."
     end
 

@@ -581,6 +581,45 @@ end
     @test parts[9] == "p.Asp320His"
 end
 
+@testset "build_cann_string reports a determinate product from an ambiguous codon" begin
+    # CGN is ambiguous in its bases but not in its translation — every CGx codon
+    # is Arg, so v.product collapses to ["R"]. Suppressing on the base rather than
+    # the product threw this away and made CANN disagree with the HSSS files.
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=202,
+                          pos_in_codon_val=1, ref_codon="GGT", ref_product="G")
+    v   = make_variation(strain="s1", codon="CGN", product=["R"])
+    parts = split(build_cann_string("G", "C", v, ann), "|")
+    @test parts[2] == "CGN"
+    @test parts[3] == "R"           # was "." before
+    @test parts[4] == "missense"    # effect is now computable too
+end
+
+@testset "build_cann_string still suppresses an undetermined product" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=202,
+                          pos_in_codon_val=1, ref_codon="GGT", ref_product="G")
+    # Spans multiple amino acids -> no determinate product.
+    v = make_variation(strain="s1", codon="NNN",
+                       product=[translate_codon(c) for c in expand_codon("NNN")])
+    parts = split(build_cann_string("G", "C", v, ann), "|")
+    @test parts[3] == "." && parts[4] == "."
+
+    # Unknown amino acid (no strain sequence) is also undetermined — crucially it
+    # must NOT fall through, or the effect below would read "missense" for a
+    # product we cannot call.
+    vx = make_variation(strain="s1", codon="NNN", product=["X"])
+    partsx = split(build_cann_string("G", "C", vx, ann), "|")
+    @test partsx[3] == "." && partsx[4] == "."
+end
+
+@testset "build_strain_ref_cann_entry reports a determinate ambiguous codon too" begin
+    ann = make_annotation(is_coding=1, transcript_id="T1", ref_codon="GGT", ref_product="G")
+    v = Variation(); v.strain="s1"; v.codon="GGN"; v.product=["G"]; v.matches_reference=1
+    parts = split(build_strain_ref_cann_entry("r0", ann, v), "|")
+    @test parts[2] == "GGN"
+    @test parts[3] == "G"           # GGx is all Gly
+    @test parts[4] == "reference"
+end
+
 @testset "build_cann_string emits dot hgvs for a pure indel" begin
     ann = make_annotation(is_coding=1, transcript_id="T1", pos_in_cds=10,
                           pos_in_codon_val=1, ref_codon="ATG", ref_product="M")
@@ -1177,7 +1216,8 @@ end
     @test f[4] == "reference"
     @test f[5] == "T1"
 
-    # Ambiguous codon reports no product, mirroring the alt-entry rule.
+    # An unknown product (no strain sequence) reports nothing, mirroring the
+    # alt-entry rule — "X" is not a callable amino acid.
     vn = Variation(); vn.strain="s2"; vn.codon="NNN"; vn.product=["X"]; vn.matches_reference=1
     @test split(build_strain_ref_cann_entry("r0", ann, vn), "|")[3] == "."
 end
