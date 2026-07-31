@@ -1107,6 +1107,46 @@ end
     end
 end
 
+@testset "products_for_alleles does not substitute into an unambiguous codon" begin
+    # The strain's own codon is authoritative. With an unambiguous codon every
+    # allele maps to translate_codon(codon) and no substitution happens — so a
+    # codon whose bases disagree with the VCF genotype (consensus filtering,
+    # indel shift) can no longer invent an amino acid no strain actually has.
+    @test products_for_alleles("AGG", 2, ["G"], 1)  == ["R"]
+    @test products_for_alleles("AGG", 2, ["G"], -1) == ["R"]
+
+    # Deliberately inconsistent input: allele "A" does not match the codon's base.
+    # Old behaviour substituted anyway and returned a fabricated product; now the
+    # codon wins on both strands and for any position.
+    for pic in 1:3, strand in (1, -1), allele in ["A","C","G","T"]
+        @test products_for_alleles("TAT", pic, [allele], strand) == [translate_codon("TAT")]
+    end
+
+    # Specifically: TAT + allele A at position 3 used to fabricate TAA (a stop).
+    @test products_for_alleles("TAT", 3, ["A"], 1) == ["Y"]
+    @test product_for_allele("TAT", 3, "A", 1)     == "*"   # the raw substitution still would
+end
+
+@testset "products_for_alleles resolves each allele when the codon is ambiguous" begin
+    # Het: codon carries an IUPAC code, so the alleles genuinely differ and
+    # substitution is the only way to tell them apart.
+    @test products_for_alleles("ARG", 2, ["A", "G"], 1) == ["K", "R"]
+    # Minus strand: genomic A/G complement to T/C -> ATG(M), ACG(T)
+    @test products_for_alleles("AYG", 2, ["A", "G"], -1) == ["M", "T"]
+end
+
+@testset "products_for_alleles handles missing and frameshifted codons" begin
+    # No strain sequence: coding, but the amino acid is unknown -> X, which the C
+    # normalizes to -1 and ignores on the strain side.
+    @test products_for_alleles("NNN", 2, ["A"], 1) == ["X"]
+    # Downstream of a frameshift, and non-coding: no product at all -> "" -> byte 0.
+    # Deliberately NOT "X", which would assert "coding but unknown".
+    @test products_for_alleles(".",   2, ["A"], 1) == [""]
+    @test products_for_alleles("",    2, ["A"], 1) == [""]
+    @test hsss_product_code("")  == Int8(0)
+    @test products_for_alleles("AGG", 2, String[], 1) == String[]
+end
+
 @testset "hsss_product_code encodes ascii, empty as 0" begin
     @test hsss_product_code("K") == Int8(75)
     @test hsss_product_code("*") == Int8(42)

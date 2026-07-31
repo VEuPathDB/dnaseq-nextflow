@@ -239,6 +239,31 @@ function product_for_allele(codon::AbstractString, pos_in_codon::Int,
 end
 
 """
+    products_for_alleles(codon, pos_in_codon, alleles, strand) -> Vector{String}
+
+Product for each of a strain's alleles, returned parallel to `alleles`.
+
+The strain's own CDS codon is the source of truth — it already encodes that
+strain's call. When the codon is unambiguous it yields exactly one amino acid, so
+every allele the strain carries maps to that product and **no substitution is
+performed**. This is the original, long-trusted behaviour, and it cannot be
+thrown off by a codon whose bases disagree with the VCF genotype — which happens
+for real when consensus filtering or an indel shift puts them out of step, and
+which silently produced amino acids no strain actually has.
+
+Substitution is reserved for the one case that needs it: an ambiguous codon, i.e.
+a het call, where the alleles genuinely translate differently and the whole point
+is to tell them apart.
+"""
+function products_for_alleles(codon::AbstractString, pos_in_codon::Int,
+                              alleles::Vector{String}, strand::Int=1)
+    isempty(alleles) && return String[]
+    prods = unique(translate_codon(c) for c in expand_codon(String(codon)))
+    length(prods) == 1 && return fill(prods[1], length(alleles))
+    [product_for_allele(codon, pos_in_codon, a, strand) for a in alleles]
+end
+
+"""
     hsss_product_code(product) -> Int8
 
 ASCII code of the (single-character) product, or 0 for "no product" / non-coding.
@@ -715,8 +740,10 @@ function write_hsss_position!(
             # hsssCreateStrainFiles' `if($foundStrains{$strain} > 1)` branch.
             pairs = Tuple{String,String}[]   # (allele, product)
             for sv in snp_svars
-                for a in hsss_alleles_for(sv)
-                    push!(pairs, (a, product_for_allele(sv.codon, sv.position_in_codon, a, strand)))
+                alleles = hsss_alleles_for(sv)
+                prods   = products_for_alleles(sv.codon, sv.position_in_codon, alleles, strand)
+                for (a, p) in zip(alleles, prods)
+                    push!(pairs, (a, p))
                 end
             end
             unique!(pairs)
@@ -1604,6 +1631,12 @@ function annotate_variations!(
                 adjusted_pos = annotation.pos_in_cds + shift
                 strain_codon = extract_codon(strain_seq, adjusted_pos)
                 v.codon   = strain_codon
+                # The codon is extracted at the SHIFTED position, so the offset of
+                # this SNP within it must be derived from the same position. Taking
+                # it from the unshifted pos_in_cds addresses the wrong base whenever
+                # shift % 3 != 0. Only the HSSS product path reads this field; every
+                # other consumer uses annotation.pos_in_codon_val directly.
+                v.position_in_codon = position_in_codon(adjusted_pos)
                 expanded  = expand_codon(strain_codon)
                 v.product = [translate_codon(c) for c in expanded]
             end
