@@ -193,8 +193,15 @@ function translate_codon(codon::String)
     get(CODON_TABLE, uppercase(codon), "X")
 end
 
+const DNA_COMPLEMENT = Dict{Char,Char}(
+    'A'=>'T', 'T'=>'A', 'C'=>'G', 'G'=>'C',
+    # IUPAC ambiguity codes complement to their base-wise complements
+    'R'=>'Y', 'Y'=>'R', 'K'=>'M', 'M'=>'K', 'S'=>'S', 'W'=>'W',
+    'B'=>'V', 'V'=>'B', 'D'=>'H', 'H'=>'D', 'N'=>'N',
+)
+
 """
-    product_for_allele(codon, pos_in_codon, allele) -> String
+    product_for_allele(codon, pos_in_codon, allele, strand) -> String
 
 Amino acid this strain's codon translates to *for one specific allele*.
 
@@ -203,18 +210,30 @@ non-synonymy solely by that byte differing between records at a position. So the
 product must be resolved per allele, not per position: substitute the concrete
 allele into the strain codon at the SNP's position and translate.
 
+`codon` comes from the CDS sequence, which is reverse-complemented for
+minus-strand genes, whereas `allele` is a plus-strand genomic base. On the minus
+strand the allele must therefore be complemented into CDS orientation before
+substitution — otherwise the wrong base is inserted and the amino acid is
+garbage, spuriously manufacturing stop codons about half the time.
+
 Returns `""` when there is no codon (non-coding), and `"X"` (unknown) when a
 *second* ambiguous site in the same codon leaves the amino acid undetermined even
 after the SNP slot is resolved — that is the only genuinely unpairable case.
 `X` is transparent on the strain side of the C (it normalizes it to -1).
 """
-function product_for_allele(codon::AbstractString, pos_in_codon::Int, allele::AbstractString)
+function product_for_allele(codon::AbstractString, pos_in_codon::Int,
+                            allele::AbstractString, strand::Int=1)
     length(codon) == 3 || return ""
     (1 <= pos_in_codon <= 3) || return ""
     length(allele) == 1 || return ""
 
+    base = uppercase(String(allele))[1]
+    if strand == -1
+        base = get(DNA_COMPLEMENT, base, 'N')
+    end
+
     c = collect(uppercase(String(codon)))
-    c[pos_in_codon] = uppercase(String(allele))[1]
+    c[pos_in_codon] = base
     prods = unique(translate_codon(x) for x in expand_codon(String(c)))
     length(prods) == 1 ? prods[1] : "X"
 end
@@ -617,7 +636,8 @@ function write_hsss_position!(
     ref_product::AbstractString,
     seq_id::String,
     location::Int,
-    all_strains::Vector{String}
+    all_strains::Vector{String},
+    strand::Int=1
 )
     # Update sequence index when chromosome changes
     if seq_id != state.current_seq_id
@@ -696,7 +716,7 @@ function write_hsss_position!(
             pairs = Tuple{String,String}[]   # (allele, product)
             for sv in snp_svars
                 for a in hsss_alleles_for(sv)
-                    push!(pairs, (a, product_for_allele(sv.codon, sv.position_in_codon, a)))
+                    push!(pairs, (a, product_for_allele(sv.codon, sv.position_in_codon, a, strand)))
                 end
             end
             unique!(pairs)
@@ -763,7 +783,17 @@ struct PositionAnnotation
     pos_in_codon_val::Int
     ref_codon::String
     ref_product::String
+    # Transcript strand (1 or -1). Needed because codons come from the CDS
+    # sequence — reverse-complemented for minus-strand genes — while VCF alleles
+    # are plus-strand genomic. Substituting an allele into a codon requires
+    # converting it to CDS orientation first.
+    strand::Int
 end
+
+# Default strand=1 so the many call sites that build non-coding placeholders
+# (where strand is meaningless) stay unchanged.
+PositionAnnotation(ic, tid, cn, pic_cds, pic, rc, rp) =
+    PositionAnnotation(ic, tid, cn, pic_cds, pic, rc, rp, 1)
 
 mutable struct TranscriptSequenceCache
     seqs::Dict{String, Dict{String,String}}   # transcript_id -> strain -> sequence
@@ -1083,7 +1113,8 @@ function build_annotations_from_cache(
     entries::Vector{Tuple{String,Int}},
     reference_strain::String,
     transcript_db::SQLite.DB,
-    transcript_cache::TranscriptSequenceCache
+    transcript_cache::TranscriptSequenceCache,
+    transcript_info::Dict{String,TranscriptInfo}=Dict{String,TranscriptInfo}()
 )::Vector{PositionAnnotation}
     isempty(entries) && return [PositionAnnotation(0, "", 0, 0, 0, "", "")]
     annotations = PositionAnnotation[]
@@ -1096,7 +1127,8 @@ function build_annotations_from_cache(
         pos_in_codon_val = position_in_codon(pos_in_cds)
         ref_codon   = isempty(ref_seq) ? "" : extract_codon(ref_seq, pos_in_cds)
         ref_product = isempty(ref_codon) ? "" : translate_codon(ref_codon)
-        push!(annotations, PositionAnnotation(1, tid, 0, pos_in_cds, pos_in_codon_val, ref_codon, ref_product))
+        strand = haskey(transcript_info, tid) ? transcript_info[tid].strand : 1
+        push!(annotations, PositionAnnotation(1, tid, 0, pos_in_cds, pos_in_codon_val, ref_codon, ref_product, strand))
     end
     annotations
 end
@@ -1533,7 +1565,7 @@ function annotate_position_all(
         end
 
         push!(annotations, PositionAnnotation(1, transcript_id, cds_number, pos_in_cds,
-                                              pos_in_codon_val, ref_codon, ref_product))
+                                              pos_in_codon_val, ref_codon, ref_product, tinfo.strand))
     end
 
     annotations
@@ -2390,7 +2422,7 @@ function handle_variant_record!(
     # Determine annotations: one per overlapping transcript (cache or fresh GTF lookup)
     annotations = @bench "annotate" (if !isempty(cache_entries)
         debug_log("    Cache hit at ", seq_id, ":", location)
-        build_annotations_from_cache(cache_entries, ctx.reference_strain, ctx.transcript_db, transcript_cache)
+        build_annotations_from_cache(cache_entries, ctx.reference_strain, ctx.transcript_db, transcript_cache, ctx.transcript_info)
     else
         annotate_position_all(seq_id, location, ctx, transcript_cache)
     end)
@@ -2438,7 +2470,7 @@ function handle_variant_record!(
         if write_hsss && annotation === hsss_annotation
             @bench "write_hsss" write_hsss_position!(
                 writers.hsss, variations, ref_variation.base, annotation.ref_product,
-                seq_id, location, ctx.all_strains)   # ctx.all_strains is non-ref only
+                seq_id, location, ctx.all_strains, annotation.strand)   # ctx.all_strains is non-ref only
         end
 
         if !allele_written

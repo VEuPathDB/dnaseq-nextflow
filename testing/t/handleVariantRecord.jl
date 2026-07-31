@@ -1081,6 +1081,32 @@ end
     @test product_for_allele("RRG", 2, "A") == "X"
 end
 
+@testset "product_for_allele complements the allele on the minus strand" begin
+    # Codons come from the CDS (reverse-complemented for minus-strand genes);
+    # alleles are plus-strand genomic. The same genomic allele must therefore
+    # translate differently depending on strand.
+    @test product_for_allele("ATG", 2, "A",  1) == "K"   # plus:  A     -> AAG
+    @test product_for_allele("ATG", 2, "A", -1) == "M"   # minus: A->T  -> ATG
+end
+
+@testset "product_for_allele is a no-op for a strain's own homozygous allele" begin
+    # THE invariant that catches strand errors. A strain's CDS codon already
+    # contains that strain's allele, so substituting the same allele back in must
+    # reproduce translate_codon(codon) exactly — on either strand. Violating this
+    # is what manufactured spurious stop codons on minus-strand genes.
+    @test product_for_allele("ACG", 2, "G", -1) == translate_codon("ACG")
+    @test product_for_allele("AGG", 2, "G",  1) == translate_codon("AGG")
+
+    # Exhaustive: every codon, every position, both strands.
+    comp = Dict('A'=>'T','T'=>'A','C'=>'G','G'=>'C')
+    for b1 in "ACGT", b2 in "ACGT", b3 in "ACGT", pic in 1:3, strand in (1, -1)
+        codon    = string(b1, b2, b3)
+        cds_base = codon[pic]
+        genomic  = strand == -1 ? string(comp[cds_base]) : string(cds_base)
+        @test product_for_allele(codon, pic, genomic, strand) == translate_codon(codon)
+    end
+end
+
 @testset "hsss_product_code encodes ascii, empty as 0" begin
     @test hsss_product_code("K") == Int8(75)
     @test hsss_product_code("*") == Int8(42)
