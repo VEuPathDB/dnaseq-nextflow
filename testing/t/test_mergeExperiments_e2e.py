@@ -199,16 +199,33 @@ def test_merged_vcf_is_valid_bgzipped(work_dirs):
 
 def test_merged_vcf_input_vcfs_have_tbi_index(work_dirs):
     """The merge process normalizes each input VCF and indexes the .norm.vcf.gz
-    files it actually merges. Raw staged inputs (N.vcf.gz) are not indexed."""
+    files it actually merges. Raw staged inputs are not indexed.
+
+    With a single strain there is nothing to merge, so mergeVcfs.sh moves its one
+    normalized file straight to merged.vcf.gz and no .norm.vcf.gz is left behind.
+    """
     work = work_dirs['mergeVcfs']
     norm_vcfs = sorted(f for f in os.listdir(work) if f.endswith('.norm.vcf.gz'))
+    staged = [f for f in os.listdir(work)
+              if f.endswith('.vcf.gz')
+              and not f.endswith('.norm.vcf.gz')
+              and f != 'merged.vcf.gz']
+
+    if len(staged) == 1:
+        assert not norm_vcfs, (
+            "single-strain run should have moved its normalized file to "
+            f"merged.vcf.gz, but found {norm_vcfs}")
+        assert os.path.exists(os.path.join(work, 'merged.vcf.gz'))
+        return
+
     assert norm_vcfs, "No .norm.vcf.gz files found in mergeVcfs work dir"
     missing = [v for v in norm_vcfs if not os.path.exists(os.path.join(work, v + '.tbi'))]
     assert not missing, f"Normalized input VCFs missing tabix index: {missing}"
 
 
 def test_merged_vcf_sample_names_match_input_strains(work_dirs):
-    # Input VCFs are staged as 1.vcf.gz, 2.vcf.gz... — use coverage BEDs for ground truth strains
+    # Coverage BEDs are the ground truth for strain names: their basenames carry
+    # the sample name, which is what mergeCoverageBeds derives its header from.
     bed_work = work_dirs['mergeCoverageBeds']
     expected = {
         f.replace('_coverage.bed.gz', '')

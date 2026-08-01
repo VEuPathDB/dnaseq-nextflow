@@ -113,3 +113,14 @@ run. To exercise them, point at a completed run:
 ```bash
 python3 -m pytest testing/t/test_mergeExperiments_e2e.py --run-dir /path/to/nextflow/run
 ```
+
+`testing/bin/compareMergeOutputs.py DIR_A DIR_B` compares two `mergeExperiments`
+output directories for equivalence modulo strain-id permutation. Strain ids are
+assigned in channel-staging order, so two runs over identical inputs can produce
+identical data under different numbering — a plain `diff` reports differences
+that are pure renumbering. Use this instead when checking that a change left
+multi-sample output untouched. It canonicalizes the id sets in `allele.dat` and
+`transcript_product.dat` by sample name, maps `hsss_readFreq*` filenames through
+each directory's own `strainIdToName.dat` (a *different* numbering from
+`sample.dat` — the reference strain comes first there), and compares the
+annotated VCF's record body with sample columns reordered by name.
