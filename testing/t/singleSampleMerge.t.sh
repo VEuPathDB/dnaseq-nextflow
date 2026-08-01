@@ -115,3 +115,62 @@ esac
 [ ! -e "$d/merged.vcf.gz" ] || fail "mergeVcfs.sh n=0 created a merged.vcf.gz anyway"
 
 echo "PASS: mergeVcfs.sh n=0"
+
+# ---------------------------------------------------------- mergeCoverageBeds
+
+mkbed() { printf '%b' "$2" | bgzip > "$1"; }
+
+# n=1: header has exactly one sample column and data rows equal the input bed
+d="$TMP/bed1"; mkdir -p "$d"
+solo="chr1\t0\t100\t5.5\nchr1\t200\t300\t9\n"
+mkbed "$d/SoloStrain_coverage.bed.gz" "$solo"
+
+( cd "$d" && "$MERGE_BEDS" coverage.tsv SoloStrain_coverage.bed.gz ) \
+  || fail "mergeCoverageBeds.sh exited non-zero on a single input"
+
+hdr="$(head -1 "$d/coverage.tsv")"
+[ "$hdr" = "$(printf 'chrom\tstart\tend\tSoloStrain')" ] \
+  || fail "n=1 header wrong: $hdr"
+
+cols="$(head -1 "$d/coverage.tsv" | awk -F'\t' '{print NF}')"
+[ "$cols" = "4" ] || fail "n=1 expected 4 header columns (3 + 1 sample), got $cols"
+
+printf '%b' "$solo" > "$TMP/expected.bed"
+tail -n +2 "$d/coverage.tsv" > "$TMP/got.bed"
+diff -u "$TMP/expected.bed" "$TMP/got.bed" \
+  || fail "n=1 data rows differ from the single input bed"
+
+echo "PASS: mergeCoverageBeds.sh n=1"
+
+# n=2: unchanged unionbedg behavior, header widens by one column per sample
+d="$TMP/bed2"; mkdir -p "$d"
+mkbed "$d/StrainA_coverage.bed.gz" "chr1\t0\t100\t5\n"
+mkbed "$d/StrainB_coverage.bed.gz" "chr1\t50\t150\t9\n"
+
+( cd "$d" && "$MERGE_BEDS" coverage.tsv StrainA_coverage.bed.gz StrainB_coverage.bed.gz ) \
+  || fail "mergeCoverageBeds.sh exited non-zero on two inputs"
+
+hdr="$(head -1 "$d/coverage.tsv")"
+[ "$hdr" = "$(printf 'chrom\tstart\tend\tStrainA\tStrainB')" ] \
+  || fail "n=2 header wrong: $hdr"
+
+# unionbedg splits the overlap into 0-50, 50-100, 100-150 and fills gaps with 0
+rows="$(tail -n +2 "$d/coverage.tsv" | wc -l)"
+[ "$rows" = "3" ] || fail "n=2 expected 3 union intervals, got $rows"
+
+cols="$(tail -n +2 "$d/coverage.tsv" | awk -F'\t' 'NR==1{print NF}')"
+[ "$cols" = "5" ] || fail "n=2 expected 5 data columns, got $cols"
+
+echo "PASS: mergeCoverageBeds.sh n=2"
+
+# n=0: fail loudly, write nothing
+d="$TMP/bed0"; mkdir -p "$d"
+err="$( cd "$d" && "$MERGE_BEDS" coverage.tsv 2>&1 )"; rc=$?
+[ "$rc" -ne 0 ] || fail "mergeCoverageBeds.sh exited 0 with no input beds"
+case "$err" in
+  *"no input coverage BEDs"*) : ;;
+  *) fail "mergeCoverageBeds.sh n=0 message did not name the missing input: $err" ;;
+esac
+[ ! -e "$d/coverage.tsv" ] || fail "mergeCoverageBeds.sh n=0 created a coverage.tsv anyway"
+
+echo "PASS: mergeCoverageBeds.sh n=0"

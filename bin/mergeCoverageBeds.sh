@@ -15,6 +15,11 @@ if [[ -z "$out" ]]; then
 fi
 shift
 
+if (( $# == 0 )); then
+  echo "ERROR: mergeCoverageBeds.sh: no input coverage BEDs -- mergeExperiments needs at least one per-strain coverage BED (check params.coverageFiles)" >&2
+  exit 1
+fi
+
 names=()
 for f in "$@"; do
   names+=( "$(basename "$f" _coverage.bed.gz)" )
@@ -22,4 +27,10 @@ done
 
 printf 'chrom\tstart\tend\t%s\n' "$(IFS=$'\t'; echo "${names[*]}")" > "$out"
 
-bedtools unionbedg -names "${names[@]}" -filler 0 -i "$@" >> "$out"
+if (( $# == 1 )); then
+  # Single strain: nothing to union, and unionbedg rejects one input. Its output
+  # for a single 4-column bed is byte-identical to that file's own contents.
+  zcat "$1" >> "$out"
+else
+  bedtools unionbedg -names "${names[@]}" -filler 0 -i "$@" >> "$out"
+fi
