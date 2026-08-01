@@ -27,7 +27,10 @@ process mergeVcfs {
   container 'veupathdb/dnaseqanalysis:1.1.0'
 
   input:
-    path "*.vcf.gz"
+    // A bare identifier, not a "*.vcf.gz" pattern: with a collected list of one,
+    // Nextflow stages that pattern as the dotfile ".vcf.gz", which a *.vcf.gz
+    // glob cannot match. This form keeps the original filenames at every arity.
+    path vcfFiles
 
   output:
     path 'merged.vcf.gz'
@@ -35,7 +38,7 @@ process mergeVcfs {
   script:
     """
     set -euo pipefail
-    mergeVcfs.sh merged.vcf.gz *.vcf.gz
+    mergeVcfs.sh merged.vcf.gz $vcfFiles
     """
 
   stub:
