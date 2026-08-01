@@ -23,4 +23,12 @@ for vcf in "$@"; do
   norm+=( "$n" )
 done
 
-bcftools merge --merge both -O z -o "$out" "${norm[@]}"
+if (( ${#norm[@]} == 1 )); then
+  # Single strain: nothing to merge, and bcftools merge rejects one input. The
+  # normalized file already IS the contract -- verified that bcftools merge does
+  # not re-collapse rows that norm -m -any split within a single file, so this
+  # is shape-identical to the n>=2 output minus the other samples' columns.
+  mv "${norm[0]}" "$out"
+else
+  bcftools merge --merge both -O z -o "$out" "${norm[@]}"
+fi
