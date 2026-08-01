@@ -58,14 +58,7 @@ process mergeCoverageBeds {
   script:
     """
     set -euo pipefail
-    files=( $coverageBeds )
-    names=()
-    for f in "\${files[@]}"; do
-      names+=( "\$(basename "\$f" _coverage.bed.gz)" )
-    done
-    header="chrom\tstart\tend\t\$(IFS='\t'; echo "\${names[*]}")"
-    echo -e "\$header" > coverage.tsv
-    bedtools unionbedg -names "\${names[@]}" -filler 0 -i "\${files[@]}" >> coverage.tsv
+    mergeCoverageBeds.sh coverage.tsv $coverageBeds
     """
 
   stub:
