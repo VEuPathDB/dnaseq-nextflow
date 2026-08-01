@@ -81,3 +81,37 @@ samples="$(bcftools query -l "$d/merged.vcf.gz" | tr '\n' ',')"
 [ "$samples" = "SoloStrain," ] || fail "n=1 expected sample SoloStrain, got $samples"
 
 echo "PASS: mergeVcfs.sh n=1"
+
+# ---------------------------------------------------------------- mergeVcfs n=2
+
+d="$TMP/vcf2"; mkdir -p "$d"
+printf '100\tA\tG,T\tAO=5,6\t1/2\n' | mkvcf StrainA "$d"
+printf '200\tC\tT\tAO=9\t1/1\n'     | mkvcf StrainB "$d"
+
+( cd "$d" && "$MERGE_VCFS" merged.vcf.gz StrainA.vcf.gz StrainB.vcf.gz ) \
+  || fail "mergeVcfs.sh exited non-zero on two inputs"
+
+samples="$(bcftools query -l "$d/merged.vcf.gz" | sort | tr '\n' ',')"
+[ "$samples" = "StrainA,StrainB," ] \
+  || fail "n=2 expected samples StrainA,StrainB, got $samples"
+
+rows="$(bcftools view -H "$d/merged.vcf.gz" | wc -l)"
+[ "$rows" = "3" ] || fail "n=2 expected 3 rows (A>G, A>T, C>T), got $rows"
+
+multi="$(bcftools view -H "$d/merged.vcf.gz" | cut -f5 | grep -c ',' || true)"
+[ "$multi" = "0" ] || fail "n=2 left $multi multiallelic ALT field(s) unsplit"
+
+echo "PASS: mergeVcfs.sh n=2"
+
+# ---------------------------------------------------------------- mergeVcfs n=0
+
+d="$TMP/vcf0"; mkdir -p "$d"
+err="$( cd "$d" && "$MERGE_VCFS" merged.vcf.gz 2>&1 )"; rc=$?
+[ "$rc" -ne 0 ] || fail "mergeVcfs.sh exited 0 with no input VCFs"
+case "$err" in
+  *"no input VCFs"*) : ;;
+  *) fail "mergeVcfs.sh n=0 message did not name the missing input: $err" ;;
+esac
+[ ! -e "$d/merged.vcf.gz" ] || fail "mergeVcfs.sh n=0 created a merged.vcf.gz anyway"
+
+echo "PASS: mergeVcfs.sh n=0"

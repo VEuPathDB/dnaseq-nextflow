@@ -14,6 +14,11 @@ if [[ -z "$out" ]]; then
 fi
 shift
 
+if (( $# == 0 )); then
+  echo "ERROR: mergeVcfs.sh: no input VCFs -- mergeExperiments needs at least one per-strain VCF (check params.vcfFiles)" >&2
+  exit 1
+fi
+
 norm=()
 for vcf in "$@"; do
   n="${vcf%.vcf.gz}.norm.vcf.gz"
