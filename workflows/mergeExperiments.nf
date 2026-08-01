@@ -25,10 +25,10 @@ workflow me {
 
     allFastas = fastas_qch.collect()
 
-    allVcfs       = vcfs_qch.collect()
-    allVcfsBranch = allVcfs.branch { single: it.size() == 1; multiple: true }
-    mergedVcf     = allVcfsBranch.single.map { it[0] }
-                      .mix(mergeVcfs(allVcfsBranch.multiple))
+    // Arity is mergeVcfs' problem, not the DAG's: bin/mergeVcfs.sh normalizes
+    // every input and merges only when there are 2+. Branching here previously
+    // let the n=1 case skip normalization entirely.
+    mergedVcf = mergeVcfs(vcfs_qch.collect())
 
     coverageTsv = mergeCoverageBeds(coverages_qch.collect())
 
