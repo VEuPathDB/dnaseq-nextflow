@@ -144,14 +144,42 @@ def compare_hsss(a_dir, b_dir):
                 problem(f"{d}: per-strain data for {name} differs ({af.name} vs {bf.name})")
 
 
-def vcf_body(path, sample_order):
-    """Record body only, samples forced into a canonical order. The ## header
-    carries bcftools/snpEff version and command-line stamps, so the compressed
-    files differ even when the data does not."""
-    return subprocess.run(
-        ["bcftools", "view", "-H", "-s", ",".join(sample_order), str(path)],
-        capture_output=True, text=True, check=True,
-    ).stdout
+def read_vcf(path):
+    """Return (sample_names, record_lines), reading the text directly rather
+    than through bcftools.
+
+    Two reasons not to use bcftools here. First, the `##` header carries
+    bcftools and snpEff version and command-line stamps, so it must be skipped
+    entirely -- comparing raw bytes of the compressed file is meaningless.
+    Second, this pipeline's published VCF uses FORMAT tags it never declares
+    (rows carry GT:DP:AD:RO:QR:AO:QA:CA:DFS while only CA and DFS are declared),
+    which makes any bcftools mode that validates the header -- including the
+    `view -s` sample subsetting this function used to rely on -- refuse to run.
+    Reordering the sample columns ourselves sidesteps that entirely.
+    """
+    out = subprocess.run(["bgzip", "-d", "-c", str(path)],
+                         capture_output=True, text=True, check=True).stdout
+    samples, records = [], []
+    for line in out.splitlines():
+        if line.startswith("##"):
+            continue
+        if line.startswith("#CHROM"):
+            samples = line.split("\t")[9:]
+            continue
+        records.append(line)
+    return samples, records
+
+
+def canon_vcf_records(samples, records):
+    """Records with sample columns permuted into name-sorted order, then sorted.
+    This is what makes the comparison blind to sample column order."""
+    order = sorted(range(len(samples)), key=lambda i: samples[i])
+    out = []
+    for line in records:
+        fields = line.split("\t")
+        fixed, cols = fields[:9], fields[9:]
+        out.append("\t".join(fixed + [cols[i] for i in order]))
+    return sorted(out)
 
 
 def compare_ann_vcf(a_dir, b_dir):
@@ -161,17 +189,19 @@ def compare_ann_vcf(a_dir, b_dir):
         problem(f"{name}: missing in {'A' if not a.exists() else 'B'}")
         return
 
-    def samples(p):
-        out = subprocess.run(["bcftools", "query", "-l", str(p)],
-                             capture_output=True, text=True, check=True)
-        return sorted(out.stdout.split())
-
-    sa, sb = samples(a), samples(b)
-    if sa != sb:
-        problem(f"{name}: sample sets differ\n  A: {sa}\n  B: {sb}")
+    try:
+        a_samples, a_records = read_vcf(a)
+        b_samples, b_records = read_vcf(b)
+    except subprocess.CalledProcessError as e:
+        problem(f"{name}: could not read ({e.cmd[0]} exited {e.returncode}): {e.stderr.strip()}")
         return
-    if sorted(vcf_body(a, sa).splitlines()) != sorted(vcf_body(b, sb).splitlines()):
-        problem(f"{name}: record body differs")
+
+    if sorted(a_samples) != sorted(b_samples):
+        problem(f"{name}: sample sets differ\n  A: {sorted(a_samples)}\n  B: {sorted(b_samples)}")
+        return
+    if canon_vcf_records(a_samples, a_records) != canon_vcf_records(b_samples, b_records):
+        problem(f"{name}: record body differs "
+                f"({len(a_records)} records in A, {len(b_records)} in B)")
 
 
 def main():
