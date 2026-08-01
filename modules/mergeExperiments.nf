@@ -35,13 +35,7 @@ process mergeVcfs {
   script:
     """
     set -euo pipefail
-
-    for vcf in *.vcf.gz; do
-      bcftools annotate -x "INFO,FORMAT/GL,FORMAT/DPR" "\$vcf" -Oz | \
-        bcftools norm -m -any --multi-overlaps . -Oz -o "\${vcf%.vcf.gz}.norm.vcf.gz"
-      bcftools index --tbi "\${vcf%.vcf.gz}.norm.vcf.gz"
-    done
-    bcftools merge --merge both -O z -o merged.vcf.gz *.norm.vcf.gz
+    mergeVcfs.sh merged.vcf.gz *.vcf.gz
     """
 
   stub:
