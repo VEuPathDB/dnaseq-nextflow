@@ -25,11 +25,18 @@ for f in "$@"; do
   names+=( "$(basename "$f" _coverage.bed.gz)" )
 done
 
+# IFS=$'\t' rather than the IFS='\t' this logic used while it lived in the
+# Nextflow process body: there, Groovy turned \t into a real tab before bash saw
+# it. In a standalone script bash reads '\t' literally as two characters, and
+# "${names[*]}" would join the sample names with the first of them -- a
+# backslash. Same output bytes as before, but no longer dependent on Groovy.
 printf 'chrom\tstart\tend\t%s\n' "$(IFS=$'\t'; echo "${names[*]}")" > "$out"
 
 if (( $# == 1 )); then
-  # Single strain: nothing to union, and unionbedg rejects one input. Its output
-  # for a single 4-column bed is byte-identical to that file's own contents.
+  # Single strain: a union of one file is the file, so there is nothing to do --
+  # and unionbedg rejects one input anyway. modules/snp.nf emits these already
+  # sorted, with sub-minCoverage gaps omitted rather than zero-filled, so
+  # -filler 0 would have nothing to fill against either.
   zcat "$1" >> "$out"
 else
   bedtools unionbedg -names "${names[@]}" -filler 0 -i "$@" >> "$out"
