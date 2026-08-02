@@ -98,8 +98,12 @@ def compare_rows(name, a, b):
         problem(f"{name}: header differs\n  A: {ah}\n  B: {bh}")
     if arows == brows:
         return
-    only_a = [r for r in arows if r not in set(brows)]
-    only_b = [r for r in brows if r not in set(arows)]
+    # Build the sets once. Inlining set(...) in the comprehension rebuilds it
+    # per row, which is quadratic — on a million-row .dat the mismatch report
+    # never finishes, so a real difference looks like a hang.
+    aset, bset = set(arows), set(brows)
+    only_a = [r for r in arows if r not in bset]
+    only_b = [r for r in brows if r not in aset]
     problem(
         f"{name}: {len(only_a)} row(s) only in A, {len(only_b)} row(s) only in B\n"
         + "".join(f"  A only: {r}\n" for r in only_a[:5])
