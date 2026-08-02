@@ -2008,3 +2008,66 @@ end
     fields = split(strip(String(take!(buf))), "\t")
     @test fields[12] == "1"   # het_strain_count (column 12)
 end
+
+# ---------------------------------------------------------------------------
+# HSSS buffered strain writers
+#
+# The per-strain HSSS files are the only outputs whose count scales with the
+# dataset (4 cutoffs x N strains). Holding a descriptor open for each one blew
+# past RLIMIT_NOFILE at ~1100 strains, so they buffer in memory and reopen in
+# append mode to flush. These tests pin the properties that change makes
+# load-bearing: flushes must be transparent, and the file must start empty.
+# ---------------------------------------------------------------------------
+
+@testset "buffered strain writer flushes mid-run and loses no records" begin
+    base = mktempdir()
+    # 16-byte buffer = 2 records, so 300 positions force ~150 flush cycles.
+    state = open_hsss_writers("ref", ["s1"], base; buffer_bytes=16)
+    for loc in 1:300
+        v = hsss_var("s1", ["G"]; codon="AGG", pic=2)
+        write_hsss_position!(state, [v], "A", "K", "chr1", loc, ["s1"])
+    end
+
+    # Before close: the buffer must actually have been reaching disk, not just
+    # accumulating in memory. Otherwise "buffered" is only a memory leak.
+    path = joinpath(base, "hsss_readFreq20", "2")
+    @test filesize(path) > 0
+
+    close_hsss_writers(state)
+
+    recs = read_hsss(path)
+    @test length(recs) == 300
+    @test [r[2] for r in recs] == collect(1:300)   # locations in order, none dropped
+end
+
+@testset "open_hsss_writers truncates a pre-existing strain file" begin
+    # Append mode means a stale file from a resumed/rerun task would otherwise
+    # be appended to rather than replaced.
+    base = mktempdir()
+    dir  = joinpath(base, "hsss_readFreq20")
+    mkpath(dir)
+    write(joinpath(dir, "2"), rand(UInt8, 800))
+
+    state = open_hsss_writers("ref", ["s1"], base)
+    close_hsss_writers(state)
+    @test filesize(joinpath(dir, "2")) == 0
+end
+
+@testset "open descriptor count does not scale with strain count" begin
+    fd_dir = "/proc/self/fd"
+    if !isdir(fd_dir)
+        @info "skipping fd-count test: no $(fd_dir) on this platform"
+    else
+        base    = mktempdir()
+        strains = ["s$(i)" for i in 1:300]
+        before  = length(readdir(fd_dir))
+        state   = open_hsss_writers("ref", strains, base)
+        after   = length(readdir(fd_dir))
+        close_hsss_writers(state)
+
+        # Old behaviour: 4 * (300 + 1) = 1204 new descriptors. New behaviour:
+        # 8 (referenceGenome.dat + contigIdToSourceId.dat per cutoff) plus at
+        # most one strain file open mid-flush.
+        @test after - before < 20
+    end
+end

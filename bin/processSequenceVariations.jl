@@ -102,17 +102,49 @@ const HSSS_ALLELE_CODE = Dict{Char,Int8}(
     'T'=>Int8(4), 't'=>Int8(4),
 )
 
+# The per-strain HSSS files are the only outputs whose count scales with the
+# dataset: 4 cutoffs x N strains. Holding a descriptor open for each one for the
+# whole run exceeded RLIMIT_NOFILE at ~1100 strains. Buffer the records in memory
+# instead and reopen the file in append mode to flush, so the descriptor count is
+# constant in N. Safe because these files are append-only, single-writer, and
+# never read back during the run — a reopened append is byte-identical to a
+# held-open handle.
+const HSSS_BUFFER_BUDGET = 64 * 1024 * 1024   # total bytes across all strain buffers
+const HSSS_MIN_BUFFER    = 4 * 1024           # 512 records; floor for huge strain counts
+
+hsss_buffer_bytes(n_writers::Int) =
+    max(HSSS_MIN_BUFFER, HSSS_BUFFER_BUDGET ÷ max(n_writers, 1))
+
+mutable struct BufferedStrainWriter
+    path::String
+    buf::IOBuffer
+    limit::Int      # flush once the buffer holds at least this many bytes
+end
+
+function BufferedStrainWriter(path::String, limit::Int)
+    close(open(path, "w"))   # truncate up front; every subsequent open appends
+    BufferedStrainWriter(path, IOBuffer(), limit)
+end
+
+function flush_writer(w::BufferedStrainWriter)
+    position(w.buf) == 0 && return
+    open(w.path, "a") do f
+        write(f, take!(w.buf))
+    end
+    nothing
+end
+
 mutable struct HsssState
     ref_fhs::Vector{IO}               # one referenceGenome.dat handle per cutoff
     contig_fhs::Vector{IO}            # one contigIdToSourceId.dat handle per cutoff
-    strain_fhs::Vector{Dict{Int,IO}}  # per cutoff: strain_index -> file handle (non-ref only)
+    strain_fhs::Vector{Dict{Int,BufferedStrainWriter}}  # per cutoff: strain_index -> writer
     strain_index::Dict{String,Int}    # strain_name -> integer index (ref=1, others 2..N)
     seq_index::Int
     current_seq_id::String
 end
 
 function open_hsss_writers(reference_strain::String, all_strains::Vector{String},
-                            base_dir::String=".")::HsssState
+                            base_dir::String="."; buffer_bytes::Int=0)::HsssState
     non_ref = filter(s -> s != reference_strain, all_strains)
     strain_index = Dict{String,Int}(reference_strain => 1)
     for (i, s) in enumerate(non_ref)
@@ -121,7 +153,12 @@ function open_hsss_writers(reference_strain::String, all_strains::Vector{String}
 
     ref_fhs    = IO[]
     contig_fhs = IO[]
-    strain_fhs = Dict{Int,IO}[]
+    strain_fhs = Dict{Int,BufferedStrainWriter}[]
+
+    # One writer per strain per cutoff; the memory budget is split across all of
+    # them so buffers shrink as the strain count grows.
+    limit = buffer_bytes > 0 ? buffer_bytes :
+            hsss_buffer_bytes(length(HSSS_CUTOFFS) * (length(non_ref) + 1))
 
     for cutoff in HSSS_CUTOFFS
         dir = joinpath(base_dir, "hsss_readFreq$(cutoff)")
@@ -137,16 +174,16 @@ function open_hsss_writers(reference_strain::String, all_strains::Vector{String}
         push!(ref_fhs,    open(joinpath(dir, "referenceGenome.dat"), "w"))
         push!(contig_fhs, open(joinpath(dir, "contigIdToSourceId.dat"), "w"))
 
-        sfhs = Dict{Int,IO}()
+        sfhs = Dict{Int,BufferedStrainWriter}()
         # The reference is a selectable sample, so it needs a file of its own at
         # index 1. It stays empty by construction — the reference matches itself
         # at every position, so it has no records, and hsssFindPolymorphic folds
         # it back in via ref_count = strainCount - nonRefStrainsCount. Writing
         # "unknown" records here instead would make it an all-unknown strain and
         # skew the isolate-call percentages.
-        sfhs[1] = open(joinpath(dir, "1"), "w")
+        sfhs[1] = BufferedStrainWriter(joinpath(dir, "1"), limit)
         for (i, s) in enumerate(non_ref)
-            sfhs[i + 1] = open(joinpath(dir, string(i + 1)), "w")
+            sfhs[i + 1] = BufferedStrainWriter(joinpath(dir, string(i + 1)), limit)
         end
         push!(strain_fhs, sfhs)
     end
@@ -158,7 +195,7 @@ function close_hsss_writers(state::HsssState)
     for fh in state.ref_fhs;    close(fh); end
     for fh in state.contig_fhs; close(fh); end
     for sfhs in state.strain_fhs
-        for (_, fh) in sfhs; close(fh); end
+        for (_, w) in sfhs; flush_writer(w); end
     end
 end
 
@@ -167,6 +204,13 @@ function write_hsss_record(fh::IO, seq_idx::Int, location::Int, allele_c::Int8, 
     write(fh, htol(Int32(location)))
     write(fh, allele_c)
     write(fh, product_c)
+end
+
+function write_hsss_record(w::BufferedStrainWriter, seq_idx::Int, location::Int,
+                           allele_c::Int8, product_c::Int8)
+    write_hsss_record(w.buf, seq_idx, location, allele_c, product_c)
+    position(w.buf) >= w.limit && flush_writer(w)
+    nothing
 end
 
 # write_hsss_position! is defined after the Variation struct (see below)
