@@ -1,163 +1,96 @@
 # dnaseq-nextflow
 
-> **Under construction — not used in production.**
+A Nextflow DSL2 pipeline for DNA sequencing analysis: FASTQ reads to alignment, variant calling, CNV estimation, and multi-strain merge for downstream database loading.
 
-Nextflow DSL2 pipeline for DNA sequencing analysis. Processes per-strain FASTQ files through alignment, variant calling, CNV, and coverage analysis (`processSingleExperiment`), then merges results across strains for downstream database loading (`mergeExperiments`).
+## Overview
 
----
+This pipeline processes raw whole-genome sequencing reads for individual strains/isolates and merges the results across strains into a form suitable for loading into VEuPathDB's GUS databases. It has two stages, exposed as separate entry points: `processSingleExperiment` aligns and calls variants for one strain at a time, producing a consensus FASTA, VCFs, indel and coverage tracks, ploidy, and gene-level CNV estimates; `mergeExperiments` combines the per-strain outputs of one or more `processSingleExperiment` runs, annotates variants against coding-sequence and indel databases, and runs SnpEff functional annotation to produce the variation/allele/product data files used by the VEuPathDB data-loading pipeline.
 
-## Quick Start
+## Requirements
+
+- [Nextflow](https://www.nextflow.io/) (DSL2)
+- [Docker](https://www.docker.com/) (enabled by default in every profile)
+
+## Usage
 
 ```bash
-# Per-strain analysis (default)
-nextflow run main.nf -profile processSingleExperiment
+# Per-strain analysis (default entry point)
+nextflow run VEuPathDB/dnaseq-nextflow -r main -profile processSingleExperiment -resume -C <config>
+
+# Per-strain analysis, named entry point
+nextflow run VEuPathDB/dnaseq-nextflow -r main -entry processSingleExperiment -profile processSingleExperiment -resume -C <config>
 
 # Multi-strain merge
-nextflow run main.nf -entry mergeExperiments -profile mergeExperiments
+nextflow run VEuPathDB/dnaseq-nextflow -r main -entry mergeExperiments -profile mergeExperiments -resume -C <config>
 ```
 
-Tests are not run through Nextflow — see [Testing](#testing).
+### Entry points
 
-Docker is enabled by default in all profiles.
+- **`processSingleExperiment`** (also the default workflow): Takes paired- or single-end FASTQs from an nf-core-style samplesheet and runs QC (FastQC, Trimmomatic) → alignment (BWA-MEM2, Picard dedup, GATK indel realignment) → variant calling (FreeBayes, consensus FASTA generation with coverage masking) → CNV/coverage analysis (genome coverage, htseq-count → TPM → ploidy and gene CNVs) → windowed SNP/heterozygous-SNP density and normalized coverage tracks.
+- **`mergeExperiments`**: Combines per-strain indels, VCFs, and coverage BEDs from one or more `processSingleExperiment` runs; builds genomic-indel and coding-sequence/coding-indel SQLite databases from the consensus FASTAs and GTF; annotates variants with `bin/processSequenceVariations.jl`; and runs SnpEff for functional annotation. Outputs are intended for loading into a GUS/VEuPathDB database.
 
----
+## Key parameters
 
-## processSingleExperiment
-
-Runs per-strain: takes paired or single-end FASTQs from an nf-core samplesheet and produces a consensus FASTA, VCFs, indel TSV, coverage tracks, ploidy, and gene CNV estimates.
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                    QC & Preprocessing                    │
-│                                                          │
-│   FASTQ ──► FastQC ──► FastQC check ──► Trimmomatic      │
-└────────────────────────────┬─────────────────────────────┘
-                             │
-┌────────────────────────────▼─────────────────────────────┐
-│                        Alignment                         │
-│                                                          │
-│   BWA-MEM ──► Picard (dedup) ──► GATK (indel realign)    │
-└──────────────────┬──────────────────────┬────────────────┘
-                   │                      │
-┌──────────────────▼──────┐  ┌────────────▼───────────────┐
-│     Variant Calling     │  │       CNV / Coverage        │
-│                         │  │                             │
-│  FreeBayes              │  │  genomecov                  │
-│  filterAndSplitVcf      │  │    └──► coverage bigwig     │
-│    ├── SNPs VCF         │  │                             │
-│    ├── Indels VCF       │  │  htseqCount ──► TPM         │
-│    └── Consensus VCF    │  │    └──► ploidy & gene CNVs  │
-│  makeIndelTSV           │  │                             │
-│  makeCoverageBed        │  │  bedtoolsWindowed            │
-│  consensus FASTA        │  │    └──► norm. cov. bigwig   │
-│    (coverage-masked)    │  │                             │
-└──────────────┬──────────┘  └─────────────────────────────┘
-               │
-┌──────────────▼──────────────────────────────────────────┐
-│                    Density Tracks                        │
-│                                                          │
-│  SNP density bigwigs                                     │
-│  Het SNP density bigwigs  (ploidy > 1 only)              │
-└──────────────────────────────────────────────────────────┘
-
-  Alignment stats (samtools + bedtools genomecov) ──► merged TSV
-```
-
-### Outputs
-
-| File | Description |
-|---|---|
-| `*_consensus.fa.gz` | Per-strain consensus FASTA, low-coverage positions masked |
-| `result.vcf.gz` | Full FreeBayes VCF (complex variants) |
-| `indels.tsv` | Indel table (homozygous only; het indels excluded) |
-| `coverage.bed.gz` | Per-position coverage BED |
-| `*_Ploidy.txt` | Estimated ploidy per strain |
-| `*_geneCNVs.txt` | Gene-level copy number estimates |
-| `*.bw` | Coverage, normalised coverage, SNP density, het SNP density bigwigs |
-| `alignment_stats.tsv` | Merged samtools + bedtools coverage stats across all samples |
-
-### Parameters
+### `processSingleExperiment`
 
 | Parameter | Description |
 |---|---|
-| `samplesheet` | nf-core CSV (`sample`, `fastq_1`, `fastq_2`) |
+| `samplesheet` | nf-core-format CSV (`sample`, `fastq_1`, `fastq_2`; `fastq_2` empty for single-end) |
 | `genomeFastaFile` | Reference genome FASTA |
 | `gtfFile` | Gene annotation GTF |
-| `footprintFile` | Gene footprints file for CNV |
+| `footprintFile` | Gene footprints file for CNV estimation |
 | `geneSourceIdOrthologFile` | Gene source ID / ortholog mapping TSV |
 | `chrsForCalcFile` | Chromosomes to include in ploidy calculation |
-| `minCoverage` | Minimum depth for variant calling and consensus masking |
-| `ploidy` | Expected ploidy (het SNP tracks skipped when `1`) |
+| `minCoverage` | Minimum depth required for variant calling and consensus masking |
+| `ploidy` | Expected ploidy (heterozygous SNP tracks are skipped when `1`) |
 | `winLen` | Window size (bp) for density and windowed coverage tracks |
-| `bwaThreads` | Threads for BWA-MEM |
+| `bwaThreads` | Threads for BWA-MEM2 |
 | `outputDir` | Output directory |
 
----
-
-## mergeExperiments
-
-Takes the per-strain outputs from one or more `processSingleExperiment` runs and merges them across strains. Annotates variants against SQLite coding-sequence and indel databases, then runs SnpEff for functional annotation. Outputs are intended for loading into a GUS/VEuPathDB database.
-
-### Steps
-
-1. **Combine indels** — collect per-strain `indels.tsv` files and build a genomic indel SQLite database (`makeGenomicIndelDb`)
-2. **Merge VCFs** — bcftools merge across all per-strain VCFs; single-strain inputs skip the merge step
-3. **Merge coverage** — concatenate per-strain coverage BED files into a single TSV (`mergeCoverageBeds`)
-4. **Build coding data** — derive coding-sequence and coding-indel SQLite databases from consensus FASTAs + GTF + reference genome (`makeCodingData`)
-5. **Annotate variants** — `processSeqVars` runs `bin/processSequenceVariations.jl` against the SQLite DBs; produces annotated VCF and variation/allele/product DAT files
-6. **SnpEff** — functional annotation of the merged VCF
-
-### Inputs (from processSingleExperiment)
+### `mergeExperiments`
 
 | Parameter | Description |
 |---|---|
 | `relativeConsensusFilePattern` | Glob for per-strain `*_consensus.fa.gz` files |
-| `vcfFiles` | Glob for per-strain `result.vcf.gz` files |
+| `vcfFiles` | Glob for per-strain VCF files |
 | `indelsFiles` | Glob for per-strain `indels.tsv` files |
-| `coverageFiles` | Glob for per-strain `*.coverage.bed.gz` files |
-
-### Additional Parameters
-
-| Parameter | Description |
-|---|---|
+| `coverageFiles` | Glob for per-strain coverage BED files |
 | `genomeFastaFile` | Reference genome FASTA |
 | `gtfFile` | Gene annotation GTF |
-| `vcfCacheFile` | VCF cache from a previous run (avoid re-annotating known variants) |
+| `cacheFile` / `vcfCacheFile` | VCF annotation cache from a previous run, to avoid re-annotating known variants |
 | `undoneStrains` | Strains to exclude from annotation |
 | `reference_strain` | Reference strain name |
 | `outputDir` | Output directory |
 
----
+### Global
+
+| Parameter | Description |
+|---|---|
+| `benchmark` | When `true`, emits timing/call-count reports for the merge pipeline's Julia steps to `.command.err` |
+
+## Output
+
+**`processSingleExperiment`** produces, per strain: a coverage-masked consensus FASTA (`*_consensus.fa.gz`), the full FreeBayes VCF, an indel table (`indels.tsv`), per-position coverage BED, ploidy and gene-CNV estimates, coverage/normalized-coverage/SNP-density/het-SNP-density bigWig tracks, and a merged alignment-stats TSV.
+
+**`mergeExperiments`** produces a merged, SnpEff-annotated multi-strain VCF along with variation, allele, and product DAT files formatted for loading into a GUS/VEuPathDB database.
 
 ## Containers
 
-| Image | Used by |
+| Image | Used for |
 |---|---|
-| `veupathdb/shortreadaligner:1.0.1` | BWA, samtools, Picard, GATK3, FreeBayes, bcftools, bedtools, Julia 1.10, Perl/BioPerl, SnpEff |
+| `veupathdb/shortreadaligner:1.0.1` | BWA-MEM2, samtools, Picard, GATK3, FreeBayes, bcftools, bedtools, Julia, Perl/BioPerl, SnpEff |
 | `veupathdb/dnaseqanalysis:1.0.0` | Trimmomatic, htseq-count |
-
----
 
 ## Testing
 
-Tests are Julia and Python unit tests in `testing/t/`, plus a bcftools
-characterization test. Run them inside the `veupathdb/dnaseqanalysis` image,
-which carries Julia + SQLite.jl, Python + cyvcf2 + pytest, and bcftools. The
-`:latest` tag is rebuilt by Jenkins from this repo's `Dockerfile` on every commit
-to `main`, so it tracks the code; `--pull always` refreshes a stale local copy:
+Tests are Julia and Python unit tests under `testing/t/`, plus bash-driven characterization tests, run inside the `veupathdb/dnaseqanalysis` image (which carries Julia + SQLite.jl and Python + cyvcf2 + pytest):
 
 ```bash
 docker run --rm --pull always -v "$PWD":/work -w /work veupathdb/dnaseqanalysis:latest bash -c '
   for t in testing/t/*.jl; do julia "$t"; done   # Julia unit tests
   python3 -m pytest testing/t/                    # Python unit tests
-  bash testing/t/mergeBoth.t.sh                   # bcftools merge -m both contract
+  for t in testing/t/*.t.sh; do bash "$t"; done    # bash suites
 '
 ```
 
-If your branch edits the `Dockerfile`, `:latest` won't reflect it until the branch
-merges to `main`; build locally (`docker build -t dnaseqanalysis:dev .`) and run
-against `dnaseqanalysis:dev` instead.
-
-The 96 tests in `test_mergeExperiments_e2e.py` skip by default — they assert
-against the output of a real `mergeExperiments` run. Exercise them with
-`python3 -m pytest testing/t/test_mergeExperiments_e2e.py --run-dir /path/to/run`.
+The end-to-end tests in `testing/t/test_mergeExperiments_e2e.py` skip by default; run them against a completed `mergeExperiments` run with `python3 -m pytest testing/t/test_mergeExperiments_e2e.py --run-dir /path/to/run`. `testing/bin/compareMergeOutputs.py` compares two `mergeExperiments` output directories for equivalence modulo strain-id numbering.
