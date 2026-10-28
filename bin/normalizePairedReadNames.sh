@@ -17,7 +17,8 @@
 #   equal after removing a trailing /1 /2 .1 .2
 #     :a :b from each name                       -> emit with the suffix removed
 #   anything else (or a record-count / framing
-#     mismatch between the mates)                -> abort, non-zero exit
+#     mismatch between the mates, or a record
+#     whose SEQ and QUAL lengths differ)         -> abort, non-zero exit
 #
 # Two consequences worth knowing:
 #   - Names that are already identical are passed through untouched. This
@@ -73,6 +74,15 @@ BEGIN {
         # split each header into the read-name field and its trailing comment
         match(h1, /^[^ \t]+/); n1 = substr(h1, 1, RLENGTH); rest1 = substr(h1, RLENGTH + 1)
         match(h2, /^[^ \t]+/); n2 = substr(h2, 1, RLENGTH); rest2 = substr(h2, RLENGTH + 1)
+
+        # bwa-mem2 does not check this and emits SAM that samtools rejects far
+        # downstream, so corrupt input surfaces as an unrelated broken pipe.
+        if (length(body1[1]) != length(body1[3]))
+            die("record " pairs " (" substr(n1, 2) ") in mate 1: SEQ length " length(body1[1]) \
+                " != QUAL length " length(body1[3]) "; input FASTQ is corrupt")
+        if (length(body2[1]) != length(body2[3]))
+            die("record " pairs " (" substr(n2, 2) ") in mate 2: SEQ length " length(body2[1]) \
+                " != QUAL length " length(body2[3]) "; input FASTQ is corrupt")
 
         if (n1 != n2) {
             s1 = n1; sub(/[/.:][12ab]$/, "", s1)
