@@ -129,6 +129,15 @@ run "$(printf '@x.1\nACGT\n+\nFFFF\nACGT\n+\nFFFF\n@y.1\n')" \
     "$(printf '@x.2\nACGT\n+\nFFFF\nACGT\n+\nFFFF\n@y.2\n')"
 [ "$rc" -ne 0 ] || fail "ID line not starting with @ should abort, got exit 0"
 
+# --- SEQ/QUAL length mismatch aborts, naming the read and the mate -----------
+run "$(rec '@ok.1'; printf '@bad.1\nACGT\n+\nFFF\n')" "$(rec '@ok.2'; rec '@bad.2')"
+[ "$rc" -ne 0 ] || fail "SEQ/QUAL length mismatch in mate 1 should abort, got exit 0"
+case "$ERR" in *"record 2 (bad.1) in mate 1"*) ;; *) fail "mate1 length-mismatch message: '$ERR'" ;; esac
+
+run "$(rec '@bad.1')" "$(printf '@bad.2\nACGTA\n+\nFFFF\n')"
+[ "$rc" -ne 0 ] || fail "SEQ/QUAL length mismatch in mate 2 should abort, got exit 0"
+case "$ERR" in *"record 1 (bad.2) in mate 2"*) ;; *) fail "mate2 length-mismatch message: '$ERR'" ;; esac
+
 # --- usage ------------------------------------------------------------------
 rc=0; "$SCRIPT" only-one-arg >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 2 ] || fail "wrong argument count should exit 2, got $rc"

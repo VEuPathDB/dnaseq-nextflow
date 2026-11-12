@@ -76,14 +76,16 @@ process bwaMem {
 
           # A normalizer that aborts mid-stream leaves bwa with truncated input it
           # will happily align and exit 0 on, so its status is checked explicitly.
+          # bwa's status wins: when bwa dies (e.g. OOM kill, 137) the normalizer
+          # fails with SIGPIPE, and reporting that would mask the retryable cause.
           normalizerStatus=0
           wait \$normalizerPid || normalizerStatus=\$?
+          if [ "\$bwaStatus" -ne 0 ]; then
+              exit "\$bwaStatus"
+          fi
           if [ "\$normalizerStatus" -ne 0 ]; then
               echo "ERROR: read-name normalization failed for ${sampleName} (exit \$normalizerStatus); alignment input was incomplete." >&2
               exit "\$normalizerStatus"
-          fi
-          if [ "\$bwaStatus" -ne 0 ]; then
-              exit "\$bwaStatus"
           fi
 
           samtools fixmate -m output.bam fix.bam
